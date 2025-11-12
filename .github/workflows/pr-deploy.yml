@@ -1,0 +1,109 @@
+name: PR Deployment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+env:
+  DOTNET_VERSION: '9.0.x'
+  TEST_RESOURCE_GROUP: 'featherpod-test-rg'
+  TEST_APP_NAME: 'featherpod-test'
+  TEST_APP_URL: 'https://featherpod-test.azurewebsites.net'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.event.action != 'closed'
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+
+    - name: Build and publish
+      run: |
+        dotnet publish FeatherPod/FeatherPod.csproj -c Release -o publish
+
+    - name: Create deployment package
+      run: |
+        cd publish
+        zip -r ../deploy.zip .
+
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Deploy to Azure Web App
+      uses: azure/webapps-deploy@v3
+      with:
+        app-name: ${{ env.TEST_APP_NAME }}
+        package: deploy.zip
+
+    - name: Update API Key from Secret
+      run: |
+        az webapp config appsettings set \
+          --name ${{ env.TEST_APP_NAME }} \
+          --resource-group ${{ env.TEST_RESOURCE_GROUP }} \
+          --settings ApiKey="${{ secrets.TEST_API_KEY }}"
+
+    - name: Comment PR with deployment URL
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const comment = `## 🚀 PR Deployed Successfully!
+
+          **Test Environment:** ${{ env.TEST_APP_URL }}
+
+          ### Test Endpoints:
+          - 📡 RSS Feed: ${{ env.TEST_APP_URL }}/feed.xml
+          - 📋 Episodes API: ${{ env.TEST_APP_URL }}/api/episodes
+          - 🎵 Upload: \`POST ${{ env.TEST_APP_URL }}/api/episodes\` (requires X-API-Key header)
+
+          **Note:** The test API key is configured from GitHub Secrets (TEST_API_KEY).
+
+          **Commit:** ${context.sha.substring(0, 7)}
+          **Branch:** ${context.payload.pull_request.head.ref}
+
+          ---
+          *Deployment powered by GitHub Actions*`;
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+    - name: Azure logout
+      run: az logout
+      if: always()
+
+  cleanup-comment:
+    runs-on: ubuntu-latest
+    if: github.event.action == 'closed'
+
+    steps:
+    - name: Comment on PR closure
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const comment = `## ✅ PR Closed
+
+          The test environment at ${{ env.TEST_APP_URL }} is still available for manual testing.
+
+          To clean up the test environment manually:
+          \`\`\`bash
+          az webapp restart --name ${{ env.TEST_APP_NAME }} --resource-group ${{ env.TEST_RESOURCE_GROUP }}
+          \`\`\``;
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });

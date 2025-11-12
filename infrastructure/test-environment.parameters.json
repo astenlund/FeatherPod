@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "storageAccountName": {
+      "value": "featherpod"
+    },
+    "location": {
+      "value": "swedencentral"
+    },
+    "testAudioContainerName": {
+      "value": "audio-test"
+    },
+    "testMetadataContainerName": {
+      "value": "metadata-test"
+    },
+    "testAppServicePlanName": {
+      "value": "featherpod-test-plan"
+    },
+    "testAppServiceName": {
+      "value": "featherpod-test"
+    },
+    "appServicePlanSku": {
+      "value": "F1"
+    },
+    "dotnetVersion": {
+      "value": "DOTNETCORE|9.0"
+    },
+    "podcastTitle": {
+      "value": "FeatherPod Test"
+    },
+    "podcastDescription": {
+      "value": "Test environment for FeatherPod - Pull Request Testing"
+    },
+    "podcastAuthor": {
+      "value": "FeatherPod Team"
+    },
+    "podcastEmail": {
+      "value": "test@example.com"
+    },
+    "podcastLanguage": {
+      "value": "en-us"
+    },
+    "podcastCategory": {
+      "value": "Technology"
+    }
+  }
+}
