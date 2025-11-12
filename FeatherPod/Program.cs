@@ -79,6 +79,7 @@ app.MapPost("/api/episodes", async (
     [FromForm] string? title,
     [FromForm] string? description,
     [FromForm] string? publishedDate,
+    [FromForm] bool? useMetadataForPublishedDate,
     EpisodeService service,
     IConfiguration _) =>
 {
@@ -112,7 +113,7 @@ app.MapPost("/api/episodes", async (
         }
 
         // Add episode
-        var episode = await service.AddEpisodeAsync(tempPath, title, description, parsedPublishedDate);
+        var episode = await service.AddEpisodeAsync(tempPath, title, description, parsedPublishedDate, useMetadataForPublishedDate);
 
         return Results.Created($"/api/episodes/{episode.Id}", episode);
     }

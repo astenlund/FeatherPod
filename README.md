@@ -152,6 +152,15 @@ curl -X POST https://your-app-name.azurewebsites.net/api/episodes \
   -F "publishedDate=2025-01-15T10:30:00Z"
 ```
 
+**Using file metadata for published date:**
+```bash
+curl -X POST https://your-app-name.azurewebsites.net/api/episodes \
+  -H "X-API-Key: your-api-key" \
+  -F "file=@audio.mp3" \
+  -F "title=My Episode" \
+  -F "useMetadataForPublishedDate=true"
+```
+
 **Directly to Azure Blob Storage:**
 - Upload audio files to the `audio` container in your Storage Account
 - Restart the app or call the sync endpoint to detect new files
@@ -212,11 +221,17 @@ curl https://your-app-name.azurewebsites.net/api/episodes
 
 ### Published Date Behavior
 
-FeatherPod supports three modes for episode published dates:
+FeatherPod supports flexible published date configuration with the following priority order:
 
 1. **Explicit API parameter** (highest priority) - Set `publishedDate` when uploading
-2. **File metadata** - Set `"UseFileMetadataForPublishDate": true` to read from audio tags
-3. **Current time** (default) - Uses upload time if `UseFileMetadataForPublishDate: false`
+2. **Per-request metadata flag** - Set `useMetadataForPublishedDate=true` in API call
+3. **Global metadata config** - Set `"UseFileMetadataForPublishDate": true` in appsettings.json
+4. **Current time** (default fallback) - Uses upload time
+
+When using file metadata (options 2 or 3), FeatherPod reads from:
+- TagLib DateTagged field (audio file metadata tags)
+- MP4 container creation time (for M4A/MP4 files)
+- File modified/creation timestamps
 
 ### Azure Storage
 

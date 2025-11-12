@@ -52,7 +52,7 @@ public class EpisodeService : IDisposable
         }
     }
 
-    public async Task<Episode> AddEpisodeAsync(string filePath, string? title = null, string? description = null, DateTime? publishedDate = null)
+    public async Task<Episode> AddEpisodeAsync(string filePath, string? title = null, string? description = null, DateTime? publishedDate = null, bool? useMetadataForPublishedDate = null)
     {
         var fileInfo = new FileInfo(filePath);
         if (!fileInfo.Exists)
@@ -76,6 +76,11 @@ public class EpisodeService : IDisposable
             var duration = await GetAudioDurationAsync(filePath);
 
             // Determine published date based on configuration and parameters
+            // Priority order:
+            // 1. Explicit publishedDate parameter (highest priority)
+            // 2. useMetadataForPublishedDate parameter (per-request override)
+            // 3. UseFileMetadataForPublishDate config setting
+            // 4. Current datetime (default fallback)
             DateTime finalPublishedDate;
             if (publishedDate.HasValue)
             {
@@ -83,14 +88,20 @@ public class EpisodeService : IDisposable
                 finalPublishedDate = publishedDate.Value;
                 _logger.LogDebug("Using explicitly provided published date for {File}: {Date}", fileName, finalPublishedDate);
             }
+            else if (useMetadataForPublishedDate.HasValue && useMetadataForPublishedDate.Value)
+            {
+                // Per-request override to use file metadata
+                finalPublishedDate = GetPublishedDate(filePath);
+                _logger.LogDebug("Using file metadata (per-request) for published date for {File}: {Date}", fileName, finalPublishedDate);
+            }
             else
             {
                 var podcastConfig = _configuration.GetSection("Podcast").Get<PodcastConfig>();
                 if (podcastConfig?.UseFileMetadataForPublishDate == true)
                 {
-                    // Use file metadata
+                    // Use file metadata based on global config
                     finalPublishedDate = GetPublishedDate(filePath);
-                    _logger.LogDebug("Using file metadata for published date for {File}: {Date}", fileName, finalPublishedDate);
+                    _logger.LogDebug("Using file metadata (config) for published date for {File}: {Date}", fileName, finalPublishedDate);
                 }
                 else
                 {
