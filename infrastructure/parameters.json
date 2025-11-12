@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "storageAccountName": {
+      "value": "featherpod"
+    },
+    "location": {
+      "value": "swedencentral"
+    },
+    "storageSku": {
+      "value": "Standard_LRS"
+    },
+    "audioContainerName": {
+      "value": "audio"
+    },
+    "metadataContainerName": {
+      "value": "metadata"
+    },
+    "appServicePlanName": {
+      "value": "featherpod-plan"
+    },
+    "appServiceName": {
+      "value": "featherpod"
+    },
+    "appServicePlanSku": {
+      "value": "F1"
+    },
+    "dotnetVersion": {
+      "value": "DOTNETCORE|9.0"
+    },
+    "podcastTitle": {
+      "value": "FeatherPod"
+    },
+    "podcastDescription": {
+      "value": "Personal podcast feed for Mr. Andreas Stenlund"
+    },
+    "podcastAuthor": {
+      "value": "FeatherPod"
+    },
+    "podcastEmail": {
+      "value": "podcast@localhost"
+    },
+    "podcastLanguage": {
+      "value": "en-us"
+    },
+    "podcastCategory": {
+      "value": "Technology"
+    }
+  }
+}

@@ -45,6 +45,29 @@ The development configuration (`appsettings.Development.json`) is already set up
 
 ### Azure Deployment
 
+**Option 1: Bicep (Recommended)**
+
+Deploy complete infrastructure with one command:
+```bash
+az login
+az group create --name featherpod-rg --location swedencentral
+az deployment group create \
+  --resource-group featherpod-rg \
+  --template-file infrastructure/main.bicep \
+  --parameters infrastructure/parameters.json
+```
+
+This creates: Storage Account, blob containers, App Service Plan, App Service, Managed Identity, and RBAC.
+
+Then deploy the application:
+```bash
+dotnet publish FeatherPod/FeatherPod.csproj -c Release -o publish
+cd publish && powershell.exe -Command "Compress-Archive -Path * -DestinationPath ../deploy.zip -Force"
+az webapp deploy --resource-group featherpod-rg --name featherpod --src-path ../deploy.zip --type zip
+```
+
+**Option 2: Manual Setup**
+
 **1. Create Azure Resources:**
 - Create an Azure Storage Account
 - Create two blob containers: `audio` and `metadata`
@@ -94,6 +117,8 @@ In your Azure App Service configuration (or appsettings.json for other hosting):
 dotnet publish -c Release
 # Deploy using your preferred method (Azure DevOps, GitHub Actions, FTP, etc.)
 ```
+
+**Important for Azure App Service:** Program.cs is already configured to read the PORT environment variable. Do not hardcode URLs or ports in appsettings.json.
 
 **5. Subscribe in your podcast app:**
 ```
