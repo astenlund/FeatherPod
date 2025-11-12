@@ -4,6 +4,7 @@ azurite/
 # Build results
 bin/
 obj/
+publish/
 *.dll
 *.exe
 *.pdb
