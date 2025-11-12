@@ -114,7 +114,7 @@ public class EpisodeService : IDisposable
             var episode = new Episode
             {
                 Id = id,
-                Title = title ?? ParseTitleFromFilename(fileName),
+                Title = string.IsNullOrWhiteSpace(title) ? ParseTitleFromFilename(fileName) : title,
                 Description = description ?? string.Empty,
                 FileName = fileName,
                 FileSize = fileSize,
@@ -369,7 +369,7 @@ public class EpisodeService : IDisposable
         return extension is ".mp3" or ".m4a" or ".wav" or ".ogg" or ".flac" or ".aac";
     }
 
-    private static string ParseTitleFromFilename(string filename)
+    internal static string ParseTitleFromFilename(string filename)
     {
         // Get filename without extension
         var nameWithoutExtension = Path.GetFileNameWithoutExtension(filename);

@@ -321,6 +321,36 @@ public class EpisodeServiceTests : IDisposable
         episode.PublishedDate.Should().BeAfter(specificDate);
     }
 
+    [Fact]
+    public void ParseTitleFromFilename_ShouldReplaceUnderscoresWithSpaces()
+    {
+        // Act
+        var result = EpisodeService.ParseTitleFromFilename("2000_FPS_Image_Rendering__How_GaussianImage_Broke_the_Speed_Bar.m4a");
+
+        // Assert
+        result.Should().Be("2000 FPS Image Rendering How Gaussian Image Broke the Speed Bar");
+    }
+
+    [Fact]
+    public void ParseTitleFromFilename_ShouldHandlePascalCase()
+    {
+        // Act
+        var result = EpisodeService.ParseTitleFromFilename("MyPodcastEpisode.mp3");
+
+        // Assert
+        result.Should().Be("My Podcast Episode");
+    }
+
+    [Fact]
+    public void ParseTitleFromFilename_ShouldHandleMixedFormats()
+    {
+        // Act
+        var result = EpisodeService.ParseTitleFromFilename("Episode_01_TheBeginning.mp3");
+
+        // Assert
+        result.Should().Be("Episode 01 The Beginning");
+    }
+
     public void Dispose()
     {
         // Dispose all services first to release file handles
