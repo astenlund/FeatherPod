@@ -281,21 +281,39 @@ public class EpisodeService : IDisposable
         await _blobStorage.SaveMetadataAsync(json);
     }
 
-    private Task<TimeSpan> GetAudioDurationAsync(string filePath)
+    private async Task<TimeSpan> GetAudioDurationAsync(string filePath)
     {
-        return Task.Run(() =>
+        using var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromSeconds(30)); // Timeout after 30 seconds
+
+        try
         {
-            try
+            var task = Task.Run(() =>
             {
-                using var file = TagLib.File.Create(filePath);
-                return file.Properties.Duration;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Could not read audio duration from {File}, using default", filePath);
-                return TimeSpan.Zero;
-            }
-        });
+                try
+                {
+                    using var file = TagLib.File.Create(filePath);
+                    return file.Properties.Duration;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not read audio duration from {File}, using default", filePath);
+                    return TimeSpan.Zero;
+                }
+            }, cts.Token);
+
+            return await task;
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Timeout reading audio duration from {File} after 30 seconds, using default", filePath);
+            return TimeSpan.Zero;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Error reading audio duration from {File}, using default", filePath);
+            return TimeSpan.Zero;
+        }
     }
 
     private DateTime GetPublishedDate(string filePath)
@@ -310,12 +328,28 @@ public class EpisodeService : IDisposable
         // Try to get media created date from tag (highest priority)
         try
         {
-            using var file = TagLib.File.Create(filePath);
+            using var cts = new CancellationTokenSource();
+            cts.CancelAfter(TimeSpan.FromSeconds(30)); // Timeout after 30 seconds
 
-            if (file.Tag.DateTagged.HasValue && file.Tag.DateTagged.Value > DateTime.MinValue)
+            var task = Task.Run(() =>
             {
-                _logger.LogDebug("Using DateTagged for {File}: {Date}", filePath, file.Tag.DateTagged.Value);
-                return file.Tag.DateTagged.Value.ToUniversalTime();
+                using var file = TagLib.File.Create(filePath);
+                return file.Tag.DateTagged;
+            }, cts.Token);
+
+            // Wait for the task with timeout
+            if (task.Wait(TimeSpan.FromSeconds(30)))
+            {
+                var dateTagged = task.Result;
+                if (dateTagged.HasValue && dateTagged.Value > DateTime.MinValue)
+                {
+                    _logger.LogDebug("Using DateTagged for {File}: {Date}", filePath, dateTagged.Value);
+                    return dateTagged.Value.ToUniversalTime();
+                }
+            }
+            else
+            {
+                _logger.LogDebug("Timeout reading metadata date from {File} after 30 seconds", filePath);
             }
         }
         catch (Exception ex)
