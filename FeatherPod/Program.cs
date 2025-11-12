@@ -30,6 +30,9 @@ builder.Services.AddSingleton<IBlobStorageService, BlobStorageService>();
 builder.Services.AddSingleton<EpisodeService>();
 builder.Services.AddSingleton<RssFeedGenerator>();
 
+// Add background service for periodic blob storage sync
+builder.Services.AddHostedService<BlobSyncBackgroundService>();
+
 var app = builder.Build();
 
 // Add API key authentication middleware
@@ -156,13 +159,19 @@ app.MapPost("/api/episodes", async (
 .DisableAntiforgery();
 
 // Delete episode
-app.MapDelete("/api/episodes/{id}", async (string id, EpisodeService service) =>
+app.MapDelete("/api/episodes/{id}", async (string id, EpisodeService service, ILogger<Program> logger) =>
 {
+    logger.LogInformation("DELETE request received for episode ID: {Id}", id);
     var deleted = await service.DeleteEpisodeAsync(id);
 
-    return !deleted
-        ? Results.NotFound()
-        : Results.NoContent();
+    if (!deleted)
+    {
+        logger.LogWarning("Episode not found for deletion: {Id}", id);
+        return Results.NotFound();
+    }
+
+    logger.LogInformation("Episode deleted successfully: {Id}", id);
+    return Results.NoContent();
 })
 .WithName("DeleteEpisode")
 .Produces(204)
