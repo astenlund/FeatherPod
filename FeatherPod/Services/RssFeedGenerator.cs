@@ -22,7 +22,7 @@ public class RssFeedGenerator
             OmitXmlDeclaration = false
         };
 
-        using var stringWriter = new StringWriter();
+        using var stringWriter = new Utf8StringWriter();
         using var writer = XmlWriter.Create(stringWriter, settings);
 
         writer.WriteStartDocument();
@@ -132,4 +132,10 @@ public class RssFeedGenerator
             _ => "audio/mpeg"
         };
     }
+}
+
+// Helper class to make StringWriter report UTF-8 encoding
+internal sealed class Utf8StringWriter : StringWriter
+{
+    public override Encoding Encoding => Encoding.UTF8;
 }
