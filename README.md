@@ -214,6 +214,7 @@ curl https://your-app-name.azurewebsites.net/api/episodes
     "Category": "Technology",
     "BaseUrl": "https://your-app-name.azurewebsites.net",
     "ImageUrl": "https://your-app-name.azurewebsites.net/icon.png",
+    "ImageVersion": "1",
     "UseFileMetadataForPublishDate": false
   }
 }
@@ -275,12 +276,23 @@ Place a 1024x1024 PNG or JPG icon at `FeatherPod/wwwroot/icon.png` and configure
 ```json
 {
   "Podcast": {
-    "ImageUrl": "https://your-app-name.azurewebsites.net/icon.png"
+    "ImageUrl": "https://your-app-name.azurewebsites.net/icon.png",
+    "ImageVersion": "1"
   }
 }
 ```
 
 The icon is served as a static file and must be included in your deployment.
+
+### Forcing Icon Refresh
+
+Podcast apps like Pocket Casts aggressively cache artwork. To force apps to refresh the icon after you change it:
+
+1. Replace `wwwroot/icon.png` with your new icon
+2. Increment the `ImageVersion` in your configuration (e.g., from "1" to "2")
+3. Restart/redeploy your app
+
+The RSS feed will include a cache-busting query parameter (e.g., `icon.png?v=2`), which podcast apps will treat as a new URL and fetch the updated icon. This works without changing the actual filename.
 
 ## Details
 

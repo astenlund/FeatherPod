@@ -11,6 +11,7 @@ public class PodcastConfig
     public string ImageUrl { get; set; } = string.Empty;
     public string BaseUrl { get; set; } = string.Empty;
     public bool UseFileMetadataForPublishDate { get; set; } = false;
+    public string? ImageVersion { get; set; }
 }
 
 public class PathsConfig

@@ -62,12 +62,14 @@ public class RssFeedGenerator
 
         if (!string.IsNullOrEmpty(_config.ImageUrl))
         {
+            var imageUrl = GetImageUrlWithVersion();
+
             writer.WriteStartElement("itunes", "image", null);
-            writer.WriteAttributeString("href", _config.ImageUrl);
+            writer.WriteAttributeString("href", imageUrl);
             writer.WriteEndElement();
 
             writer.WriteStartElement("image");
-            writer.WriteElementString("url", _config.ImageUrl);
+            writer.WriteElementString("url", imageUrl);
             writer.WriteElementString("title", _config.Title);
             writer.WriteElementString("link", _config.BaseUrl);
             writer.WriteEndElement();
@@ -116,6 +118,18 @@ public class RssFeedGenerator
         }
 
         writer.WriteEndElement(); // item
+    }
+
+    private string GetImageUrlWithVersion()
+    {
+        if (string.IsNullOrEmpty(_config.ImageVersion))
+        {
+            return _config.ImageUrl;
+        }
+
+        // Append version as query parameter for cache busting
+        var separator = _config.ImageUrl.Contains('?') ? "&" : "?";
+        return $"{_config.ImageUrl}{separator}v={_config.ImageVersion}";
     }
 
     private static string GetMimeType(string fileName)
