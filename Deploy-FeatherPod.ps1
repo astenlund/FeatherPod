@@ -5,32 +5,46 @@
 .DESCRIPTION
     Builds the project, creates a deployment package, deploys to Azure, and cleans up temporary files.
 
-.PARAMETER ResourceGroup
-    Azure resource group name (defaults to featherpod-rg).
-
-.PARAMETER AppName
-    Azure App Service name (defaults to featherpod).
+.PARAMETER Environment
+    Target environment: Test or Prod (defaults to Prod).
 
 .EXAMPLE
     .\Deploy-FeatherPod.ps1
+    Deploys to production (featherpod)
 
 .EXAMPLE
-    .\Deploy-FeatherPod.ps1 -ResourceGroup "my-rg" -AppName "my-app"
+    .\Deploy-FeatherPod.ps1 -Environment Test
+    Deploys to test environment (featherpod-test)
 #>
 
 param(
     [Parameter(Mandatory=$false)]
-    [string]$ResourceGroup = "featherpod-rg",
-
-    [Parameter(Mandatory=$false)]
-    [string]$AppName = "featherpod"
+    [ValidateSet("Test", "Prod")]
+    [string]$Environment
 )
+
+# Set resource group and app name based on environment
+$ResourceGroup = switch ($Environment) {
+    "Test" { "featherpod-test-rg" }
+    "Prod" { "featherpod-rg" }
+}
+
+$AppName = switch ($Environment) {
+    "Test" { "featherpod-test" }
+    "Prod" { "featherpod" }
+}
 
 $ErrorActionPreference = "Stop"
 
 $projectPath = Join-Path $PSScriptRoot "FeatherPod\FeatherPod.csproj"
 $publishPath = Join-Path $PSScriptRoot "publish"
 $zipPath = Join-Path $PSScriptRoot "deploy.zip"
+
+Write-Host "`n======================================" -ForegroundColor Magenta
+Write-Host "  Deploying to: $Environment" -ForegroundColor Magenta
+Write-Host "  Resource Group: $ResourceGroup" -ForegroundColor Magenta
+Write-Host "  App Name: $AppName" -ForegroundColor Magenta
+Write-Host "======================================`n" -ForegroundColor Magenta
 
 try {
     Write-Host "Publishing FeatherPod..." -ForegroundColor Cyan
