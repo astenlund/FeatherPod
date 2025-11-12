@@ -412,8 +412,9 @@ public class EpisodeService : IDisposable
         var withSpaces = nameWithoutExtension.Replace('_', ' ');
 
         // Insert spaces before uppercase letters (PascalCase handling)
-        // This regex inserts a space before any uppercase letter that follows a lowercase letter or digit
-        var withPascalCaseSpaces = Regex.Replace(withSpaces, @"(?<=[a-z0-9])(?=[A-Z])", " ");
+        // This regex inserts a space before any uppercase letter that follows a lowercase letter
+        // Note: We exclude digits to keep patterns like "2D" intact
+        var withPascalCaseSpaces = Regex.Replace(withSpaces, @"(?<=[a-z])(?=[A-Z])", " ");
 
         // Clean up multiple spaces
         var cleaned = Regex.Replace(withPascalCaseSpaces, @"\s+", " ").Trim();

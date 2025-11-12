@@ -351,6 +351,16 @@ public class EpisodeServiceTests : IDisposable
         result.Should().Be("Episode 01 The Beginning");
     }
 
+    [Fact]
+    public void ParseTitleFromFilename_ShouldKeepDigitLetterCombinations()
+    {
+        // Act
+        var result = EpisodeService.ParseTitleFromFilename("Introduction_to_2D_Graphics.mp3");
+
+        // Assert - "2D" should remain as "2D", not become "2 D"
+        result.Should().Be("Introduction to 2D Graphics");
+    }
+
     public void Dispose()
     {
         // Dispose all services first to release file handles
