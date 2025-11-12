@@ -46,10 +46,16 @@ var episodeService = app.Services.GetRequiredService<EpisodeService>();
 await episodeService.InitializeAsync();
 
 // RSS Feed endpoint
-app.MapGet("/feed.xml", async (EpisodeService service, RssFeedGenerator feedGenerator) =>
+app.MapGet("/feed.xml", async (HttpContext context, EpisodeService service, RssFeedGenerator feedGenerator) =>
 {
     var episodes = await service.GetAllEpisodesAsync();
     var feed = feedGenerator.GenerateFeed(episodes);
+
+    // Prevent caching to ensure feed updates are immediate
+    context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
+    context.Response.Headers.Pragma = "no-cache";
+    context.Response.Headers.Expires = "0";
+
     return Results.Content(feed, "application/xml");
 })
 .WithName("GetPodcastFeed")
