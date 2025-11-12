@@ -5,6 +5,7 @@ azurite/
 bin/
 obj/
 publish/
+deploy.zip
 *.dll
 *.exe
 *.pdb

@@ -60,6 +60,11 @@ az deployment group create \
 This creates: Storage Account, blob containers, App Service Plan, App Service, Managed Identity, and RBAC.
 
 Then deploy the application:
+```powershell
+.\Deploy-FeatherPod.ps1
+```
+
+Or manually:
 ```bash
 dotnet publish FeatherPod/FeatherPod.csproj -c Release -o publish
 cd publish && powershell.exe -Command "Compress-Archive -Path * -DestinationPath ../deploy.zip -Force"
