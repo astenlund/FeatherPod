@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using FeatherPod.Models;
 using Microsoft.Extensions.Configuration;
 
@@ -102,7 +103,7 @@ public class EpisodeService : IDisposable
             var episode = new Episode
             {
                 Id = id,
-                Title = title ?? Path.GetFileNameWithoutExtension(fileName),
+                Title = title ?? ParseTitleFromFilename(fileName),
                 Description = description ?? string.Empty,
                 FileName = fileName,
                 FileSize = fileSize,
@@ -200,7 +201,7 @@ public class EpisodeService : IDisposable
                         var episode = new Episode
                         {
                             Id = id,
-                            Title = Path.GetFileNameWithoutExtension(fileName),
+                            Title = ParseTitleFromFilename(fileName),
                             Description = string.Empty,
                             FileName = fileName,
                             FileSize = fileSize,
@@ -355,6 +356,24 @@ public class EpisodeService : IDisposable
     {
         var extension = Path.GetExtension(filePath).ToLowerInvariant();
         return extension is ".mp3" or ".m4a" or ".wav" or ".ogg" or ".flac" or ".aac";
+    }
+
+    private static string ParseTitleFromFilename(string filename)
+    {
+        // Get filename without extension
+        var nameWithoutExtension = Path.GetFileNameWithoutExtension(filename);
+
+        // Replace underscores with spaces
+        var withSpaces = nameWithoutExtension.Replace('_', ' ');
+
+        // Insert spaces before uppercase letters (PascalCase handling)
+        // This regex inserts a space before any uppercase letter that follows a lowercase letter or digit
+        var withPascalCaseSpaces = Regex.Replace(withSpaces, @"(?<=[a-z0-9])(?=[A-Z])", " ");
+
+        // Clean up multiple spaces
+        var cleaned = Regex.Replace(withPascalCaseSpaces, @"\s+", " ").Trim();
+
+        return cleaned;
     }
 
     public void Dispose()
