@@ -23,25 +23,41 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         {
             AnsiConsole.WriteLine();
 
-            var choice = AnsiConsole.Prompt(
-                new SelectionPrompt<string>()
-                    .Title("What would you like to do?")
-                    .AddChoices("List episodes", "Delete episode", "Exit"));
+            var choice = ShowMenu();
 
             switch (choice)
             {
-                case "List episodes":
+                case MenuChoice.List:
                     await CliHelpers.ListEpisodesAsync(httpClient);
                     break;
 
-                case "Delete episode":
+                case MenuChoice.Delete:
                     await CliHelpers.DeleteEpisodeAsync(httpClient);
                     break;
 
-                case "Exit":
+                case MenuChoice.Quit:
                     AnsiConsole.MarkupLine("[grey]Bye.[/]");
                     return 0;
             }
         }
+    }
+
+    private static MenuChoice ShowMenu()
+    {
+        return new MenuBuilder<MenuChoice>()
+            .WithTitle("What would you like to do?")
+            .WithHint("(arrow keys or L/D/Q)")
+            .AddOption("L", "List episodes", MenuChoice.List)
+            .AddOption("D", "Delete episode", MenuChoice.Delete)
+            .AddOption("Q", "Quit", MenuChoice.Quit)
+            .AllowCancel(false) // Don't allow escape on main menu
+            .Show()!;
+    }
+
+    private enum MenuChoice
+    {
+        List,
+        Delete,
+        Quit
     }
 }
