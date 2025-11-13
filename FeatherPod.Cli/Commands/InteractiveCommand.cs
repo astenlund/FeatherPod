@@ -12,7 +12,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         AnsiConsole.MarkupLine("[bold]FeatherPod Episode Manager[/]");
         AnsiConsole.WriteLine();
 
-        var env = CliHelpers.GetEnvironment(settings.Environment);
+        var env = CliHelpers.GetEnvironment(settings.Environment, useDefault: true);
         if (env == null) return 1;
 
         var (httpClient, _) = await CliHelpers.SetupHttpClientAsync(env);
@@ -35,6 +35,29 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     await CliHelpers.DeleteEpisodeAsync(httpClient);
                     break;
 
+                case MenuChoice.SwitchEnvironment:
+                    var newEnv = CliHelpers.SelectEnvironment();
+                    if (newEnv != null && newEnv != env)
+                    {
+                        env = newEnv;
+                        AnsiConsole.Clear();
+                        AnsiConsole.MarkupLine("[bold]FeatherPod Episode Manager[/]");
+                        AnsiConsole.WriteLine();
+                        AnsiConsole.MarkupLine($"Environment: [cyan]{env}[/]");
+                        AnsiConsole.WriteLine();
+
+                        var (newClient, _) = await CliHelpers.SetupHttpClientAsync(env);
+                        if (newClient != null)
+                        {
+                            httpClient = newClient;
+                        }
+                    }
+                    else if (newEnv == null)
+                    {
+                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                    }
+                    break;
+
                 case MenuChoice.Quit:
                     AnsiConsole.MarkupLine("[grey]Bye.[/]");
                     return 0;
@@ -46,9 +69,10 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
     {
         return new MenuBuilder<MenuChoice>()
             .WithTitle("What would you like to do?")
-            .WithHint("(arrow keys or L/D/Q)")
+            .WithHint("(arrow keys or L/D/E/Q)")
             .AddOption("L", "List episodes", MenuChoice.List)
             .AddOption("D", "Delete episode", MenuChoice.Delete)
+            .AddOption("E", "Switch environment", MenuChoice.SwitchEnvironment)
             .AddOption("Q", "Quit", MenuChoice.Quit)
             .AllowCancel(false) // Don't allow escape on main menu
             .Show()!;
@@ -58,6 +82,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
     {
         List,
         Delete,
+        SwitchEnvironment,
         Quit
     }
 }

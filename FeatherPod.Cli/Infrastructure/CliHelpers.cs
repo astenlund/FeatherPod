@@ -14,22 +14,19 @@ internal static class CliHelpers
         PropertyNameCaseInsensitive = true
     };
 
-    internal static string? GetEnvironment(string? environment)
+    internal static string? GetEnvironment(string? environment, bool useDefault = true)
     {
         if (string.IsNullOrEmpty(environment))
         {
-            var environments = new Dictionary<string, string>
+            if (useDefault)
             {
-                ["Dev"] = "Dev - Local (localhost:8080 with Azurite)",
-                ["Test"] = "Test - featherpod-test.azurewebsites.net",
-                ["Prod"] = "Prod - featherpod.azurewebsites.net"
-            };
-
-            environment = AnsiConsole.Prompt(
-                new SelectionPrompt<string>()
-                    .Title("Select [green]environment[/]:")
-                    .AddChoices(environments.Keys)
-                    .UseConverter(key => environments[key]));
+                environment = "Prod";
+            }
+            else
+            {
+                environment = SelectEnvironment();
+                if (environment == null) return null;
+            }
         }
 
         if (environment != "Dev" && environment != "Test" && environment != "Prod")
@@ -43,6 +40,18 @@ internal static class CliHelpers
         AnsiConsole.WriteLine();
 
         return environment;
+    }
+
+    internal static string? SelectEnvironment()
+    {
+        return new MenuBuilder<string?>()
+            .WithTitle("Select environment:")
+            .WithHint("(arrow keys, Enter to select)")
+            .AddOption("D", "Dev - Local (localhost:8080 with Azurite)", "Dev")
+            .AddOption("T", "Test - featherpod-test.azurewebsites.net", "Test")
+            .AddOption("P", "Prod - featherpod.azurewebsites.net", "Prod")
+            .AllowCancel(true, null)
+            .Show();
     }
 
     internal static async Task<(HttpClient?, IConfiguration?)> SetupHttpClientAsync(string environment)
