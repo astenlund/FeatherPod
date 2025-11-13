@@ -143,7 +143,7 @@ internal static class CliHelpers
                 table.AddRow(
                     $"[grey]{i + 1}[/]",
                     $"[grey]{formattedDate}[/]",
-                    episode.Title,
+                    Markup.Escape(episode.Title),
                     $"[cyan]{episode.FileName}[/]",
                     formattedSize,
                     formattedDuration
@@ -178,7 +178,7 @@ internal static class CliHelpers
             }
 
             var choices = episodes.Select((ep, i) =>
-                $"{i + 1}. [{ep.PublishedDate:yyyy-MM-dd}] {ep.Title} ({ep.FileName})").ToList();
+                $"{i + 1}. ({ep.PublishedDate:yyyy-MM-dd}) {Markup.Escape(ep.Title)} ({ep.FileName})").ToList();
             choices.Add("[grey]← Cancel[/]");
 
             var selection = AnsiConsole.Prompt(
@@ -196,7 +196,7 @@ internal static class CliHelpers
             var index = int.Parse(selection.Split('.')[0]) - 1;
             var episodeToDelete = episodes[index];
 
-            if (!await AnsiConsole.ConfirmAsync($"Delete [red]{episodeToDelete.Title}[/] ({episodeToDelete.FileName})?"))
+            if (!await AnsiConsole.ConfirmAsync($"Delete [red]{Markup.Escape(episodeToDelete.Title)}[/] ({episodeToDelete.FileName})?"))
             {
                 AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
                 return;
@@ -206,7 +206,7 @@ internal static class CliHelpers
 
             if (deleteResponse.IsSuccessStatusCode)
             {
-                AnsiConsole.MarkupLine($"[green]✓[/] Deleted: {episodeToDelete.Title}");
+                AnsiConsole.MarkupLine($"[green]✓[/] Deleted: {Markup.Escape(episodeToDelete.Title)}");
             }
             else if (deleteResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
@@ -326,7 +326,7 @@ internal static class CliHelpers
                         if (episode != null)
                         {
                             AnsiConsole.MarkupLine($"  ID: [grey]{episode.Id}[/]");
-                            AnsiConsole.MarkupLine($"  Title: {episode.Title}");
+                            AnsiConsole.MarkupLine($"  Title: {Markup.Escape(episode.Title)}");
                             AnsiConsole.MarkupLine($"  Duration: [grey]{FormatDuration(episode.Duration)}[/]");
                             AnsiConsole.MarkupLine($"  Size: [grey]{FormatFileSize(episode.FileSize)}[/]");
                         }
