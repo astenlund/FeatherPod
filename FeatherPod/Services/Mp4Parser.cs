@@ -23,7 +23,7 @@ internal static class Mp4Parser
             using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
             using var reader = new BinaryReader(fs);
 
-            // Search for the mvhd (movie header) box in the file
+            // Search for the moov box, then mvhd inside it
             while (fs.Position < fs.Length)
             {
                 if (fs.Length - fs.Position < 8)
@@ -38,27 +38,63 @@ internal static class Mp4Parser
                     boxSize = (uint)reader.ReadInt64();
                 }
 
-                if (boxType == "mvhd")
+                if (boxType == "moov")
                 {
-                    // Found movie header box - parse the creation time
-                    var version = reader.ReadByte();
-                    reader.ReadBytes(3); // flags (skip)
+                    // Found movie box - search inside it for mvhd
+                    var moovEndPosition = fs.Position - 8 + boxSize;
 
-                    uint creationTime;
-                    if (version == 1)
+                    while (fs.Position < moovEndPosition && fs.Position < fs.Length)
                     {
-                        // Version 1 uses 64-bit timestamps
-                        var creationTime64 = ReadUInt64BigEndian(reader);
-                        creationTime = (uint)creationTime64; // Truncate to 32-bit (good until 2040)
-                    }
-                    else
-                    {
-                        // Version 0 uses 32-bit timestamps
-                        creationTime = ReadUInt32BigEndian(reader);
+                        if (moovEndPosition - fs.Position < 8)
+                            break;
+
+                        var innerBoxSize = ReadUInt32BigEndian(reader);
+                        var innerBoxType = Encoding.ASCII.GetString(reader.ReadBytes(4));
+
+                        if (innerBoxType == "mvhd")
+                        {
+                            // Found movie header box - parse the creation time
+                            var version = reader.ReadByte();
+                            reader.ReadBytes(3); // flags (skip)
+
+                            uint creationTime;
+                            if (version == 1)
+                            {
+                                // Version 1 uses 64-bit timestamps
+                                var creationTime64 = ReadUInt64BigEndian(reader);
+                                creationTime = (uint)creationTime64; // Truncate to 32-bit (good until 2040)
+                            }
+                            else
+                            {
+                                // Version 0 uses 32-bit timestamps
+                                creationTime = ReadUInt32BigEndian(reader);
+                            }
+
+                            // Convert from MP4 epoch (1904) to .NET DateTime
+                            return Mp4Epoch.AddSeconds(creationTime);
+                        }
+
+                        // Skip this inner box and move to next
+                        if (innerBoxSize > 8 && innerBoxSize < int.MaxValue)
+                        {
+                            var skipAmount = (long)innerBoxSize - 8;
+                            if (fs.Position + skipAmount <= moovEndPosition)
+                            {
+                                fs.Seek(skipAmount, SeekOrigin.Current);
+                            }
+                            else
+                            {
+                                break;
+                            }
+                        }
+                        else if (innerBoxSize <= 8)
+                        {
+                            break;
+                        }
                     }
 
-                    // Convert from MP4 epoch (1904) to .NET DateTime
-                    return Mp4Epoch.AddSeconds(creationTime);
+                    // mvhd not found in moov, but don't continue searching root level
+                    return null;
                 }
 
                 // Skip this box and move to the next

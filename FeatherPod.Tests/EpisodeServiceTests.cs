@@ -280,48 +280,6 @@ public class EpisodeServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task AddEpisodeAsync_ShouldUseFileModifiedDateForPublishedDate()
-    {
-        // Arrange
-        var service = CreateServiceWithFileMetadata(useFileMetadata: true);
-        await service.InitializeAsync();
-
-        var testFile = Path.Combine(_testDirectory, "test.mp3");
-        await File.WriteAllTextAsync(testFile, "audio data");
-
-        // Set a specific modified time
-        var specificDate = new DateTime(2024, 1, 15, 10, 30, 0, DateTimeKind.Utc);
-        File.SetLastWriteTimeUtc(testFile, specificDate);
-
-        // Act
-        var episode = await service.AddEpisodeAsync(testFile, "Test");
-
-        // Assert
-        episode.PublishedDate.Should().BeCloseTo(specificDate, TimeSpan.FromSeconds(2));
-    }
-
-    [Fact]
-    public async Task AddEpisodeAsync_ShouldUseFileCreationDateWhenModifiedDateNotAvailable()
-    {
-        // Arrange
-        var service = CreateServiceWithFileMetadata(useFileMetadata: true);
-        await service.InitializeAsync();
-
-        var testFile = Path.Combine(_testDirectory, "test.mp3");
-        await File.WriteAllTextAsync(testFile, "audio data");
-
-        // Set a specific creation time (modified time will be recent)
-        var specificDate = new DateTime(2024, 1, 10, 8, 0, 0, DateTimeKind.Utc);
-        File.SetCreationTimeUtc(testFile, specificDate);
-
-        // Act
-        var episode = await service.AddEpisodeAsync(testFile, "Test");
-
-        // Assert - Should use modified date (which is more recent than creation date)
-        episode.PublishedDate.Should().BeAfter(specificDate);
-    }
-
-    [Fact]
     public void ParseTitleFromFilename_ShouldReplaceUnderscoresWithSpaces()
     {
         // Act

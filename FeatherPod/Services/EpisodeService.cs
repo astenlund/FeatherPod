@@ -321,9 +321,7 @@ public class EpisodeService : IDisposable
         // Priority order:
         // 1. TagLib DateTagged from audio metadata (user-editable, all formats)
         // 2. MP4 container creation time (mvhd box) - for M4A/MP4 files
-        // 3. File modified date
-        // 4. File created date
-        // 5. Current time
+        // 3. Current time (file timestamps are unreliable after upload)
 
         // Try to get media created date from tag (highest priority)
         try
@@ -343,8 +341,12 @@ public class EpisodeService : IDisposable
                 var dateTagged = task.Result;
                 if (dateTagged.HasValue && dateTagged.Value > DateTime.MinValue)
                 {
-                    _logger.LogDebug("Using DateTagged for {File}: {Date}", filePath, dateTagged.Value);
+                    _logger.LogInformation("Using DateTagged for {File}: {Date}", filePath, dateTagged.Value);
                     return dateTagged.Value.ToUniversalTime();
+                }
+                else
+                {
+                    _logger.LogDebug("DateTagged is null or MinValue for {File}, trying next method", filePath);
                 }
             }
             else
@@ -354,7 +356,7 @@ public class EpisodeService : IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Could not read metadata date from {File}", filePath);
+            _logger.LogDebug(ex, "Could not read metadata date from {File}, trying next method", filePath);
         }
 
         // For M4A/MP4 files, try to get creation time from container metadata
@@ -364,36 +366,13 @@ public class EpisodeService : IDisposable
             var mp4CreationTime = Mp4Parser.GetCreationTime(filePath);
             if (mp4CreationTime.HasValue && mp4CreationTime.Value > DateTime.MinValue)
             {
-                _logger.LogDebug("Using MP4 container creation time for {File}: {Date}", filePath, mp4CreationTime.Value);
+                _logger.LogInformation("Using MP4 container creation time for {File}: {Date}", filePath, mp4CreationTime.Value);
                 return mp4CreationTime.Value;
             }
         }
 
-        try
-        {
-            var fileInfo = new FileInfo(filePath);
-
-            // Try file modified date
-            if (fileInfo.LastWriteTimeUtc > DateTime.MinValue)
-            {
-                _logger.LogDebug("Using LastWriteTime for {File}: {Date}", filePath, fileInfo.LastWriteTimeUtc);
-                return fileInfo.LastWriteTimeUtc;
-            }
-
-            // Try file created date
-            if (fileInfo.CreationTimeUtc > DateTime.MinValue)
-            {
-                _logger.LogDebug("Using CreationTime for {File}: {Date}", filePath, fileInfo.CreationTimeUtc);
-                return fileInfo.CreationTimeUtc;
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not read file dates from {File}", filePath);
-        }
-
-        // Fallback to current time
-        _logger.LogDebug("Using current time for {File}", filePath);
+        // Fallback to current time (file timestamps are unreliable after upload)
+        _logger.LogInformation("Using current time fallback for {File}", filePath);
         return DateTime.UtcNow;
     }
 
