@@ -21,6 +21,9 @@ TestResults/
 *.userosscache
 *.sln.docstates
 
+# Local settings files (API keys, secrets)
+*.Local.json
+
 # Episode data (customize as needed)
 Episodes/
 Watch/

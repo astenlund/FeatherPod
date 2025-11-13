@@ -8,29 +8,65 @@ Console.WriteLine();
 
 try
 {
-    // Build configuration
-    var environment = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
-        ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
-        ?? "Production";
+    // Parse command line arguments for environment
+    string? selectedEnvironment = null;
 
-    Console.WriteLine($"Environment: {environment}");
+    for (int i = 0; i < args.Length; i++)
+    {
+        if (args[i] == "--environment" || args[i] == "--env" || args[i] == "-e")
+        {
+            if (i + 1 < args.Length)
+            {
+                selectedEnvironment = args[i + 1];
+                break;
+            }
+        }
+    }
+
+    // If no environment specified, show interactive menu
+    if (string.IsNullOrEmpty(selectedEnvironment))
+    {
+        selectedEnvironment = ShowEnvironmentMenu();
+    }
+
+    // Validate environment
+    if (selectedEnvironment != "Development" && selectedEnvironment != "Test" && selectedEnvironment != "Prod")
+    {
+        Console.WriteLine($"Invalid environment: {selectedEnvironment}");
+        Console.WriteLine("Valid options: Development, Test, Prod");
+        return;
+    }
+
+    Console.WriteLine($"Environment: {selectedEnvironment}");
+    Console.WriteLine();
 
     var configuration = new ConfigurationBuilder()
         .SetBasePath(AppContext.BaseDirectory)
         .AddJsonFile("appsettings.json", optional: false)
-        .AddJsonFile($"appsettings.{environment}.json", optional: true)
+        .AddJsonFile($"appsettings.{selectedEnvironment}.json", optional: true)
+        .AddJsonFile($"appsettings.{selectedEnvironment}.Local.json", optional: true) // Local overrides (not in git)
         .AddEnvironmentVariables()
         .Build();
 
     var apiBaseUrl = configuration["Api:BaseUrl"]
         ?? throw new InvalidOperationException("Api:BaseUrl not configured in appsettings.json");
 
-    // API key must come from environment variable (not checked into source control)
-    var apiKey = configuration["Api:ApiKey"]
-        ?? throw new InvalidOperationException(
-            "Api:ApiKey not set. Please set environment variable:\n" +
-            "  $env:Api__ApiKey = \"your-api-key-here\"  (PowerShell)\n" +
-            "  export Api__ApiKey=\"your-api-key-here\"  (Bash)");
+    // API key from local file or environment variable (both not in source control)
+    var apiKey = configuration["Api:ApiKey"];
+
+    if (string.IsNullOrEmpty(apiKey))
+    {
+        Console.WriteLine("ERROR: API key not configured.");
+        Console.WriteLine();
+        Console.WriteLine("Option 1 (Recommended): Create a local settings file:");
+        Console.WriteLine($"  File: appsettings.{selectedEnvironment}.Local.json");
+        Console.WriteLine("  Content: { \"Api\": { \"ApiKey\": \"your-api-key-here\" } }");
+        Console.WriteLine();
+        Console.WriteLine("Option 2: Set environment variable:");
+        Console.WriteLine("  $env:Api__ApiKey = \"your-api-key-here\"  (PowerShell)");
+        Console.WriteLine("  export Api__ApiKey=\"your-api-key-here\"  (Bash)");
+        return;
+    }
 
     Console.WriteLine($"API: {apiBaseUrl}");
     Console.WriteLine();
@@ -280,4 +316,90 @@ static string FormatDuration(TimeSpan duration)
         return $"{(int)duration.TotalHours}:{duration.Minutes:D2}:{duration.Seconds:D2}";
     else
         return $"{duration.Minutes}:{duration.Seconds:D2}";
+}
+
+static string ShowEnvironmentMenu()
+{
+    var environments = new[] { "Development", "Test", "Prod" };
+    var descriptions = new[]
+    {
+        "Local development (localhost:8080 with Azurite)",
+        "Test environment (featherpod-test.azurewebsites.net)",
+        "Production (featherpod.azurewebsites.net)"
+    };
+
+    int selectedIndex = 0;
+
+    Console.WriteLine("Select environment:");
+    Console.WriteLine();
+
+    while (true)
+    {
+        // Display menu
+        for (int i = 0; i < environments.Length; i++)
+        {
+            if (i == selectedIndex)
+            {
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.Write(" > ");
+            }
+            else
+            {
+                Console.Write("   ");
+            }
+
+            Console.Write($"{i + 1}. {environments[i]}");
+            Console.ResetColor();
+            Console.WriteLine($" - {descriptions[i]}");
+        }
+
+        Console.WriteLine();
+        Console.Write("Select (1-3, arrows, or Enter): ");
+
+        var key = Console.ReadKey(intercept: true);
+        Console.WriteLine();
+
+        // Handle number keys
+        if (key.KeyChar >= '1' && key.KeyChar <= '3')
+        {
+            selectedIndex = key.KeyChar - '1';
+
+            // Wait for Enter or accept immediately
+            var nextKey = Console.ReadKey(intercept: true);
+            if (nextKey.Key == ConsoleKey.Enter || nextKey.KeyChar == '\r' || nextKey.KeyChar == '\n')
+            {
+                Console.WriteLine();
+                return environments[selectedIndex];
+            }
+            else
+            {
+                Console.WriteLine();
+                return environments[selectedIndex];
+            }
+        }
+
+        // Handle arrow keys
+        if (key.Key == ConsoleKey.UpArrow)
+        {
+            selectedIndex = (selectedIndex - 1 + environments.Length) % environments.Length;
+        }
+        else if (key.Key == ConsoleKey.DownArrow)
+        {
+            selectedIndex = (selectedIndex + 1) % environments.Length;
+        }
+        else if (key.Key == ConsoleKey.Enter)
+        {
+            Console.WriteLine();
+            return environments[selectedIndex];
+        }
+
+        // Clear previous menu
+        Console.SetCursorPosition(0, Console.CursorTop - environments.Length - 2);
+        for (int i = 0; i < environments.Length + 2; i++)
+        {
+            Console.Write(new string(' ', Console.WindowWidth - 1));
+            Console.WriteLine();
+        }
+        Console.SetCursorPosition(0, Console.CursorTop - environments.Length - 2);
+    }
 }
