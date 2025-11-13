@@ -1,7 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Xml.Linq;
-using FluentAssertions;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -107,13 +106,13 @@ public class IntegrationTests : IDisposable
         var response = await _client.GetAsync("/feed.xml");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        response.Content.Headers.ContentType!.MediaType.Should().Be("application/xml");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/xml", response.Content.Headers.ContentType!.MediaType);
 
         var content = await response.Content.ReadAsStringAsync();
         var doc = XDocument.Parse(content);
-        doc.Root!.Name.LocalName.Should().Be("rss");
-        doc.Root.Element("channel")!.Element("title")!.Value.Should().Be("Test Podcast");
+        Assert.Equal("rss", doc.Root!.Name.LocalName);
+        Assert.Equal("Test Podcast", doc.Root.Element("channel")!.Element("title")!.Value);
     }
 
     [AzuriteFact]
@@ -136,9 +135,9 @@ public class IntegrationTests : IDisposable
         var postResponse = await _client.SendAsync(request);
 
         // Assert - Episode created
-        postResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        Assert.Equal(HttpStatusCode.Created, postResponse.StatusCode);
         var createdEpisode = await postResponse.Content.ReadAsStringAsync();
-        createdEpisode.Should().Contain("Test Episode");
+        Assert.Contains("Test Episode", createdEpisode);
 
         // Act - Get feed
         var feedResponse = await _client.GetAsync("/feed.xml");
@@ -147,9 +146,9 @@ public class IntegrationTests : IDisposable
 
         // Assert - Episode appears in feed
         var items = doc.Root!.Element("channel")!.Elements("item").ToList();
-        items.Should().HaveCount(1);
-        items[0].Element("title")!.Value.Should().Be("Test Episode");
-        items[0].Element("description")!.Value.Should().Be("This is a test episode");
+        Assert.Single(items);
+        Assert.Equal("Test Episode", items[0].Element("title")!.Value);
+        Assert.Equal("This is a test episode", items[0].Element("description")!.Value);
     }
 
     [AzuriteFact]
@@ -174,10 +173,10 @@ public class IntegrationTests : IDisposable
         var response = await _client.GetAsync("/audio/test-audio.mp3");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        response.Content.Headers.ContentType!.MediaType.Should().Be("audio/mpeg");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("audio/mpeg", response.Content.Headers.ContentType!.MediaType);
         var downloadedContent = await response.Content.ReadAsByteArrayAsync();
-        downloadedContent.Should().BeEquivalentTo(audioData);
+        Assert.Equal(audioData, downloadedContent);
     }
 
     [AzuriteFact]
@@ -187,7 +186,7 @@ public class IntegrationTests : IDisposable
         var response = await _client.GetAsync("/audio/nonexistent.mp3");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [AzuriteFact]
@@ -217,14 +216,14 @@ public class IntegrationTests : IDisposable
         var deleteResponse = await _client.SendAsync(deleteRequest);
 
         // Assert
-        deleteResponse.StatusCode.Should().Be(HttpStatusCode.NoContent);
+        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
 
         // Verify it's gone from feed
         var feedResponse = await _client.GetAsync("/feed.xml");
         var feedContent = await feedResponse.Content.ReadAsStringAsync();
         var doc = XDocument.Parse(feedContent);
         var items = doc.Root!.Element("channel")!.Elements("item").ToList();
-        items.Should().BeEmpty();
+        Assert.Empty(items);
     }
 
     [AzuriteFact]
@@ -250,10 +249,10 @@ public class IntegrationTests : IDisposable
         var response = await _client.GetAsync("/api/episodes");
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var contentText = await response.Content.ReadAsStringAsync();
-        contentText.Should().Contain("Episode 1");
-        contentText.Should().Contain("Episode 2");
+        Assert.Contains("Episode 1", contentText);
+        Assert.Contains("Episode 2", contentText);
     }
 
     [AzuriteFact]
@@ -270,7 +269,7 @@ public class IntegrationTests : IDisposable
         var response = await _client.PostAsync("/api/episodes", content);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     [AzuriteFact]
@@ -291,7 +290,7 @@ public class IntegrationTests : IDisposable
         var response = await _client.SendAsync(request);
 
         // Assert
-        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
 }

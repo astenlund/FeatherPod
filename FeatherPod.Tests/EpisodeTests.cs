@@ -1,4 +1,3 @@
-using FluentAssertions;
 using FeatherPod.Models;
 
 namespace FeatherPod.Tests;
@@ -18,7 +17,7 @@ public class EpisodeTests
         var id2 = Episode.GenerateId(fileName, fileSize);
 
         // Assert
-        id1.Should().Be(id2);
+        Assert.Equal(id1, id2);
     }
 
     [Fact]
@@ -32,7 +31,7 @@ public class EpisodeTests
         var id2 = Episode.GenerateId("file2.mp3", fileSize);
 
         // Assert
-        id1.Should().NotBe(id2);
+        Assert.NotEqual(id1, id2);
     }
 
     [Fact]
@@ -46,7 +45,7 @@ public class EpisodeTests
         var id2 = Episode.GenerateId(fileName, 2000L);
 
         // Assert
-        id1.Should().NotBe(id2);
+        Assert.NotEqual(id1, id2);
     }
 
     [Fact]
@@ -60,8 +59,8 @@ public class EpisodeTests
         var id = Episode.GenerateId(fileName, fileSize);
 
         // Assert
-        id.Should().HaveLength(12);
-        id.Should().MatchRegex("^[0-9a-f]{12}$");
+        Assert.Equal(12, id.Length);
+        Assert.Matches("^[0-9a-f]{12}$", id);
     }
 
     [Fact]
@@ -80,7 +79,7 @@ public class EpisodeTests
         var audioUrl = episode.GetAudioUrl(baseUrl);
 
         // Assert
-        audioUrl.Should().Be("http://localhost:5000/audio/my-episode.mp3");
+        Assert.Equal("http://localhost:5000/audio/my-episode.mp3", audioUrl);
     }
 
     [Fact]
@@ -99,7 +98,7 @@ public class EpisodeTests
         var audioUrl = episode.GetAudioUrl(baseUrl);
 
         // Assert
-        audioUrl.Should().Contain("%20");
-        audioUrl.Should().StartWith("http://localhost:5000/audio/");
+        Assert.Contains("%20", audioUrl);
+        Assert.StartsWith("http://localhost:5000/audio/", audioUrl);
     }
 }

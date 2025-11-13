@@ -1,7 +1,5 @@
-using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Moq;
 using FeatherPod.Models;
 using FeatherPod.Services;
 
@@ -99,8 +97,8 @@ public class EpisodeServiceTests : IDisposable
         var episodes = await service.GetAllEpisodesAsync();
 
         // Assert
-        episodes.Should().HaveCount(1);
-        episodes[0].Title.Should().Be("Test Episode");
+        Assert.Single(episodes);
+        Assert.Equal("Test Episode", episodes[0].Title);
     }
 
     [Fact]
@@ -124,9 +122,9 @@ public class EpisodeServiceTests : IDisposable
         var episodes = await service.GetAllEpisodesAsync();
 
         // Assert
-        episodes.Should().HaveCount(2);
-        episodes[0].Title.Should().Be("Episode 2"); // Most recent first
-        episodes[1].Title.Should().Be("Episode 1");
+        Assert.Equal(2, episodes.Count);
+        Assert.Equal("Episode 2", episodes[0].Title); // Most recent first
+        Assert.Equal("Episode 1", episodes[1].Title);
     }
 
     [Fact]
@@ -145,7 +143,7 @@ public class EpisodeServiceTests : IDisposable
         var episode = await service.AddEpisodeAsync(testFile, "Test");
 
         // Assert
-        episode.Id.Should().Be(expectedId);
+        Assert.Equal(expectedId, episode.Id);
     }
 
     [Fact]
@@ -163,7 +161,7 @@ public class EpisodeServiceTests : IDisposable
 
         // Assert
         var copiedFile = Path.Combine(_episodesPath, "test.mp3");
-        File.Exists(copiedFile).Should().BeTrue();
+        Assert.True(File.Exists(copiedFile));
     }
 
     [Fact]
@@ -183,8 +181,8 @@ public class EpisodeServiceTests : IDisposable
         var episodes = await service.GetAllEpisodesAsync();
 
         // Assert
-        episodes.Should().HaveCount(1);
-        episodes[0].Title.Should().Be("Test 1"); // Original title preserved
+        Assert.Single(episodes);
+        Assert.Equal("Test 1", episodes[0].Title); // Original title preserved
     }
 
     [Fact]
@@ -203,12 +201,12 @@ public class EpisodeServiceTests : IDisposable
         var result = await service.DeleteEpisodeAsync(episode.Id);
 
         // Assert
-        result.Should().BeTrue();
+        Assert.True(result);
         var episodes = await service.GetAllEpisodesAsync();
-        episodes.Should().BeEmpty();
+        Assert.Empty(episodes);
 
         var audioFile = Path.Combine(_episodesPath, "test.mp3");
-        File.Exists(audioFile).Should().BeFalse();
+        Assert.False(File.Exists(audioFile));
     }
 
     [Fact]
@@ -222,7 +220,7 @@ public class EpisodeServiceTests : IDisposable
         var result = await service.DeleteEpisodeAsync("nonexistent");
 
         // Assert
-        result.Should().BeFalse();
+        Assert.False(result);
     }
 
     [Fact]
@@ -247,7 +245,7 @@ public class EpisodeServiceTests : IDisposable
         var episodes = await service.GetAllEpisodesAsync();
 
         // Assert
-        episodes.Should().BeEmpty();
+        Assert.Empty(episodes);
     }
 
     [Fact]
@@ -266,8 +264,8 @@ public class EpisodeServiceTests : IDisposable
         var episode = await service.GetEpisodeByIdAsync(addedEpisode.Id);
 
         // Assert
-        episode.Should().NotBeNull();
-        episode.Title.Should().Be("Test");
+        Assert.NotNull(episode);
+        Assert.Equal("Test", episode.Title);
     }
 
     [Fact]
@@ -281,7 +279,7 @@ public class EpisodeServiceTests : IDisposable
         var episode = await service.GetEpisodeByIdAsync("nonexistent");
 
         // Assert
-        episode.Should().BeNull();
+        Assert.Null(episode);
     }
 
     [Fact]
@@ -291,7 +289,7 @@ public class EpisodeServiceTests : IDisposable
         var result = EpisodeService.ParseTitleFromFilename("2000_FPS_Image_Rendering__How_GaussianImage_Broke_the_Speed_Bar.m4a");
 
         // Assert
-        result.Should().Be("2000 FPS Image Rendering How Gaussian Image Broke the Speed Bar");
+        Assert.Equal("2000 FPS Image Rendering How Gaussian Image Broke the Speed Bar", result);
     }
 
     [Fact]
@@ -301,7 +299,7 @@ public class EpisodeServiceTests : IDisposable
         var result = EpisodeService.ParseTitleFromFilename("MyPodcastEpisode.mp3");
 
         // Assert
-        result.Should().Be("My Podcast Episode");
+        Assert.Equal("My Podcast Episode", result);
     }
 
     [Fact]
@@ -311,7 +309,7 @@ public class EpisodeServiceTests : IDisposable
         var result = EpisodeService.ParseTitleFromFilename("Episode_01_TheBeginning.mp3");
 
         // Assert
-        result.Should().Be("Episode 01 The Beginning");
+        Assert.Equal("Episode 01 The Beginning", result);
     }
 
     [Fact]
@@ -321,7 +319,7 @@ public class EpisodeServiceTests : IDisposable
         var result = EpisodeService.ParseTitleFromFilename("Introduction_to_2D_Graphics.mp3");
 
         // Assert - "2D" should remain as "2D", not become "2 D"
-        result.Should().Be("Introduction to 2D Graphics");
+        Assert.Equal("Introduction to 2D Graphics", result);
     }
 
     public void Dispose()

@@ -1,5 +1,4 @@
 using System.Xml.Linq;
-using FluentAssertions;
 using Microsoft.Extensions.Configuration;
 using FeatherPod.Models;
 using FeatherPod.Services;
@@ -44,11 +43,11 @@ public class RssFeedGeneratorTests
 
         // Assert
         var channel = doc.Root!.Element("channel");
-        channel.Should().NotBeNull();
-        channel.Element("title")!.Value.Should().Be("Test Podcast");
-        channel.Element("description")!.Value.Should().Be("A test podcast");
-        channel.Element("language")!.Value.Should().Be("en-us");
-        channel.Element(ns + "author")!.Value.Should().Be("Test Author");
+        Assert.NotNull(channel);
+        Assert.Equal("Test Podcast", channel.Element("title")!.Value);
+        Assert.Equal("A test podcast", channel.Element("description")!.Value);
+        Assert.Equal("en-us", channel.Element("language")!.Value);
+        Assert.Equal("Test Author", channel.Element(ns + "author")!.Value);
     }
 
     [Fact]
@@ -65,8 +64,8 @@ public class RssFeedGeneratorTests
         // Assert
         var rss = doc.Root!;
         var itunesNamespace = rss.GetNamespaceOfPrefix("itunes");
-        itunesNamespace.Should().NotBeNull();
-        itunesNamespace.NamespaceName.Should().Be("http://www.itunes.com/dtds/podcast-1.0.dtd");
+        Assert.NotNull(itunesNamespace);
+        Assert.Equal("http://www.itunes.com/dtds/podcast-1.0.dtd", itunesNamespace.NamespaceName);
     }
 
     [Fact]
@@ -104,7 +103,7 @@ public class RssFeedGeneratorTests
 
         // Assert
         var items = doc.Root!.Element("channel")!.Elements("item").ToList();
-        items.Should().HaveCount(2);
+        Assert.Equal(2, items.Count);
     }
 
     [Fact]
@@ -147,9 +146,9 @@ public class RssFeedGeneratorTests
 
         // Assert
         var items = doc.Root!.Element("channel")!.Elements("item").ToList();
-        items[0].Element("title")!.Value.Should().Be("Newest");
-        items[1].Element("title")!.Value.Should().Be("Middle");
-        items[2].Element("title")!.Value.Should().Be("Oldest");
+        Assert.Equal("Newest", items[0].Element("title")!.Value);
+        Assert.Equal("Middle", items[1].Element("title")!.Value);
+        Assert.Equal("Oldest", items[2].Element("title")!.Value);
     }
 
     [Fact]
@@ -175,10 +174,10 @@ public class RssFeedGeneratorTests
 
         // Assert
         var enclosure = doc.Root!.Element("channel")!.Element("item")!.Element("enclosure");
-        enclosure.Should().NotBeNull();
-        enclosure.Attribute("url")!.Value.Should().Be("http://localhost:5000/audio/test.mp3");
-        enclosure.Attribute("length")!.Value.Should().Be("12345");
-        enclosure.Attribute("type")!.Value.Should().Be("audio/mpeg");
+        Assert.NotNull(enclosure);
+        Assert.Equal("http://localhost:5000/audio/test.mp3", enclosure.Attribute("url")!.Value);
+        Assert.Equal("12345", enclosure.Attribute("length")!.Value);
+        Assert.Equal("audio/mpeg", enclosure.Attribute("type")!.Value);
     }
 
     [Fact]
@@ -204,7 +203,7 @@ public class RssFeedGeneratorTests
 
         // Assert
         var enclosure = doc.Root!.Element("channel")!.Element("item")!.Element("enclosure");
-        enclosure!.Attribute("type")!.Value.Should().Be("audio/mp4");
+        Assert.Equal("audio/mp4", enclosure!.Attribute("type")!.Value);
     }
 
     [Fact]
@@ -232,8 +231,8 @@ public class RssFeedGeneratorTests
 
         // Assert
         var duration = doc.Root!.Element("channel")!.Element("item")!.Element(ns + "duration");
-        duration.Should().NotBeNull();
-        duration.Value.Should().Be("01:23:45");
+        Assert.NotNull(duration);
+        Assert.Equal("01:23:45", duration.Value);
     }
 
     [Fact]
@@ -250,9 +249,9 @@ public class RssFeedGeneratorTests
 
         // Assert
         var owner = doc.Root!.Element("channel")!.Element(ns + "owner");
-        owner.Should().NotBeNull();
-        owner.Element(ns + "name")!.Value.Should().Be("Test Author");
-        owner.Element(ns + "email")!.Value.Should().Be("test@example.com");
+        Assert.NotNull(owner);
+        Assert.Equal("Test Author", owner.Element(ns + "name")!.Value);
+        Assert.Equal("test@example.com", owner.Element(ns + "email")!.Value);
     }
 
     [Fact]
@@ -269,8 +268,8 @@ public class RssFeedGeneratorTests
 
         // Assert
         var category = doc.Root!.Element("channel")!.Element(ns + "category");
-        category.Should().NotBeNull();
-        category.Attribute("text")!.Value.Should().Be("Technology");
+        Assert.NotNull(category);
+        Assert.Equal("Technology", category.Attribute("text")!.Value);
     }
 
     [Fact]
@@ -295,7 +294,7 @@ public class RssFeedGeneratorTests
         var feedXml = generator.GenerateFeed(episodes);
 
         // Assert - Should not throw
-        var action = () => XDocument.Parse(feedXml);
-        action.Should().NotThrow();
+        var exception = Record.Exception(() => XDocument.Parse(feedXml));
+        Assert.Null(exception);
     }
 }
