@@ -12,7 +12,7 @@ public class EpisodeServiceTests : IDisposable
 {
     private readonly string _testDirectory;
     private readonly string _episodesPath;
-    private readonly Mock<ILogger<EpisodeService>> _loggerMock;
+    private readonly ILogger<EpisodeService> _logger;
     private readonly IConfiguration _configuration;
 
     private readonly List<EpisodeService> _servicesToDispose = new();
@@ -25,7 +25,12 @@ public class EpisodeServiceTests : IDisposable
 
         Directory.CreateDirectory(_testDirectory);
 
-        _loggerMock = new Mock<ILogger<EpisodeService>>();
+        // Create logger that suppresses warnings from test dummy files
+        var loggerFactory = LoggerFactory.Create(builder =>
+        {
+            builder.SetMinimumLevel(LogLevel.Error); // Only show errors and above
+        });
+        _logger = loggerFactory.CreateLogger<EpisodeService>();
 
         // Create test configuration
         var configData = new Dictionary<string, string>
@@ -43,7 +48,7 @@ public class EpisodeServiceTests : IDisposable
         var blobStorage = new TestBlobStorageService(_testDirectory);
         _blobServicesToDispose.Add(blobStorage);
 
-        var service = new EpisodeService(blobStorage, _configuration, _loggerMock.Object);
+        var service = new EpisodeService(blobStorage, _configuration, _logger);
         _servicesToDispose.Add(service);
         return service;
     }
@@ -62,7 +67,7 @@ public class EpisodeServiceTests : IDisposable
         var blobStorage = new TestBlobStorageService(_testDirectory);
         _blobServicesToDispose.Add(blobStorage);
 
-        var service = new EpisodeService(blobStorage, configuration, _loggerMock.Object);
+        var service = new EpisodeService(blobStorage, configuration, _logger);
         _servicesToDispose.Add(service);
         return service;
     }

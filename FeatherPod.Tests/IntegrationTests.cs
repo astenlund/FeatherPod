@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using FeatherPod.Services;
 
 namespace FeatherPod.Tests;
@@ -53,6 +54,15 @@ public class FeatherPodWebApplicationFactory : WebApplicationFactory<Program>
                 // API Key for authenticated endpoints
                 ["ApiKey"] = ApiKey
             }!);
+        });
+
+        // Suppress warnings from test dummy files
+        builder.ConfigureLogging(logging =>
+        {
+            logging.ClearProviders();
+            logging.AddConsole();
+            logging.AddFilter("FeatherPod.Services.EpisodeService", LogLevel.Error);
+            logging.SetMinimumLevel(LogLevel.Information);
         });
 
         return base.CreateHost(builder);
