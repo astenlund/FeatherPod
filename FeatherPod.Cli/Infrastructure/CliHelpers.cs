@@ -83,8 +83,7 @@ internal static class CliHelpers
             return (null, null);
         }
 
-        AnsiConsole.MarkupLine($"API: [cyan]{apiBaseUrl}[/]");
-        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine($"API: [cyan]{apiBaseUrl}/api[/]");
 
         var httpClient = new HttpClient
         {
@@ -101,7 +100,9 @@ internal static class CliHelpers
                     response.EnsureSuccessStatusCode();
                 });
 
+            AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine("[green]✓[/] Connected");
+            AnsiConsole.WriteLine();
         }
         catch (Exception ex)
         {
@@ -111,8 +112,6 @@ internal static class CliHelpers
             AnsiConsole.MarkupLine("Make sure the FeatherPod API is running and accessible.");
             return (null, null);
         }
-
-        AnsiConsole.WriteLine();
 
         return (httpClient, configuration);
     }
@@ -130,6 +129,7 @@ internal static class CliHelpers
             if (episodes.Count == 0)
             {
                 AnsiConsole.MarkupLine("[yellow]No episodes found.[/]");
+                AnsiConsole.WriteLine();
                 return;
             }
 
@@ -138,7 +138,7 @@ internal static class CliHelpers
             table.AddColumn("#");
             table.AddColumn("Published");
             table.AddColumn("Title");
-            table.AddColumn("File");
+            table.AddColumn("URL");
             table.AddColumn("Size");
             table.AddColumn("Duration");
 
@@ -153,16 +153,16 @@ internal static class CliHelpers
                     $"[grey]{i + 1}[/]",
                     $"[grey]{formattedDate}[/]",
                     Markup.Escape(episode.Title),
-                    $"[cyan]{episode.FileName}[/]",
+                    $"[cyan]{Markup.Escape(episode.Url)}[/]",
                     formattedSize,
                     formattedDuration
                 );
             }
 
-            AnsiConsole.WriteLine();
             AnsiConsole.Write(table);
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine($"[grey]Total: {episodes.Count} episodes[/]");
+            AnsiConsole.WriteLine();
         }
         catch (HttpRequestException ex)
         {
@@ -173,10 +173,10 @@ internal static class CliHelpers
     private static bool ConfirmDelete(Episode episode)
     {
         var result = new MenuBuilder<bool?>()
-            .WithTitle($"Delete [red]{Markup.Escape(episode.Title)}[/] ({episode.FileName})?")
+            .WithTitle($"[red]Delete[/] {Markup.Escape(episode.Title)}?")
             .WithHint("(arrow keys or Y/N, Esc to cancel)")
-            .AddOption("Y", "[red]Yes[/]", true)
-            .AddOption("N", "[green]No[/]", false)
+            .AddOption("Y", "Yes", true)
+            .AddOption("N", "No", false)
             .AllowCancel(true, false)
             .Show();
 
@@ -217,6 +217,7 @@ internal static class CliHelpers
             if (episodes.Count == 0)
             {
                 AnsiConsole.MarkupLine("[yellow]No episodes to delete.[/]");
+                AnsiConsole.WriteLine();
                 return;
             }
 
@@ -226,6 +227,7 @@ internal static class CliHelpers
             if (selectedIndex == -1)
             {
                 AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                AnsiConsole.WriteLine();
                 return;
             }
 
@@ -344,7 +346,7 @@ internal static class CliHelpers
                     {
                         content.Add(new StringContent(settings.PublishedDate), "publishedDate");
                     }
-                    else if (settings.ExtractDateFromFile)
+                    else if (settings.ExtractDateFromFile == true)
                     {
                         content.Add(new StringContent("true"), "useMetadataForPublishedDate");
                     }
@@ -360,10 +362,13 @@ internal static class CliHelpers
                         var episode = JsonSerializer.Deserialize<Episode>(responseContent, JsonSerializerOptions);
 
                         AnsiConsole.MarkupLine($"[green]✓[/] Uploaded: [cyan]{fileName}[/]");
+                        AnsiConsole.WriteLine();
+
                         if (episode != null)
                         {
                             AnsiConsole.MarkupLine($"  ID: [grey]{episode.Id}[/]");
                             AnsiConsole.MarkupLine($"  Title: {Markup.Escape(episode.Title)}");
+                            AnsiConsole.MarkupLine($"  Published: [grey]{episode.PublishedDate:yyyy-MM-dd HH:mm:ss}[/]");
                             AnsiConsole.MarkupLine($"  Duration: [grey]{FormatDuration(episode.Duration)}[/]");
                             AnsiConsole.MarkupLine($"  Size: [grey]{FormatFileSize(episode.FileSize)}[/]");
                         }

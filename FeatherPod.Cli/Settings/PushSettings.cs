@@ -27,5 +27,5 @@ internal sealed class PushSettings : CommandSettings
 
     [CommandOption("-x|--extract-date-from-file")]
     [Description("Extract published date from file metadata")]
-    public bool ExtractDateFromFile { get; init; }
+    public bool? ExtractDateFromFile { get; init; }
 }

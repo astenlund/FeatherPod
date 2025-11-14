@@ -90,9 +90,18 @@ app.MapGet("/audio/{filename}", async (string filename, IBlobStorageService blob
 .Produces(404);
 
 // List all episodes
-app.MapGet("/api/episodes", async (EpisodeService service) =>
+app.MapGet("/api/episodes", async (EpisodeService service, IConfiguration configuration) =>
 {
     var episodes = await service.GetAllEpisodesAsync();
+    var podcastConfig = configuration.GetSection("Podcast").Get<PodcastConfig>();
+    var baseUrl = podcastConfig?.BaseUrl ?? string.Empty;
+
+    // Populate URL for each episode
+    foreach (var episode in episodes)
+    {
+        episode.Url = episode.GetAudioUrl(baseUrl);
+    }
+
     return Results.Ok(episodes);
 })
 .WithName("ListEpisodes")

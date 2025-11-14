@@ -9,6 +9,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, PushSettings settings, CancellationToken cancellationToken)
     {
+        AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("[bold]FeatherPod Episode Upload[/]");
         AnsiConsole.WriteLine();
 
@@ -28,14 +29,42 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         }
 
         AnsiConsole.MarkupLine($"Found [cyan]{files.Count}[/] file(s) to upload");
-        AnsiConsole.WriteLine();
+
+        // Prompt for date source if neither -p nor -x was provided
+        var effectiveSettings = settings;
+        if (string.IsNullOrEmpty(settings.PublishedDate) && settings.ExtractDateFromFile == null)
+        {
+            var dateSource = new MenuBuilder<bool?>()
+                .WithTitle("Published date source:")
+                .WithHint("(arrow keys or highlighted letter, Esc to cancel)")
+                .AddOption("C", "Current date/time", false)
+                .AddOption("F", "Extract from file metadata", true)
+                .AllowCancel(true, null)
+                .Show();
+
+            if (dateSource == null)
+            {
+                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                return 1;
+            }
+
+            effectiveSettings = new PushSettings
+            {
+                Files = settings.Files,
+                Environment = settings.Environment,
+                Title = settings.Title,
+                Description = settings.Description,
+                PublishedDate = settings.PublishedDate,
+                ExtractDateFromFile = dateSource
+            };
+        }
 
         var successCount = 0;
         var failureCount = 0;
 
         foreach (var file in files)
         {
-            var success = await CliHelpers.UploadEpisodeAsync(httpClient, file, settings);
+            var success = await CliHelpers.UploadEpisodeAsync(httpClient, file, effectiveSettings);
             if (success)
                 successCount++;
             else
@@ -45,7 +74,6 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         }
 
         // Summary
-        AnsiConsole.WriteLine();
         if (successCount > 0)
         {
             AnsiConsole.MarkupLine($"[green]✓[/] Successfully uploaded: {successCount}");
@@ -55,6 +83,8 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         {
             AnsiConsole.MarkupLine($"[red]✗[/] Failed: {failureCount}");
         }
+
+        AnsiConsole.WriteLine();
 
         return failureCount == 0 ? 0 : 1;
     }

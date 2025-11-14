@@ -12,6 +12,7 @@ public class Episode
     public long FileSize { get; set; }
     public TimeSpan Duration { get; set; }
     public DateTime PublishedDate { get; set; }
+    public string Url { get; set; } = string.Empty;
 
     public static string GenerateId(string fileName, long fileSize)
     {

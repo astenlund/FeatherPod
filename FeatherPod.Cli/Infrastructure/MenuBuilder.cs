@@ -58,28 +58,15 @@ internal class MenuBuilder<T>
                     var prefix = i == selected ? "[cyan]>[/] " : "  ";
 
                     var label = option.Formatter?.Invoke(i) ?? option.Label;
+                    var formattedLabel = FormatLabelWithShortcut(label, option.Shortcut, i == selected);
 
                     if (i == selected)
                     {
-                        if (!string.IsNullOrEmpty(option.Shortcut))
-                        {
-                            AnsiConsole.MarkupLine($"{prefix}[bold cyan]{option.Shortcut}[/] - {label}");
-                        }
-                        else
-                        {
-                            AnsiConsole.MarkupLine($"{prefix}[bold cyan]{label}[/]");
-                        }
+                        AnsiConsole.MarkupLine($"{prefix}{formattedLabel}");
                     }
                     else
                     {
-                        if (!string.IsNullOrEmpty(option.Shortcut))
-                        {
-                            AnsiConsole.MarkupLine($"{prefix}[grey]{option.Shortcut}[/] - {label}");
-                        }
-                        else
-                        {
-                            AnsiConsole.MarkupLine($"{prefix}[grey]{label}[/]");
-                        }
+                        AnsiConsole.MarkupLine($"{prefix}{formattedLabel}");
                     }
                 }
 
@@ -134,4 +121,47 @@ internal class MenuBuilder<T>
     }
 
     private record MenuOption<TValue>(string? Shortcut, string Label, TValue Value, Func<int, string>? Formatter);
+
+    private static string FormatLabelWithShortcut(string label, string? shortcut, bool isSelected)
+    {
+        // If no shortcut, just apply standard formatting
+        if (string.IsNullOrEmpty(shortcut))
+        {
+            return isSelected ? $"[bold cyan]{label}[/]" : $"[grey]{label}[/]";
+        }
+
+        // Check if label contains markup tags
+        var hasMarkup = label.Contains('[') && label.Contains(']');
+
+        // If selected, don't highlight the shortcut letter (entire line is bold cyan)
+        if (isSelected)
+        {
+            return hasMarkup ? label : $"[bold cyan]{label}[/]";
+        }
+
+        // If label already has markup, just return it as-is
+        // Inserting additional markup inside existing markup can break the tags
+        if (hasMarkup)
+        {
+            return label;
+        }
+
+        // Find the shortcut character in plain text labels
+        var shortcutChar = shortcut[0];
+        var index = label.IndexOf(shortcutChar, StringComparison.OrdinalIgnoreCase);
+
+        if (index == -1)
+        {
+            // Shortcut not found in label, use fallback format
+            return $"[grey]{label}[/]";
+        }
+
+        // Split label and highlight the shortcut character
+        var before = label.Substring(0, index);
+        var shortcutLetter = label.Substring(index, 1);
+        var after = label.Substring(index + 1);
+
+        // For plain text labels, grey text with cyan shortcut letter
+        return $"[grey]{before}[/][cyan]{shortcutLetter}[/][grey]{after}[/]";
+    }
 }

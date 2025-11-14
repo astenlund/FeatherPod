@@ -9,6 +9,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, InteractiveSettings settings, CancellationToken cancellationToken)
     {
+        AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("[bold]FeatherPod Episode Manager[/]");
         AnsiConsole.WriteLine();
 
@@ -52,14 +53,22 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             httpClient = newClient;
                         }
                     }
-                    else if (newEnv == null)
+                    else if (newEnv != null)
+                    {
+                        // Same environment selected - show same output for consistency
+                        AnsiConsole.MarkupLine($"Environment: [cyan]{env}[/]");
+                    }
+                    else
                     {
                         AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        AnsiConsole.WriteLine();
+
                     }
                     break;
 
                 case MenuChoice.Quit:
                     AnsiConsole.MarkupLine("[grey]Bye.[/]");
+                    AnsiConsole.WriteLine();
                     return 0;
             }
         }
@@ -69,7 +78,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
     {
         return new MenuBuilder<MenuChoice>()
             .WithTitle("What would you like to do?")
-            .WithHint("(arrow keys or L/D/E/Q)")
+            .WithHint("(arrow keys or highlighted letter)")
             .AddOption("L", "List episodes", MenuChoice.List)
             .AddOption("D", "Delete episode", MenuChoice.Delete)
             .AddOption("E", "Switch environment", MenuChoice.SwitchEnvironment)
