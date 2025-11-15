@@ -19,6 +19,14 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         var (httpClient, _) = await CliHelpers.SetupHttpClientAsync(env);
         if (httpClient == null) return 1;
 
+        // Select feed (auto-select last-used or single feed)
+        var feed = await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+        if (feed == null)
+        {
+            AnsiConsole.MarkupLine("[red]Error:[/] No feeds available. Create a feed first.");
+            return 1;
+        }
+
         // Expand file patterns (wildcards and comma-separated lists)
         var files = CliHelpers.ExpandFilePatterns(settings.Files);
 
@@ -29,6 +37,28 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         }
 
         AnsiConsole.MarkupLine($"Found [cyan]{files.Count}[/] file(s) to upload");
+        AnsiConsole.WriteLine();
+
+        // Confirm upload
+        var fileList = files.Count <= 5
+            ? string.Join(", ", files.Select(f => $"[cyan]{Markup.Escape(Path.GetFileName(f))}[/]"))
+            : $"[cyan]{files.Count}[/] files";
+
+        var confirmed = new MenuBuilder<bool?>()
+            .WithTitle($"Upload {fileList} to feed [cyan]{Markup.Escape(feed.Title)}[/]?")
+            .WithHint("(arrow keys or Y/N, Esc to cancel)")
+            .AddOption("Y", "Yes", true)
+            .AddOption("N", "No", false)
+            .AllowCancel(true, false)
+            .Show();
+
+        if (confirmed != true)
+        {
+            AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+            return 1;
+        }
+
+        AnsiConsole.WriteLine();
 
         // Prompt for date source if neither -p nor -x was provided
         var effectiveSettings = settings;
@@ -39,7 +69,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
                 .WithHint("(arrow keys or highlighted letter, Esc to cancel)")
                 .AddOption("C", "Current date/time", false)
                 .AddOption("F", "Extract from file metadata", true)
-                .AllowCancel(true, null)
+                .AllowCancel()
                 .Show();
 
             if (dateSource == null)
@@ -48,7 +78,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
                 return 1;
             }
 
-            effectiveSettings = new PushSettings
+            effectiveSettings = new()
             {
                 Files = settings.Files,
                 Environment = settings.Environment,
@@ -64,7 +94,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
 
         foreach (var file in files)
         {
-            var success = await CliHelpers.UploadEpisodeAsync(httpClient, file, effectiveSettings);
+            var success = await CliHelpers.UploadEpisodeAsync(httpClient, feed, file, effectiveSettings);
             if (success)
                 successCount++;
             else

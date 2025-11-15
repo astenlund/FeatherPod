@@ -1,5 +1,6 @@
 using FeatherPod.Cli.Infrastructure;
 using FeatherPod.Cli.Settings;
+using FeatherPod.Models;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -19,21 +20,69 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         var (httpClient, _) = await CliHelpers.SetupHttpClientAsync(env);
         if (httpClient == null) return 1;
 
+        // Select initial feed
+        var currentFeed = await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+        if (currentFeed == null)
+        {
+            AnsiConsole.MarkupLine("[yellow]No feeds available. Create one using 'M: Manage Feeds'.[/]");
+            AnsiConsole.WriteLine();
+        }
+
         // Main menu loop
         while (true)
         {
-            AnsiConsole.WriteLine();
-
-            var choice = ShowMenu();
+            var choice = ShowMenu(currentFeed);
 
             switch (choice)
             {
                 case MenuChoice.List:
-                    await CliHelpers.ListEpisodesAsync(httpClient);
+                    if (currentFeed == null)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
+                        AnsiConsole.WriteLine();
+                    }
+                    else
+                    {
+                        await CliHelpers.ListEpisodesAsync(httpClient, currentFeed);
+                    }
                     break;
 
                 case MenuChoice.Delete:
-                    await CliHelpers.DeleteEpisodeAsync(httpClient);
+                    if (currentFeed == null)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
+                        AnsiConsole.WriteLine();
+                    }
+                    else
+                    {
+                        await CliHelpers.DeleteEpisodeAsync(httpClient, currentFeed);
+                    }
+                    break;
+
+                case MenuChoice.SwitchFeed:
+                    var newFeed = await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+                    if (newFeed != null)
+                    {
+                        currentFeed = newFeed;
+                        AnsiConsole.MarkupLine($"Switched to feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
+                        AnsiConsole.WriteLine();
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        AnsiConsole.WriteLine();
+                    }
+                    break;
+
+                case MenuChoice.ManageFeeds:
+                    await CliHelpers.ManageFeedsAsync(httpClient);
+                    // Refresh current feed in case it was deleted or renamed
+                    if (currentFeed != null)
+                    {
+                        var feeds = await CliHelpers.GetFeedsAsync(httpClient);
+                        currentFeed = feeds.FirstOrDefault(f => f.Id == currentFeed.Id);
+                    }
+                    currentFeed ??= await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
                     break;
 
                 case MenuChoice.SwitchEnvironment:
@@ -51,6 +100,8 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         if (newClient != null)
                         {
                             httpClient = newClient;
+                            // Select feed for new environment
+                            currentFeed = await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
                         }
                     }
                     else if (newEnv != null)
@@ -74,23 +125,31 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         }
     }
 
-    private static MenuChoice ShowMenu()
+    private static MenuChoice ShowMenu(FeedConfig? currentFeed)
     {
+        var title = currentFeed != null
+            ? $"Feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]\nWhat would you like to do?"
+            : "What would you like to do?";
+
         return new MenuBuilder<MenuChoice>()
-            .WithTitle("What would you like to do?")
+            .WithTitle(title)
             .WithHint("(arrow keys or highlighted letter)")
             .AddOption("L", "List episodes", MenuChoice.List)
             .AddOption("D", "Delete episode", MenuChoice.Delete)
+            .AddOption("F", "Switch feed", MenuChoice.SwitchFeed)
+            .AddOption("M", "Manage feeds", MenuChoice.ManageFeeds)
             .AddOption("E", "Switch environment", MenuChoice.SwitchEnvironment)
             .AddOption("Q", "Quit", MenuChoice.Quit)
             .AllowCancel(false) // Don't allow escape on main menu
-            .Show()!;
+            .Show();
     }
 
     private enum MenuChoice
     {
         List,
         Delete,
+        SwitchFeed,
+        ManageFeeds,
         SwitchEnvironment,
         Quit
     }
