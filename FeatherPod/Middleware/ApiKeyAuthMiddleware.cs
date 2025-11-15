@@ -20,9 +20,11 @@ public class ApiKeyAuthMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
-        // Check if this is a management endpoint (POST or DELETE to /api/episodes)
-        var isManagementEndpoint = context.Request.Path.StartsWithSegments("/api/episodes") &&
-                                   (context.Request.Method == "POST" || context.Request.Method == "DELETE");
+        var path = context.Request.Path.Value ?? string.Empty;
+        var method = context.Request.Method;
+
+        // Check if this is a protected endpoint
+        var isManagementEndpoint = IsProtectedEndpoint(path, method);
 
         if (isManagementEndpoint && !string.IsNullOrEmpty(_apiKey))
         {
@@ -30,17 +32,34 @@ public class ApiKeyAuthMiddleware
             if (!context.Request.Headers.TryGetValue("X-API-Key", out var providedKey) ||
                 providedKey != _apiKey)
             {
-                _logger.LogWarning("Unauthorized API access attempt from {IP} to {Path}",
-                    context.Connection.RemoteIpAddress, context.Request.Path);
+                _logger.LogWarning("Unauthorized API access attempt from {IP} to {Method} {Path}",
+                    context.Connection.RemoteIpAddress, method, path);
 
                 context.Response.StatusCode = 401;
                 await context.Response.WriteAsJsonAsync(new { error = "Unauthorized. Valid API key required." });
                 return;
             }
 
-            _logger.LogDebug("API key authenticated for {Method} {Path}", context.Request.Method, context.Request.Path);
+            _logger.LogDebug("API key authenticated for {Method} {Path}", method, path);
         }
 
         await _next(context);
+    }
+
+    private static bool IsProtectedEndpoint(string path, string method)
+    {
+        // Feed management endpoints (POST, PUT, DELETE)
+        if (path.StartsWith("/api/feeds"))
+        {
+            return method is "POST" or "PUT" or "DELETE";
+        }
+
+        // Episode management endpoints within feeds (POST, DELETE)
+        if (path.Contains("/api/episodes"))
+        {
+            return method is "POST" or "DELETE";
+        }
+
+        return false;
     }
 }

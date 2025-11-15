@@ -9,9 +9,7 @@ public record FeedConfig
     public string? Email { get; init; }
     public string Language { get; init; } = "en";
     public string? Category { get; init; }
-    public string? ImageUrl { get; init; }
     public bool UseFileMetadataForPublishDate { get; init; } = false;
-    public string? ImageVersion { get; init; }
 }
 
 // Legacy - kept for backward compatibility with existing appsettings.json
@@ -26,7 +24,6 @@ public record PodcastConfig
     public string ImageUrl { get; init; } = string.Empty;
     public string BaseUrl { get; init; } = string.Empty;
     public bool UseFileMetadataForPublishDate { get; init; } = false;
-    public string? ImageVersion { get; init; }
 }
 
 public record PathsConfig

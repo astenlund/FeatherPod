@@ -2,6 +2,7 @@ using FeatherPod.Models;
 using FeatherPod.Services;
 using FeatherPod.Middleware;
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -28,7 +29,6 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(optio
 // Add services
 builder.Services.AddSingleton<IBlobStorageService, BlobStorageService>();
 builder.Services.AddSingleton<EpisodeService>();
-builder.Services.AddSingleton<RssFeedGenerator>();
 
 // Add background service for periodic blob storage sync
 builder.Services.AddHostedService<BlobSyncBackgroundService>();
@@ -38,9 +38,6 @@ var app = builder.Build();
 // Add API key authentication middleware
 app.UseMiddleware<ApiKeyAuthMiddleware>();
 
-// Enable static file serving (for podcast icon, etc.)
-app.UseStaticFiles();
-
 // Initialize blob storage and episode service
 var blobStorage = app.Services.GetRequiredService<IBlobStorageService>();
 await blobStorage.InitializeAsync();
@@ -48,30 +45,356 @@ await blobStorage.InitializeAsync();
 var episodeService = app.Services.GetRequiredService<EpisodeService>();
 await episodeService.InitializeAsync();
 
-// RSS Feed endpoint
-app.MapGet("/feed.xml", async (HttpContext context, EpisodeService service, RssFeedGenerator feedGenerator) =>
+// Get base URL from configuration
+var baseUrl = app.Configuration.GetSection("Podcast")["BaseUrl"]
+    ?? throw new InvalidOperationException("Podcast.BaseUrl must be configured in appsettings.json");
+
+// ============================================================================
+// FEED MANAGEMENT ENDPOINTS
+// ============================================================================
+
+// List all feeds
+app.MapGet("/api/feeds", async (EpisodeService service) =>
 {
-    var episodes = await service.GetAllEpisodesAsync();
-    var feed = RssFeedGenerator.GenerateFeed(episodes);
-
-    // Prevent caching to ensure feed updates are immediate
-    context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
-    context.Response.Headers.Pragma = "no-cache";
-    context.Response.Headers.Expires = "0";
-
-    return Results.Content(feed, "application/xml");
+    var feeds = await service.GetFeedsAsync();
+    return Results.Ok(feeds);
 })
-.WithName("GetPodcastFeed")
-.Produces(200, contentType: "application/xml");
+.WithName("ListFeeds")
+.Produces<List<FeedConfig>>();
 
-// Serve audio files from blob storage
-app.MapGet("/audio/{filename}", async (string filename, IBlobStorageService blobStorage) =>
+// Get specific feed
+app.MapGet("/api/feeds/{feedId}", async (string feedId, EpisodeService service) =>
 {
-    if (!await blobStorage.AudioExistsAsync(filename))
-        return Results.NotFound();
+    var feed = await service.GetFeedAsync(feedId);
+    return feed != null ? Results.Ok(feed) : Results.NotFound(new { error = $"Feed '{feedId}' not found" });
+})
+.WithName("GetFeed")
+.Produces<FeedConfig>()
+.Produces(404);
 
-    var extension = Path.GetExtension(filename).ToLowerInvariant();
-    var mimeType = extension switch
+// Create new feed (requires API key)
+app.MapPost("/api/feeds", async ([FromBody] FeedConfig feedConfig, EpisodeService service) =>
+{
+    try
+    {
+        var created = await service.CreateFeedAsync(feedConfig);
+        return Results.Created($"/api/feeds/{created.Id}", created);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("CreateFeed")
+.Produces<FeedConfig>(201)
+.Produces(400);
+
+// Update feed metadata (requires API key)
+app.MapPut("/api/feeds/{feedId}", async (string feedId, [FromBody] FeedConfig feedConfig, EpisodeService service) =>
+{
+    try
+    {
+        var updated = await service.UpdateFeedAsync(feedId, feedConfig);
+        return Results.Ok(updated);
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.NotFound(new { error = ex.Message });
+    }
+})
+.WithName("UpdateFeed")
+.Produces<FeedConfig>()
+.Produces(404);
+
+// Rename feed (requires API key)
+app.MapPost("/api/feeds/{feedId}/rename", async (string feedId, [FromQuery] string newId, EpisodeService service) =>
+{
+    try
+    {
+        await service.RenameFeedAsync(feedId, newId);
+        return Results.Ok(new { message = $"Feed renamed from '{feedId}' to '{newId}'" });
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("RenameFeed")
+.Produces(200)
+.Produces(400);
+
+// Delete feed and all episodes (requires API key)
+app.MapDelete("/api/feeds/{feedId}", async (string feedId, EpisodeService service) =>
+{
+    try
+    {
+        await service.DeleteFeedAsync(feedId);
+        return Results.Ok(new { message = $"Feed '{feedId}' deleted" });
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.NotFound(new { error = ex.Message });
+    }
+})
+.WithName("DeleteFeed")
+.Produces(200)
+.Produces(404);
+
+// ============================================================================
+// FEED-SPECIFIC ENDPOINTS
+// ============================================================================
+
+// RSS feed for specific feed
+app.MapGet("/{feedId}/feed.xml", async (string feedId, EpisodeService service) =>
+{
+    var feed = await service.GetFeedAsync(feedId);
+    if (feed == null)
+    {
+        return Results.NotFound($"Feed '{feedId}' not found");
+    }
+
+    var episodes = await service.GetAllEpisodesAsync(feedId);
+    var xml = RssFeedGenerator.GenerateFeed(feed, baseUrl, episodes);
+
+    return Results.Content(xml, "application/xml");
+})
+.WithName("GetRssFeed")
+.Produces(200, contentType: "application/xml")
+.Produces(404);
+
+// Icon for specific feed (streams from blob storage)
+app.MapGet("/{feedId}/icon.png", async (string feedId, IBlobStorageService service) =>
+{
+    var exists = await service.IconExistsAsync(feedId);
+    if (!exists)
+    {
+        return Results.NotFound($"Icon for feed '{feedId}' not found");
+    }
+
+    var stream = await service.DownloadIconAsync(feedId);
+    return Results.File(stream, "image/png");
+})
+.WithName("GetIcon")
+.Produces(200, contentType: "image/png")
+.Produces(404);
+
+// Audio file streaming with range support
+app.MapGet("/{feedId}/audio/{filename}", async (string feedId, string filename, IBlobStorageService service, HttpContext context) =>
+{
+    var exists = await service.AudioExistsAsync(feedId, filename);
+    if (!exists)
+    {
+        return Results.NotFound($"Audio file '{filename}' not found in feed '{feedId}'");
+    }
+
+    var stream = await service.DownloadAudioAsync(feedId, filename);
+    var fileSize = await service.GetAudioFileSizeAsync(feedId, filename);
+
+    // Support range requests for audio streaming
+    var range = context.Request.Headers.Range.ToString();
+    if (!string.IsNullOrEmpty(range))
+    {
+        context.Response.StatusCode = 206; // Partial Content
+        context.Response.Headers.AcceptRanges = "bytes";
+        context.Response.Headers.ContentRange = $"bytes 0-{fileSize - 1}/{fileSize}";
+    }
+
+    context.Response.ContentType = GetMimeType(filename);
+    context.Response.ContentLength = fileSize;
+
+    await stream.CopyToAsync(context.Response.Body);
+    return Results.Empty;
+})
+.WithName("GetAudio")
+.Produces(200)
+.Produces(206)
+.Produces(404);
+
+// List episodes for specific feed
+app.MapGet("/{feedId}/api/episodes", async (string feedId, EpisodeService service, IConfiguration _) =>
+{
+    var feed = await service.GetFeedAsync(feedId);
+    if (feed == null)
+    {
+        return Results.NotFound(new { error = $"Feed '{feedId}' not found" });
+    }
+
+    var episodes = await service.GetAllEpisodesAsync(feedId);
+
+    // Populate URL for each episode
+    var episodesWithUrls = episodes
+        .Select(e => e with { Url = e.GetAudioUrl(baseUrl) })
+        .ToList();
+
+    return Results.Ok(episodesWithUrls);
+})
+.WithName("ListEpisodes")
+.Produces<List<Episode>>()
+.Produces(404);
+
+// Upload episode to feed (requires API key)
+app.MapPost("/{feedId}/api/episodes", async (
+    string feedId,
+    [FromForm] IFormFile? file,
+    [FromForm] string? title,
+    [FromForm] string? description,
+    [FromForm] DateTime? publishedDate,
+    [FromForm] bool? useMetadataForPublishedDate,
+    EpisodeService service) =>
+{
+    var feed = await service.GetFeedAsync(feedId);
+    if (feed == null)
+    {
+        return Results.NotFound(new { error = $"Feed '{feedId}' not found" });
+    }
+
+    if (file == null || file.Length == 0)
+    {
+        return Results.BadRequest(new { error = "No file uploaded" });
+    }
+
+    // Save uploaded file to temp location
+    var tempPath = Path.GetTempFileName();
+    await using (var stream = File.Create(tempPath))
+    {
+        await file.CopyToAsync(stream);
+    }
+
+    try
+    {
+        var episode = await service.AddEpisodeAsync(
+            feedId,
+            tempPath,
+            title,
+            description,
+            publishedDate,
+            useMetadataForPublishedDate);
+
+        var episodeWithUrl = episode with { Url = episode.GetAudioUrl(baseUrl) };
+
+        return Results.Created($"/{feedId}/api/episodes/{episode.Id}", episodeWithUrl);
+    }
+    finally
+    {
+        // Clean up temp file
+        if (File.Exists(tempPath))
+        {
+            File.Delete(tempPath);
+        }
+    }
+})
+.WithName("UploadEpisode")
+.Produces<Episode>(201)
+.Produces(400)
+.Produces(404)
+.DisableAntiforgery();
+
+// Delete episode from feed (requires API key)
+app.MapDelete("/{feedId}/api/episodes/{id}", async (string feedId, string id, EpisodeService service) =>
+{
+    var feed = await service.GetFeedAsync(feedId);
+    if (feed == null)
+    {
+        return Results.NotFound(new { error = $"Feed '{feedId}' not found" });
+    }
+
+    var deleted = await service.DeleteEpisodeAsync(feedId, id);
+    return deleted
+        ? Results.Ok(new { message = $"Episode '{id}' deleted from feed '{feedId}'" })
+        : Results.NotFound(new { error = $"Episode '{id}' not found in feed '{feedId}'" });
+})
+.WithName("DeleteEpisode")
+.Produces(200)
+.Produces(404);
+
+// ============================================================================
+// EPISODE MOVE/COPY ENDPOINTS
+// ============================================================================
+
+// Move episode between feeds (requires API key)
+app.MapPost("/{sourceFeedId}/api/episodes/{id}/move", async (
+    string sourceFeedId,
+    string id,
+    [FromBody] JsonElement body,
+    EpisodeService service) =>
+{
+    if (!body.TryGetProperty("targetFeedId", out var targetFeedIdElement))
+    {
+        return Results.BadRequest(new { error = "targetFeedId is required in request body" });
+    }
+
+    var targetFeedId = targetFeedIdElement.GetString();
+    if (string.IsNullOrEmpty(targetFeedId))
+    {
+        return Results.BadRequest(new { error = "targetFeedId cannot be empty" });
+    }
+
+    try
+    {
+        var movedEpisode = await service.MoveEpisodeAsync(id, sourceFeedId, targetFeedId);
+        var episodeWithUrl = movedEpisode with { Url = movedEpisode.GetAudioUrl(baseUrl) };
+
+        return Results.Ok(new
+        {
+            message = $"Episode '{id}' moved from '{sourceFeedId}' to '{targetFeedId}'",
+            episode = episodeWithUrl
+        });
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("MoveEpisode")
+.Produces(200)
+.Produces(400);
+
+// Copy episode between feeds (requires API key)
+app.MapPost("/{sourceFeedId}/api/episodes/{id}/copy", async (
+    string sourceFeedId,
+    string id,
+    [FromBody] JsonElement body,
+    EpisodeService service) =>
+{
+    if (!body.TryGetProperty("targetFeedId", out var targetFeedIdElement))
+    {
+        return Results.BadRequest(new { error = "targetFeedId is required in request body" });
+    }
+
+    var targetFeedId = targetFeedIdElement.GetString();
+    if (string.IsNullOrEmpty(targetFeedId))
+    {
+        return Results.BadRequest(new { error = "targetFeedId cannot be empty" });
+    }
+
+    try
+    {
+        var copiedEpisode = await service.CopyEpisodeAsync(id, sourceFeedId, targetFeedId);
+        var episodeWithUrl = copiedEpisode with { Url = copiedEpisode.GetAudioUrl(baseUrl) };
+
+        return Results.Ok(new
+        {
+            message = $"Episode '{id}' copied from '{sourceFeedId}' to '{targetFeedId}'",
+            episode = episodeWithUrl
+        });
+    }
+    catch (InvalidOperationException ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+})
+.WithName("CopyEpisode")
+.Produces(200)
+.Produces(400);
+
+// ============================================================================
+// HELPER METHODS
+// ============================================================================
+
+static string GetMimeType(string fileName)
+{
+    var extension = Path.GetExtension(fileName).ToLowerInvariant();
+    return extension switch
     {
         ".mp3" => "audio/mpeg",
         ".m4a" => "audio/mp4",
@@ -81,112 +404,6 @@ app.MapGet("/audio/{filename}", async (string filename, IBlobStorageService blob
         ".aac" => "audio/aac",
         _ => "audio/mpeg"
     };
-
-    var stream = await blobStorage.DownloadAudioAsync(filename);
-    return Results.Stream(stream, mimeType, enableRangeProcessing: true);
-})
-.WithName("GetAudioFile")
-.Produces(200)
-.Produces(404);
-
-// List all episodes
-app.MapGet("/api/episodes", async (EpisodeService service, IConfiguration configuration) =>
-{
-    var episodes = await service.GetAllEpisodesAsync();
-    var podcastConfig = configuration.GetSection("Podcast").Get<PodcastConfig>();
-    var baseUrl = podcastConfig?.BaseUrl ?? string.Empty;
-
-    // Populate URL for each episode
-    foreach (var episode in episodes)
-    {
-        episode.Url = episode.GetAudioUrl(baseUrl);
-    }
-
-    return Results.Ok(episodes);
-})
-.WithName("ListEpisodes")
-.Produces<List<Episode>>();
-
-// Add new episode via API
-app.MapPost("/api/episodes", async (
-    [FromForm] IFormFile file,
-    [FromForm] string? title,
-    [FromForm] string? description,
-    [FromForm] string? publishedDate,
-    [FromForm] bool? useMetadataForPublishedDate,
-    EpisodeService service,
-    IConfiguration _) =>
-{
-    if (file.Length == 0)
-    {
-        return Results.BadRequest("No file uploaded");
-    }
-
-    // Parse published date if provided
-    DateTime? parsedPublishedDate = null;
-    if (!string.IsNullOrEmpty(publishedDate))
-    {
-        if (DateTime.TryParse(publishedDate, out var parsed))
-        {
-            parsedPublishedDate = parsed.ToUniversalTime();
-        }
-        else
-        {
-            return Results.BadRequest("Invalid publishedDate format. Use ISO 8601 format (e.g., 2024-01-15T10:30:00Z)");
-        }
-    }
-
-    var tempPath = Path.Combine(Path.GetTempPath(), file.FileName);
-
-    try
-    {
-        // Save uploaded file to temp location
-        await using (var stream = File.Create(tempPath))
-        {
-            await file.CopyToAsync(stream);
-        }
-
-        // Add episode
-        var episode = await service.AddEpisodeAsync(tempPath, title, description, parsedPublishedDate, useMetadataForPublishedDate);
-
-        return Results.Created($"/api/episodes/{episode.Id}", episode);
-    }
-    catch (Exception ex)
-    {
-        return Results.Problem(ex.Message);
-    }
-    finally
-    {
-        // Clean up temp file
-        if (File.Exists(tempPath))
-            File.Delete(tempPath);
-    }
-})
-.WithName("AddEpisode")
-.Produces<Episode>(201)
-.Produces(400)
-.DisableAntiforgery();
-
-// Delete episode
-app.MapDelete("/api/episodes/{id}", async (string id, EpisodeService service, ILogger<Program> logger) =>
-{
-    logger.LogInformation("DELETE request received for episode ID: {Id}", id);
-    var deleted = await service.DeleteEpisodeAsync(id);
-
-    if (!deleted)
-    {
-        logger.LogWarning("Episode not found for deletion: {Id}", id);
-        return Results.NotFound();
-    }
-
-    logger.LogInformation("Episode deleted successfully: {Id}", id);
-    return Results.NoContent();
-})
-.WithName("DeleteEpisode")
-.Produces(204)
-.Produces(404);
+}
 
 app.Run();
-
-// Make Program accessible to integration tests
-public partial class Program { }

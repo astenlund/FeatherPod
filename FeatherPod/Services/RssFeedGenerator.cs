@@ -59,20 +59,18 @@ public class RssFeedGenerator
 
         writer.WriteElementString("itunes", "explicit", null, "false");
 
-        if (!string.IsNullOrEmpty(feedConfig.ImageUrl))
-        {
-            var imageUrl = GetImageUrlWithVersion(feedConfig, baseUrl);
+        // Feed icon from blob storage
+        var iconUrl = $"{baseUrl}/{feedConfig.Id}/icon.png";
 
-            writer.WriteStartElement("itunes", "image", null);
-            writer.WriteAttributeString("href", imageUrl);
-            writer.WriteEndElement();
+        writer.WriteStartElement("itunes", "image", null);
+        writer.WriteAttributeString("href", iconUrl);
+        writer.WriteEndElement();
 
-            writer.WriteStartElement("image");
-            writer.WriteElementString("url", imageUrl);
-            writer.WriteElementString("title", feedConfig.Title);
-            writer.WriteElementString("link", $"{baseUrl}/{feedConfig.Id}/feed.xml");
-            writer.WriteEndElement();
-        }
+        writer.WriteStartElement("image");
+        writer.WriteElementString("url", iconUrl);
+        writer.WriteElementString("title", feedConfig.Title);
+        writer.WriteElementString("link", $"{baseUrl}/{feedConfig.Id}/feed.xml");
+        writer.WriteEndElement();
 
         // Episodes
         foreach (var episode in episodes.OrderByDescending(e => e.PublishedDate))
@@ -117,20 +115,6 @@ public class RssFeedGenerator
         }
 
         writer.WriteEndElement(); // item
-    }
-
-    private static string GetImageUrlWithVersion(FeedConfig feedConfig, string baseUrl)
-    {
-        // Use feed-specific icon from blob storage
-        var iconUrl = $"{baseUrl}/{feedConfig.Id}/icon.png";
-
-        if (string.IsNullOrEmpty(feedConfig.ImageVersion))
-        {
-            return iconUrl;
-        }
-
-        // Append version as query parameter for cache busting
-        return $"{iconUrl}?v={feedConfig.ImageVersion}";
     }
 
     private static string GetMimeType(string fileName)
