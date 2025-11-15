@@ -30,15 +30,28 @@ public class BlobSyncBackgroundService : BackgroundService
         {
             try
             {
-                _logger.LogInformation("Starting blob storage sync...");
+                _logger.LogInformation("Starting blob storage sync for all feeds...");
 
                 // Create a scope to get the singleton EpisodeService
                 using var scope = _serviceProvider.CreateScope();
                 var episodeService = scope.ServiceProvider.GetRequiredService<EpisodeService>();
 
-                await episodeService.SyncWithBlobStorageAsync();
+                // Get all feeds and sync each one
+                var feeds = await episodeService.GetFeedsAsync();
+                foreach (var feed in feeds)
+                {
+                    try
+                    {
+                        await episodeService.SyncWithBlobStorageAsync(feed.Id);
+                        _logger.LogInformation("Synced feed: {FeedId}", feed.Id);
+                    }
+                    catch (Exception feedEx)
+                    {
+                        _logger.LogError(feedEx, "Error syncing feed: {FeedId}", feed.Id);
+                    }
+                }
 
-                _logger.LogInformation("Blob storage sync completed successfully");
+                _logger.LogInformation("Blob storage sync completed successfully for {Count} feeds", feeds.Count);
             }
             catch (Exception ex)
             {

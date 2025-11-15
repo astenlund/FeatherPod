@@ -6,14 +6,7 @@ namespace FeatherPod.Services;
 
 public class RssFeedGenerator
 {
-    private readonly PodcastConfig _config;
-
-    public RssFeedGenerator(IConfiguration configuration)
-    {
-        _config = configuration.GetSection("Podcast").Get<PodcastConfig>()!;
-    }
-
-    public string GenerateFeed(List<Episode> episodes)
+    public static string GenerateFeed(FeedConfig feedConfig, string baseUrl, List<Episode> episodes)
     {
         var settings = new XmlWriterSettings
         {
@@ -34,35 +27,41 @@ public class RssFeedGenerator
         writer.WriteStartElement("channel");
 
         // Channel metadata
-        writer.WriteElementString("title", _config.Title);
-        writer.WriteElementString("description", _config.Description);
-        writer.WriteElementString("link", _config.BaseUrl);
-        writer.WriteElementString("language", _config.Language);
+        writer.WriteElementString("title", feedConfig.Title);
+        writer.WriteElementString("description", feedConfig.Description ?? string.Empty);
+        writer.WriteElementString("link", $"{baseUrl}/{feedConfig.Id}/feed.xml");
+        writer.WriteElementString("language", feedConfig.Language);
         writer.WriteElementString("lastBuildDate", DateTime.UtcNow.ToString("R"));
 
         // iTunes specific tags
         writer.WriteStartElement("itunes", "author", null);
-        writer.WriteString(_config.Author);
+        writer.WriteString(feedConfig.Author);
         writer.WriteEndElement();
 
         writer.WriteStartElement("itunes", "summary", null);
-        writer.WriteString(_config.Description);
+        writer.WriteString(feedConfig.Description ?? string.Empty);
         writer.WriteEndElement();
 
         writer.WriteStartElement("itunes", "owner", null);
-        writer.WriteElementString("itunes", "name", null, _config.Author);
-        writer.WriteElementString("itunes", "email", null, _config.Email);
+        writer.WriteElementString("itunes", "name", null, feedConfig.Author);
+        if (!string.IsNullOrEmpty(feedConfig.Email))
+        {
+            writer.WriteElementString("itunes", "email", null, feedConfig.Email);
+        }
         writer.WriteEndElement();
 
-        writer.WriteStartElement("itunes", "category", null);
-        writer.WriteAttributeString("text", _config.Category);
-        writer.WriteEndElement();
+        if (!string.IsNullOrEmpty(feedConfig.Category))
+        {
+            writer.WriteStartElement("itunes", "category", null);
+            writer.WriteAttributeString("text", feedConfig.Category);
+            writer.WriteEndElement();
+        }
 
         writer.WriteElementString("itunes", "explicit", null, "false");
 
-        if (!string.IsNullOrEmpty(_config.ImageUrl))
+        if (!string.IsNullOrEmpty(feedConfig.ImageUrl))
         {
-            var imageUrl = GetImageUrlWithVersion();
+            var imageUrl = GetImageUrlWithVersion(feedConfig, baseUrl);
 
             writer.WriteStartElement("itunes", "image", null);
             writer.WriteAttributeString("href", imageUrl);
@@ -70,15 +69,15 @@ public class RssFeedGenerator
 
             writer.WriteStartElement("image");
             writer.WriteElementString("url", imageUrl);
-            writer.WriteElementString("title", _config.Title);
-            writer.WriteElementString("link", _config.BaseUrl);
+            writer.WriteElementString("title", feedConfig.Title);
+            writer.WriteElementString("link", $"{baseUrl}/{feedConfig.Id}/feed.xml");
             writer.WriteEndElement();
         }
 
         // Episodes
         foreach (var episode in episodes.OrderByDescending(e => e.PublishedDate))
         {
-            WriteEpisode(writer, episode);
+            WriteEpisode(writer, episode, feedConfig, baseUrl);
         }
 
         writer.WriteEndElement(); // channel
@@ -89,17 +88,17 @@ public class RssFeedGenerator
         return stringWriter.ToString();
     }
 
-    private void WriteEpisode(XmlWriter writer, Episode episode)
+    private static void WriteEpisode(XmlWriter writer, Episode episode, FeedConfig feedConfig, string baseUrl)
     {
         writer.WriteStartElement("item");
 
         writer.WriteElementString("title", episode.Title);
-        writer.WriteElementString("description", episode.Description);
+        writer.WriteElementString("description", episode.Description ?? string.Empty);
         writer.WriteElementString("pubDate", episode.PublishedDate.ToString("R"));
         writer.WriteElementString("guid", episode.Id);
 
         // Enclosure (audio file)
-        var audioUrl = episode.GetAudioUrl(_config.BaseUrl);
+        var audioUrl = episode.GetAudioUrl(baseUrl);
         writer.WriteStartElement("enclosure");
         writer.WriteAttributeString("url", audioUrl);
         writer.WriteAttributeString("length", episode.FileSize.ToString());
@@ -107,8 +106,8 @@ public class RssFeedGenerator
         writer.WriteEndElement();
 
         // iTunes specific episode tags
-        writer.WriteElementString("itunes", "author", null, _config.Author);
-        writer.WriteElementString("itunes", "summary", null, episode.Description);
+        writer.WriteElementString("itunes", "author", null, feedConfig.Author);
+        writer.WriteElementString("itunes", "summary", null, episode.Description ?? string.Empty);
         writer.WriteElementString("itunes", "explicit", null, "false");
 
         if (episode.Duration > TimeSpan.Zero)
@@ -120,16 +119,18 @@ public class RssFeedGenerator
         writer.WriteEndElement(); // item
     }
 
-    private string GetImageUrlWithVersion()
+    private static string GetImageUrlWithVersion(FeedConfig feedConfig, string baseUrl)
     {
-        if (string.IsNullOrEmpty(_config.ImageVersion))
+        // Use feed-specific icon from blob storage
+        var iconUrl = $"{baseUrl}/{feedConfig.Id}/icon.png";
+
+        if (string.IsNullOrEmpty(feedConfig.ImageVersion))
         {
-            return _config.ImageUrl;
+            return iconUrl;
         }
 
         // Append version as query parameter for cache busting
-        var separator = _config.ImageUrl.Contains('?') ? "&" : "?";
-        return $"{_config.ImageUrl}{separator}v={_config.ImageVersion}";
+        return $"{iconUrl}?v={feedConfig.ImageVersion}";
     }
 
     private static string GetMimeType(string fileName)

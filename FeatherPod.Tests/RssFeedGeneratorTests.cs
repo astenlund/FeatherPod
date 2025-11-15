@@ -37,7 +37,7 @@ public class RssFeedGeneratorTests
         var episodes = new List<Episode>();
 
         // Act
-        var feedXml = generator.GenerateFeed(episodes);
+        var feedXml = RssFeedGenerator.GenerateFeed(episodes);
         var doc = XDocument.Parse(feedXml);
         var ns = XNamespace.Get("http://www.itunes.com/dtds/podcast-1.0.dtd");
 
@@ -58,7 +58,7 @@ public class RssFeedGeneratorTests
         var episodes = new List<Episode>();
 
         // Act
-        var feedXml = generator.GenerateFeed(episodes);
+        var feedXml = RssFeedGenerator.GenerateFeed(episodes);
         var doc = XDocument.Parse(feedXml);
 
         // Assert
@@ -98,7 +98,7 @@ public class RssFeedGeneratorTests
         };
 
         // Act
-        var feedXml = generator.GenerateFeed(episodes);
+        var feedXml = RssFeedGenerator.GenerateFeed(episodes);
         var doc = XDocument.Parse(feedXml);
 
         // Assert
@@ -141,7 +141,7 @@ public class RssFeedGeneratorTests
         };
 
         // Act
-        var feedXml = generator.GenerateFeed(episodes);
+        var feedXml = RssFeedGenerator.GenerateFeed(episodes);
         var doc = XDocument.Parse(feedXml);
 
         // Assert
@@ -169,7 +169,7 @@ public class RssFeedGeneratorTests
         };
 
         // Act
-        var feedXml = generator.GenerateFeed(episodes);
+        var feedXml = RssFeedGenerator.GenerateFeed(episodes);
         var doc = XDocument.Parse(feedXml);
 
         // Assert
@@ -198,7 +198,7 @@ public class RssFeedGeneratorTests
         };
 
         // Act
-        var feedXml = generator.GenerateFeed(episodes);
+        var feedXml = RssFeedGenerator.GenerateFeed(episodes);
         var doc = XDocument.Parse(feedXml);
 
         // Assert
@@ -226,7 +226,7 @@ public class RssFeedGeneratorTests
         };
 
         // Act
-        var feedXml = generator.GenerateFeed(episodes);
+        var feedXml = RssFeedGenerator.GenerateFeed(episodes);
         var doc = XDocument.Parse(feedXml);
 
         // Assert
@@ -244,7 +244,7 @@ public class RssFeedGeneratorTests
         var episodes = new List<Episode>();
 
         // Act
-        var feedXml = generator.GenerateFeed(episodes);
+        var feedXml = RssFeedGenerator.GenerateFeed(episodes);
         var doc = XDocument.Parse(feedXml);
 
         // Assert
@@ -263,7 +263,7 @@ public class RssFeedGeneratorTests
         var episodes = new List<Episode>();
 
         // Act
-        var feedXml = generator.GenerateFeed(episodes);
+        var feedXml = RssFeedGenerator.GenerateFeed(episodes);
         var doc = XDocument.Parse(feedXml);
 
         // Assert
@@ -291,7 +291,7 @@ public class RssFeedGeneratorTests
         };
 
         // Act
-        var feedXml = generator.GenerateFeed(episodes);
+        var feedXml = RssFeedGenerator.GenerateFeed(episodes);
 
         // Assert - Should not throw
         var exception = Record.Exception(() => XDocument.Parse(feedXml));

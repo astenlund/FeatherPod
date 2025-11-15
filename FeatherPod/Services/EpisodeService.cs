@@ -1,37 +1,41 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using FeatherPod.Models;
-using Microsoft.Extensions.Configuration;
 
 namespace FeatherPod.Services;
 
-public class EpisodeService : IDisposable
+public sealed class EpisodeService : IDisposable
 {
     private readonly IBlobStorageService _blobStorage;
     private readonly ILogger<EpisodeService> _logger;
-    private readonly IConfiguration _configuration;
     private readonly SemaphoreSlim _lock = new(1, 1);
-    private List<Episode> _episodes = new();
 
-    public EpisodeService(IBlobStorageService blobStorage, IConfiguration configuration, ILogger<EpisodeService> logger)
+    // Feed ID → List of Episodes
+    private readonly Dictionary<string, List<Episode>> _episodesByFeed = new();
+    private FeedsMetadata _feedsMetadata = new();
+    private readonly JsonSerializerOptions _jsonSerializerOptions = new() { WriteIndented = true };
+
+    public EpisodeService(IBlobStorageService blobStorage, ILogger<EpisodeService> logger)
     {
         _blobStorage = blobStorage;
-        _configuration = configuration;
         _logger = logger;
     }
 
     public async Task InitializeAsync()
     {
-        await LoadEpisodesAsync();
-        await SyncWithBlobStorageAsync();
+        await LoadFeedsAsync();
+        await LoadAllEpisodesAsync();
+        await SyncAllFeedsAsync();
     }
 
-    public async Task<List<Episode>> GetAllEpisodesAsync()
+    // Feed management methods
+
+    public async Task<List<FeedConfig>> GetFeedsAsync()
     {
         await _lock.WaitAsync();
         try
         {
-            return _episodes.OrderByDescending(e => e.PublishedDate).ToList();
+            return _feedsMetadata.Feeds.ToList();
         }
         finally
         {
@@ -39,12 +43,12 @@ public class EpisodeService : IDisposable
         }
     }
 
-    public async Task<Episode?> GetEpisodeByIdAsync(string id)
+    public async Task<FeedConfig?> GetFeedAsync(string feedId)
     {
         await _lock.WaitAsync();
         try
         {
-            return _episodes.FirstOrDefault(e => e.Id == id);
+            return _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == feedId);
         }
         finally
         {
@@ -52,83 +56,257 @@ public class EpisodeService : IDisposable
         }
     }
 
-    public async Task<Episode> AddEpisodeAsync(string filePath, string? title = null, string? description = null, DateTime? publishedDate = null, bool? useMetadataForPublishedDate = null)
+    public async Task<FeedConfig> CreateFeedAsync(FeedConfig feedConfig)
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            if (_feedsMetadata.Feeds.Any(f => f.Id == feedConfig.Id))
+            {
+                throw new InvalidOperationException($"Feed with ID '{feedConfig.Id}' already exists");
+            }
+
+            _feedsMetadata = _feedsMetadata with
+            {
+                Feeds = _feedsMetadata.Feeds.Append(feedConfig).ToList()
+            };
+
+            _episodesByFeed[feedConfig.Id] = new List<Episode>();
+
+            await SaveFeedsAsync();
+            _logger.LogInformation("Created feed: {FeedId}", feedConfig.Id);
+
+            return feedConfig;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<FeedConfig> UpdateFeedAsync(string feedId, FeedConfig updatedConfig)
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            var existingIndex = _feedsMetadata.Feeds.FindIndex(f => f.Id == feedId);
+            if (existingIndex == -1)
+            {
+                throw new InvalidOperationException($"Feed '{feedId}' not found");
+            }
+
+            // Ensure ID doesn't change
+            if (updatedConfig.Id != feedId)
+            {
+                throw new InvalidOperationException("Cannot change feed ID via update. Use rename instead.");
+            }
+
+            var feeds = _feedsMetadata.Feeds.ToList();
+            feeds[existingIndex] = updatedConfig;
+            _feedsMetadata = new FeedsMetadata { Feeds = feeds };
+
+            await SaveFeedsAsync();
+            _logger.LogInformation("Updated feed: {FeedId}", feedId);
+
+            return updatedConfig;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task RenameFeedAsync(string oldFeedId, string newFeedId)
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            var feed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == oldFeedId);
+            if (feed == null)
+            {
+                throw new InvalidOperationException($"Feed '{oldFeedId}' not found");
+            }
+
+            if (_feedsMetadata.Feeds.Any(f => f.Id == newFeedId))
+            {
+                throw new InvalidOperationException($"Feed with ID '{newFeedId}' already exists");
+            }
+
+            // Rename in blob storage first
+            await _blobStorage.RenameFeedAsync(oldFeedId, newFeedId);
+
+            // Update feed config
+            var updatedFeed = feed with { Id = newFeedId };
+            var feeds = _feedsMetadata.Feeds.Where(f => f.Id != oldFeedId).Append(updatedFeed).ToList();
+            _feedsMetadata = new FeedsMetadata { Feeds = feeds };
+
+            // Update episodes in memory
+            if (_episodesByFeed.TryGetValue(oldFeedId, out var episodes))
+            {
+                // Update each episode's FeedId
+                var updatedEpisodes = episodes.Select(e => e with { FeedId = newFeedId }).ToList();
+                _episodesByFeed.Remove(oldFeedId);
+                _episodesByFeed[newFeedId] = updatedEpisodes;
+            }
+
+            await SaveFeedsAsync();
+            _logger.LogInformation("Renamed feed: {OldId} → {NewId}", oldFeedId, newFeedId);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task DeleteFeedAsync(string feedId)
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            var feed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == feedId);
+            if (feed == null)
+            {
+                throw new InvalidOperationException($"Feed '{feedId}' not found");
+            }
+
+            // Delete from blob storage
+            await _blobStorage.DeleteFeedAsync(feedId);
+
+            // Remove from feeds list
+            _feedsMetadata = _feedsMetadata with
+            {
+                Feeds = _feedsMetadata.Feeds.Where(f => f.Id != feedId).ToList()
+            };
+
+            // Remove episodes from memory
+            _episodesByFeed.Remove(feedId);
+
+            await SaveFeedsAsync();
+            _logger.LogInformation("Deleted feed: {FeedId}", feedId);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    // Episode methods
+
+    public async Task<List<Episode>> GetAllEpisodesAsync(string feedId)
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            return !_episodesByFeed.TryGetValue(feedId, out var value)
+                ? []
+                : value.OrderByDescending(e => e.PublishedDate).ToList();
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<Episode?> GetEpisodeByIdAsync(string feedId, string id)
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            return !_episodesByFeed.TryGetValue(feedId, out var value)
+                ? null
+                : value.FirstOrDefault(e => e.Id == id);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<Episode> AddEpisodeAsync(
+        string feedId,
+        string filePath,
+        string? title = null,
+        string? description = null,
+        DateTime? publishedDate = null,
+        bool? useMetadataForPublishedDate = null)
     {
         var fileInfo = new FileInfo(filePath);
         if (!fileInfo.Exists)
             throw new FileNotFoundException("Audio file not found", filePath);
 
+        // Verify feed exists
+        var feed = await GetFeedAsync(feedId);
+        if (feed == null)
+        {
+            throw new InvalidOperationException($"Feed '{feedId}' not found");
+        }
+
         var fileName = fileInfo.Name;
         var fileSize = fileInfo.Length;
-        var id = Episode.GenerateId(fileName, fileSize);
+        var id = Episode.GenerateId(feedId, fileName, fileSize);
 
         await _lock.WaitAsync();
         try
         {
+            // Initialize episode list for feed if doesn't exist
+            if (!_episodesByFeed.ContainsKey(feedId))
+            {
+                _episodesByFeed[feedId] = [];
+            }
+
             // Check if episode already exists
-            var existing = _episodes.FirstOrDefault(e => e.Id == id);
+            var existing = _episodesByFeed[feedId].FirstOrDefault(e => e.Id == id);
             if (existing != null)
             {
-                _logger.LogInformation("Episode with ID {Id} already exists, skipping", id);
+                _logger.LogInformation("Episode with ID {Id} already exists in feed {FeedId}, skipping", id, feedId);
                 return existing;
             }
 
             var duration = await GetAudioDurationAsync(filePath);
 
-            // Determine published date based on configuration and parameters
-            // Priority order:
-            // 1. Explicit publishedDate parameter (highest priority)
-            // 2. useMetadataForPublishedDate parameter (per-request override)
-            // 3. UseFileMetadataForPublishDate config setting
-            // 4. Current datetime (default fallback)
+            // Determine published date
             DateTime finalPublishedDate;
             if (publishedDate.HasValue)
             {
-                // Explicit date provided, use it
                 finalPublishedDate = publishedDate.Value;
                 _logger.LogDebug("Using explicitly provided published date for {File}: {Date}", fileName, finalPublishedDate);
             }
             else if (useMetadataForPublishedDate.HasValue && useMetadataForPublishedDate.Value)
             {
-                // Per-request override to use file metadata
                 finalPublishedDate = GetPublishedDate(filePath);
                 _logger.LogDebug("Using file metadata (per-request) for published date for {File}: {Date}", fileName, finalPublishedDate);
             }
+            else if (feed.UseFileMetadataForPublishDate)
+            {
+                finalPublishedDate = GetPublishedDate(filePath);
+                _logger.LogDebug("Using file metadata (config) for published date for {File}: {Date}", fileName, finalPublishedDate);
+            }
             else
             {
-                var podcastConfig = _configuration.GetSection("Podcast").Get<PodcastConfig>();
-                if (podcastConfig?.UseFileMetadataForPublishDate == true)
-                {
-                    // Use file metadata based on global config
-                    finalPublishedDate = GetPublishedDate(filePath);
-                    _logger.LogDebug("Using file metadata (config) for published date for {File}: {Date}", fileName, finalPublishedDate);
-                }
-                else
-                {
-                    // Default: use current datetime
-                    finalPublishedDate = DateTime.UtcNow;
-                    _logger.LogDebug("Using current datetime for published date for {File}: {Date}", fileName, finalPublishedDate);
-                }
+                finalPublishedDate = DateTime.UtcNow;
+                _logger.LogDebug("Using current time for published date for {File}: {Date}", fileName, finalPublishedDate);
             }
 
+            // Upload audio file to blob storage
+            await _blobStorage.UploadAudioAsync(feedId, fileName, filePath);
+
+            // Create episode
             var episode = new Episode
             {
                 Id = id,
-                Title = string.IsNullOrWhiteSpace(title) ? ParseTitleFromFilename(fileName) : title,
-                Description = description ?? string.Empty,
+                FeedId = feedId,
+                Title = title ?? ParseTitleFromFilename(fileName),
+                Description = description,
                 FileName = fileName,
                 FileSize = fileSize,
                 Duration = duration,
                 PublishedDate = finalPublishedDate
             };
 
-            // Upload file to blob storage
-            await _blobStorage.UploadAudioAsync(fileName, filePath);
+            _episodesByFeed[feedId].Add(episode);
+            await SaveEpisodesAsync(feedId);
 
-            _episodes.Add(episode);
-            await SaveEpisodesAsync();
-
-            _logger.LogInformation("Added episode: {Title} ({Id})", episode.Title, episode.Id);
+            _logger.LogInformation("Added episode to feed {FeedId}: {Title} ({FileName})", feedId, episode.Title, fileName);
             return episode;
         }
         finally
@@ -137,22 +315,30 @@ public class EpisodeService : IDisposable
         }
     }
 
-    public async Task<bool> DeleteEpisodeAsync(string id)
+    public async Task<bool> DeleteEpisodeAsync(string feedId, string id)
     {
         await _lock.WaitAsync();
         try
         {
-            var episode = _episodes.FirstOrDefault(e => e.Id == id);
-            if (episode == null)
+            if (!_episodesByFeed.TryGetValue(feedId, out var value))
+            {
                 return false;
+            }
 
-            // Delete audio file from blob storage
-            await _blobStorage.DeleteAudioAsync(episode.FileName);
+            var episode = value.FirstOrDefault(e => e.Id == id);
+            if (episode == null)
+            {
+                return false;
+            }
 
-            _episodes.Remove(episode);
-            await SaveEpisodesAsync();
+            // Delete from blob storage
+            await _blobStorage.DeleteAudioAsync(feedId, episode.FileName);
 
-            _logger.LogInformation("Deleted episode: {Title} ({Id})", episode.Title, episode.Id);
+            // Remove from list
+            _episodesByFeed[feedId].Remove(episode);
+            await SaveEpisodesAsync(feedId);
+
+            _logger.LogInformation("Deleted episode from feed {FeedId}: {Title}", feedId, episode.Title);
             return true;
         }
         finally
@@ -161,90 +347,52 @@ public class EpisodeService : IDisposable
         }
     }
 
-    public async Task SyncWithBlobStorageAsync()
+    public async Task<Episode> MoveEpisodeAsync(string episodeId, string sourceFeedId, string targetFeedId)
     {
         await _lock.WaitAsync();
         try
         {
-            var audioFiles = await _blobStorage.ListAudioFilesAsync();
-            var changesMade = false;
-
-            // Remove episodes whose files no longer exist in blob storage
-            var toRemove = _episodes
-                .Where(e => !audioFiles.Contains(e.FileName))
-                .ToList();
-
-            foreach (var episode in toRemove)
+            // Verify both feeds exist
+            var sourceFeed = await GetFeedAsync(sourceFeedId);
+            var targetFeed = await GetFeedAsync(targetFeedId);
+            if (sourceFeed == null || targetFeed == null)
             {
-                _episodes.Remove(episode);
-                _logger.LogInformation("Removed episode {Title} - file no longer exists in blob storage", episode.Title);
-                changesMade = true;
+                throw new InvalidOperationException("Source or target feed not found");
             }
 
-            // Add new files found in blob storage
-            var existingFileNames = _episodes.Select(e => e.FileName).ToHashSet();
-            var newFiles = audioFiles
-                .Where(f => IsAudioFile(f) && !existingFileNames.Contains(f))
-                .ToList();
-
-            foreach (var fileName in newFiles)
+            // Find episode in source feed
+            var episode = _episodesByFeed[sourceFeedId].FirstOrDefault(e => e.Id == episodeId);
+            if (episode == null)
             {
-                try
-                {
-                    // Download to temp file for metadata extraction
-                    var tempPath = await _blobStorage.DownloadAudioToTempAsync(fileName);
-
-                    try
-                    {
-                        var fileSize = await _blobStorage.GetAudioFileSizeAsync(fileName);
-                        var id = Episode.GenerateId(fileName, fileSize);
-
-                        // Check if episode with this ID already exists (shouldn't happen, but safety check)
-                        if (_episodes.Any(e => e.Id == id))
-                        {
-                            _logger.LogDebug("Episode with ID {Id} already exists, skipping {FileName}", id, fileName);
-                            continue;
-                        }
-
-                        var duration = await GetAudioDurationAsync(tempPath);
-                        var publishedDate = GetPublishedDate(tempPath);
-
-                        var episode = new Episode
-                        {
-                            Id = id,
-                            Title = ParseTitleFromFilename(fileName),
-                            Description = string.Empty,
-                            FileName = fileName,
-                            FileSize = fileSize,
-                            Duration = duration,
-                            PublishedDate = publishedDate
-                        };
-
-                        _episodes.Add(episode);
-                        _logger.LogInformation("Auto-imported episode from blob storage: {Title} ({Id})", episode.Title, episode.Id);
-                        changesMade = true;
-                    }
-                    finally
-                    {
-                        // Clean up temp file
-                        if (File.Exists(tempPath))
-                        {
-                            File.Delete(tempPath);
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error auto-importing file {File} from blob storage", fileName);
-                }
+                throw new InvalidOperationException($"Episode '{episodeId}' not found in feed '{sourceFeedId}'");
             }
 
-            if (changesMade)
-            {
-                await SaveEpisodesAsync();
-            }
+            // Move blob in storage
+            var tempPath = await _blobStorage.DownloadAudioToTempAsync(sourceFeedId, episode.FileName);
+            await _blobStorage.UploadAudioAsync(targetFeedId, episode.FileName, tempPath);
+            await _blobStorage.DeleteAudioAsync(sourceFeedId, episode.FileName);
+            File.Delete(tempPath);
 
-            _logger.LogInformation("Sync complete: {Count} episodes active", _episodes.Count);
+            // Update episode and move to target feed
+            var newId = Episode.GenerateId(targetFeedId, episode.FileName, episode.FileSize);
+            var movedEpisode = episode with
+            {
+                Id = newId,
+                FeedId = targetFeedId
+            };
+
+            _episodesByFeed[sourceFeedId].Remove(episode);
+            if (!_episodesByFeed.ContainsKey(targetFeedId))
+            {
+                _episodesByFeed[targetFeedId] = [];
+            }
+            _episodesByFeed[targetFeedId].Add(movedEpisode);
+
+            await SaveEpisodesAsync(sourceFeedId);
+            await SaveEpisodesAsync(targetFeedId);
+
+            _logger.LogInformation("Moved episode {Id} from feed {Source} to {Target}", episodeId, sourceFeedId, targetFeedId);
+            return movedEpisode;
         }
         finally
         {
@@ -252,153 +400,211 @@ public class EpisodeService : IDisposable
         }
     }
 
-    private async Task LoadEpisodesAsync()
+    public async Task<Episode> CopyEpisodeAsync(string episodeId, string sourceFeedId, string targetFeedId)
     {
+        await _lock.WaitAsync();
         try
         {
-            var json = await _blobStorage.LoadMetadataAsync();
-            if (json == null)
+            // Verify both feeds exist
+            var sourceFeed = await GetFeedAsync(sourceFeedId);
+            var targetFeed = await GetFeedAsync(targetFeedId);
+            if (sourceFeed == null || targetFeed == null)
             {
-                _episodes = new List<Episode>();
-                _logger.LogInformation("No metadata found in blob storage, starting fresh");
-                return;
+                throw new InvalidOperationException("Source or target feed not found");
             }
 
-            _episodes = JsonSerializer.Deserialize<List<Episode>>(json) ?? new List<Episode>();
-            _logger.LogInformation("Loaded {Count} episodes from metadata", _episodes.Count);
+            // Find episode in source feed
+            var episode = _episodesByFeed[sourceFeedId].FirstOrDefault(e => e.Id == episodeId);
+            if (episode == null)
+            {
+                throw new InvalidOperationException($"Episode '{episodeId}' not found in feed '{sourceFeedId}'");
+            }
+
+            // Copy blob in storage
+            var tempPath = await _blobStorage.DownloadAudioToTempAsync(sourceFeedId, episode.FileName);
+            await _blobStorage.UploadAudioAsync(targetFeedId, episode.FileName, tempPath);
+            File.Delete(tempPath);
+
+            // Create copied episode with new ID
+            var newId = Episode.GenerateId(targetFeedId, episode.FileName, episode.FileSize);
+            var copiedEpisode = episode with
+            {
+                Id = newId,
+                FeedId = targetFeedId
+            };
+
+            if (!_episodesByFeed.ContainsKey(targetFeedId))
+            {
+                _episodesByFeed[targetFeedId] = new List<Episode>();
+            }
+            _episodesByFeed[targetFeedId].Add(copiedEpisode);
+
+            await SaveEpisodesAsync(targetFeedId);
+
+            _logger.LogInformation("Copied episode {Id} from feed {Source} to {Target}", episodeId, sourceFeedId, targetFeedId);
+            return copiedEpisode;
         }
-        catch (Exception ex)
+        finally
         {
-            _logger.LogError(ex, "Error loading episodes metadata, starting fresh");
-            _episodes = new List<Episode>();
+            _lock.Release();
         }
     }
 
-    private async Task SaveEpisodesAsync()
+    public async Task SyncWithBlobStorageAsync(string feedId)
     {
-        var options = new JsonSerializerOptions { WriteIndented = true };
-        var json = JsonSerializer.Serialize(_episodes, options);
-        await _blobStorage.SaveMetadataAsync(json);
-    }
-
-    private async Task<TimeSpan> GetAudioDurationAsync(string filePath)
-    {
-        using var cts = new CancellationTokenSource();
-        cts.CancelAfter(TimeSpan.FromSeconds(30)); // Timeout after 30 seconds
-
+        await _lock.WaitAsync();
         try
         {
-            var task = Task.Run(() =>
+            if (!_episodesByFeed.ContainsKey(feedId))
             {
-                try
-                {
-                    using var file = TagLib.File.Create(filePath);
-                    return file.Properties.Duration;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Could not read audio duration from {File}, using default", filePath);
-                    return TimeSpan.Zero;
-                }
-            }, cts.Token);
+                _episodesByFeed[feedId] = [];
+            }
 
-            return await task;
+            var blobFiles = await _blobStorage.ListAudioFilesAsync(feedId);
+            var metadataFiles = _episodesByFeed[feedId].Select(e => e.FileName).ToHashSet();
+
+            // Remove episodes whose blob files are missing
+            var episodesToRemove = _episodesByFeed[feedId]
+                .Where(e => !blobFiles.Contains(e.FileName))
+                .ToList();
+
+            foreach (var episode in episodesToRemove)
+            {
+                _episodesByFeed[feedId].Remove(episode);
+                _logger.LogInformation("Removed episode with missing blob file from feed {FeedId}: {FileName}", feedId, episode.FileName);
+            }
+
+            if (episodesToRemove.Any())
+            {
+                await SaveEpisodesAsync(feedId);
+            }
+
+            _logger.LogInformation("Sync complete for feed {FeedId}. Removed {Count} episodes with missing files.", feedId, episodesToRemove.Count);
         }
-        catch (OperationCanceledException)
+        finally
         {
-            _logger.LogWarning("Timeout reading audio duration from {File} after 30 seconds, using default", filePath);
-            return TimeSpan.Zero;
+            _lock.Release();
+        }
+    }
+
+    // Private helper methods
+
+    private async Task LoadFeedsAsync()
+    {
+        var feedsJson = await _blobStorage.LoadFeedsConfigAsync();
+        if (feedsJson != null)
+        {
+            _feedsMetadata = JsonSerializer.Deserialize<FeedsMetadata>(feedsJson) ?? new FeedsMetadata();
+            _logger.LogInformation("Loaded {Count} feeds from blob storage", _feedsMetadata.Feeds.Count);
+        }
+        else
+        {
+            _logger.LogInformation("No feeds configuration found in blob storage, starting with empty list");
+        }
+    }
+
+    private async Task SaveFeedsAsync()
+    {
+        var json = JsonSerializer.Serialize(_feedsMetadata, _jsonSerializerOptions);
+        await _blobStorage.SaveFeedsConfigAsync(json);
+    }
+
+    private async Task LoadAllEpisodesAsync()
+    {
+        foreach (var feed in _feedsMetadata.Feeds)
+        {
+            var metadataJson = await _blobStorage.LoadEpisodeMetadataAsync(feed.Id);
+            if (metadataJson != null)
+            {
+                var episodes = JsonSerializer.Deserialize<List<Episode>>(metadataJson) ?? [];
+                _episodesByFeed[feed.Id] = episodes;
+                _logger.LogInformation("Loaded {Count} episodes for feed {FeedId}", episodes.Count, feed.Id);
+            }
+            else
+            {
+                _episodesByFeed[feed.Id] = [];
+            }
+        }
+    }
+
+    private async Task SaveEpisodesAsync(string feedId)
+    {
+        if (!_episodesByFeed.ContainsKey(feedId))
+        {
+            return;
+        }
+
+        var json = JsonSerializer.Serialize(_episodesByFeed[feedId], _jsonSerializerOptions);
+        await _blobStorage.SaveEpisodeMetadataAsync(feedId, json);
+    }
+
+    private async Task SyncAllFeedsAsync()
+    {
+        foreach (var feed in _feedsMetadata.Feeds)
+        {
+            await SyncWithBlobStorageAsync(feed.Id);
+        }
+    }
+
+    private Task<TimeSpan> GetAudioDurationAsync(string filePath)
+    {
+        try
+        {
+            using var file = TagLib.File.Create(filePath);
+            return Task.FromResult(file.Properties.Duration);
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error reading audio duration from {File}, using default", filePath);
-            return TimeSpan.Zero;
+            _logger.LogWarning(ex, "Failed to read audio duration from {FilePath}, using 0:00", filePath);
+            return Task.FromResult(TimeSpan.Zero);
         }
     }
 
     private DateTime GetPublishedDate(string filePath)
     {
-        // Priority order:
-        // 1. TagLib DateTagged from audio metadata (user-editable, all formats)
-        // 2. MP4 container creation time (mvhd box) - for M4A/MP4 files
-        // 3. Current time (file timestamps are unreliable after upload)
-
-        // Try to get media created date from tag (highest priority)
         try
         {
-            using var cts = new CancellationTokenSource();
-            cts.CancelAfter(TimeSpan.FromSeconds(30)); // Timeout after 30 seconds
+            using var file = TagLib.File.Create(filePath);
 
-            var task = Task.Run(() =>
+            // Try DateTagged first (user-editable metadata)
+            if (file.Tag.DateTagged.HasValue)
             {
-                using var file = TagLib.File.Create(filePath);
-                return file.Tag.DateTagged;
-            }, cts.Token);
+                _logger.LogInformation("Using DateTagged from audio metadata: {Date}", file.Tag.DateTagged.Value);
+                return file.Tag.DateTagged.Value.ToUniversalTime();
+            }
 
-            // Wait for the task with timeout
-            if (task.Wait(TimeSpan.FromSeconds(30)))
+            // For M4A/MP4 files, try to read container creation time
+            var extension = Path.GetExtension(filePath).ToLowerInvariant();
+            if (extension == ".m4a" || extension == ".mp4")
             {
-                var dateTagged = task.Result;
-                if (dateTagged.HasValue && dateTagged.Value > DateTime.MinValue)
+                var creationTime = Mp4Parser.GetCreationTime(filePath);
+                if (creationTime.HasValue)
                 {
-                    _logger.LogInformation("Using DateTagged for {File}: {Date}", filePath, dateTagged.Value);
-                    return dateTagged.Value.ToUniversalTime();
-                }
-                else
-                {
-                    _logger.LogDebug("DateTagged is null or MinValue for {File}, trying next method", filePath);
+                    _logger.LogInformation("Using MP4 container creation time: {Date}", creationTime.Value);
+                    return creationTime.Value;
                 }
             }
-            else
-            {
-                _logger.LogDebug("Timeout reading metadata date from {File} after 30 seconds", filePath);
-            }
+
+            _logger.LogDebug("No metadata date found for {FilePath}, using current time", filePath);
+            return DateTime.UtcNow;
         }
         catch (Exception ex)
         {
-            _logger.LogDebug(ex, "Could not read metadata date from {File}, trying next method", filePath);
+            _logger.LogDebug(ex, "Failed to read published date from {FilePath}, using current time", filePath);
+            return DateTime.UtcNow;
         }
-
-        // For M4A/MP4 files, try to get creation time from container metadata
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        if (extension is ".m4a" or ".mp4")
-        {
-            var mp4CreationTime = Mp4Parser.GetCreationTime(filePath);
-            if (mp4CreationTime.HasValue && mp4CreationTime.Value > DateTime.MinValue)
-            {
-                _logger.LogInformation("Using MP4 container creation time for {File}: {Date}", filePath, mp4CreationTime.Value);
-                return mp4CreationTime.Value;
-            }
-        }
-
-        // Fallback to current time (file timestamps are unreliable after upload)
-        _logger.LogInformation("Using current time fallback for {File}", filePath);
-        return DateTime.UtcNow;
     }
 
-    private static bool IsAudioFile(string filePath)
+    private static string ParseTitleFromFilename(string fileName)
     {
-        var extension = Path.GetExtension(filePath).ToLowerInvariant();
-        return extension is ".mp3" or ".m4a" or ".wav" or ".ogg" or ".flac" or ".aac";
-    }
+        var nameWithoutExtension = Path.GetFileNameWithoutExtension(fileName);
+        var title = nameWithoutExtension.Replace('_', ' ');
 
-    internal static string ParseTitleFromFilename(string filename)
-    {
-        // Get filename without extension
-        var nameWithoutExtension = Path.GetFileNameWithoutExtension(filename);
+        // Handle PascalCase: Insert space before uppercase letters that follow lowercase letters
+        // But preserve sequences like "2D", "3D", "4K" (digit followed by uppercase)
+        title = Regex.Replace(title, "(?<![A-Z0-9])(?=[A-Z])", " ");
 
-        // Replace underscores with spaces
-        var withSpaces = nameWithoutExtension.Replace('_', ' ');
-
-        // Insert spaces before uppercase letters (PascalCase handling)
-        // This regex inserts a space before any uppercase letter that follows a lowercase letter
-        // Note: We exclude digits to keep patterns like "2D" intact
-        var withPascalCaseSpaces = Regex.Replace(withSpaces, @"(?<=[a-z])(?=[A-Z])", " ");
-
-        // Clean up multiple spaces
-        var cleaned = Regex.Replace(withPascalCaseSpaces, @"\s+", " ").Trim();
-
-        return cleaned;
+        return title.Trim();
     }
 
     public void Dispose()
