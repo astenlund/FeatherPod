@@ -52,7 +52,7 @@ await episodeService.InitializeAsync();
 app.MapGet("/feed.xml", async (HttpContext context, EpisodeService service, RssFeedGenerator feedGenerator) =>
 {
     var episodes = await service.GetAllEpisodesAsync();
-    var feed = feedGenerator.GenerateFeed(episodes);
+    var feed = RssFeedGenerator.GenerateFeed(episodes);
 
     // Prevent caching to ensure feed updates are immediate
     context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
