@@ -1,5 +1,5 @@
-// FeatherPod Infrastructure - Phase 4: Storage + App Service + Managed Identity + App Settings
-// This template creates the Azure Storage Account, blob containers, App Service with managed identity, RBAC, and app settings
+// FeatherPod Infrastructure - Multi-Feed Architecture
+// This template creates the Azure Storage Account, single blob container, App Service with managed identity, RBAC, and app settings
 
 @description('Name of the storage account (must be globally unique, 3-24 chars, lowercase alphanumeric)')
 @minLength(3)
@@ -18,11 +18,8 @@ param location string = 'swedencentral'
 ])
 param storageSku string = 'Standard_LRS'
 
-@description('Name of the audio container')
-param audioContainerName string = 'audio'
-
-@description('Name of the metadata container')
-param metadataContainerName string = 'metadata'
+@description('Name of the blob container (single container for all data)')
+param containerName string = 'featherpod'
 
 @description('Name of the App Service Plan')
 param appServicePlanName string
@@ -93,19 +90,10 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01'
   name: 'default'
 }
 
-// Audio Container
-resource audioContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+// Single Container (hierarchical structure: feeds.json, {feedId}/episodes.json, {feedId}/{filename})
+resource featherpodContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
   parent: blobService
-  name: audioContainerName
-  properties: {
-    publicAccess: 'None'
-  }
-}
-
-// Metadata Container
-resource metadataContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
-  parent: blobService
-  name: metadataContainerName
+  name: containerName
   properties: {
     publicAccess: 'None'
   }
@@ -152,8 +140,7 @@ resource appServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
   name: 'appsettings'
   properties: {
     Azure__AccountName: storageAccountName
-    Azure__AudioContainerName: audioContainerName
-    Azure__MetadataContainerName: metadataContainerName
+    Azure__ContainerName: containerName
     ApiKey: apiKey
     Podcast__Title: podcastTitle
     Podcast__Description: podcastDescription
@@ -183,8 +170,7 @@ resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 // Outputs
 output storageAccountId string = storageAccount.id
 output storageAccountName string = storageAccount.name
-output audioContainerName string = audioContainer.name
-output metadataContainerName string = metadataContainer.name
+output containerName string = featherpodContainer.name
 output appServicePlanId string = appServicePlan.id
 output appServicePlanName string = appServicePlan.name
 output appServiceId string = appService.id
