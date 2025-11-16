@@ -1,6 +1,6 @@
-// FeatherPod Test Environment Infrastructure
+// FeatherPod Test Environment Infrastructure - Multi-Feed Architecture
 // This template creates a test App Service that shares the production storage account
-// Uses separate containers (audio-test, metadata-test) for isolation
+// Uses separate container (featherpod-test) for isolation
 
 @description('Name of the existing storage account to use')
 param storageAccountName string = 'featherpod'
@@ -8,11 +8,8 @@ param storageAccountName string = 'featherpod'
 @description('Azure region for resources')
 param location string = 'swedencentral'
 
-@description('Name of the test audio container')
-param testAudioContainerName string = 'audio-test'
-
-@description('Name of the test metadata container')
-param testMetadataContainerName string = 'metadata-test'
+@description('Name of the test container (single container for all test data)')
+param testContainerName string = 'featherpod-test'
 
 @description('Name of the test App Service Plan')
 param testAppServicePlanName string = 'featherpod-test-plan'
@@ -93,8 +90,7 @@ resource testAppServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
   name: 'appsettings'
   properties: {
     Azure__AccountName: storageAccountName
-    Azure__AudioContainerName: testAudioContainerName
-    Azure__MetadataContainerName: testMetadataContainerName
+    Azure__ContainerName: testContainerName
     ApiKey: apiKey
     Podcast__Title: podcastTitle
     Podcast__Description: podcastDescription

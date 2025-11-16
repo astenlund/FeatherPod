@@ -11,11 +11,8 @@
     "storageSku": {
       "value": "Standard_LRS"
     },
-    "audioContainerName": {
-      "value": "audio"
-    },
-    "metadataContainerName": {
-      "value": "metadata"
+    "containerName": {
+      "value": "featherpod"
     },
     "appServicePlanName": {
       "value": "featherpod-plan"
