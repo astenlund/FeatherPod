@@ -22,9 +22,10 @@ The PR deployment workflow automatically:
 
 ## Architecture
 
-- **Production**: `featherpod` App Service with `audio` and `metadata` containers
-- **Test**: `featherpod-test` App Service with `audio-test` and `metadata-test` containers
+- **Production**: `featherpod` App Service with `featherpod` container
+- **Test**: `featherpod-test` App Service with `featherpod-test` container
 - **Shared**: Both environments use the same storage account (`featherpod`)
+- **Container Structure**: Single container with hierarchical paths (`feeds.json`, `{feedId}/episodes.json`, `{feedId}/{filename}`)
 - **Cost**: Both use F1 (Free) tier, no additional costs
 
 ## One-Time Setup
@@ -160,7 +161,7 @@ The workflow runs on:
 - **URL**: https://featherpod-test.azurewebsites.net
 - **Resource Group**: `featherpod-test-rg`
 - **App Service**: `featherpod-test`
-- **Storage Containers**: `audio-test`, `metadata-test`
+- **Storage Container**: `featherpod-test` (single container, hierarchical structure)
 - **Tier**: F1 (Free)
 
 ## Testing a PR
