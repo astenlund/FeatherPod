@@ -59,10 +59,16 @@ jobs:
 
           **Test Environment:** ${{ env.TEST_APP_URL }}
 
-          ### Test Endpoints:
-          - 📡 RSS Feed: ${{ env.TEST_APP_URL }}/feed.xml
-          - 📋 Episodes API: ${{ env.TEST_APP_URL }}/api/episodes
-          - 🎵 Upload: \`POST ${{ env.TEST_APP_URL }}/api/episodes\` (requires X-API-Key header)
+          ### Multi-Feed Management:
+          - 📋 List Feeds: \`GET ${{ env.TEST_APP_URL }}/feeds\`
+          - ➕ Create Feed: \`POST ${{ env.TEST_APP_URL }}/feeds\` (requires X-API-Key)
+
+          ### Per-Feed Endpoints:
+          Replace \`{feedId}\` with your feed ID:
+          - 📡 RSS Feed: \`GET ${{ env.TEST_APP_URL }}/{feedId}/feed.xml\`
+          - 📋 Episodes: \`GET ${{ env.TEST_APP_URL }}/api/{feedId}/episodes\`
+          - 🎵 Upload: \`POST ${{ env.TEST_APP_URL }}/api/{feedId}/episodes\` (requires X-API-Key)
+          - 🔊 Audio: \`GET ${{ env.TEST_APP_URL }}/audio/{feedId}/{filename}\`
 
           **Note:** The test API key is configured from GitHub Secrets (TEST_API_KEY).
 
