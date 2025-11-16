@@ -253,8 +253,11 @@ app.MapPost("/{feedId}/api/episodes", async (
         return Results.BadRequest(new { error = "No file uploaded" });
     }
 
-    // Save uploaded file to temp location
-    var tempPath = Path.GetTempFileName();
+    // Save uploaded file to temp location with original filename
+    var tempDir = Path.Combine(Path.GetTempPath(), "FeatherPod", Guid.NewGuid().ToString());
+    Directory.CreateDirectory(tempDir);
+    var tempPath = Path.Combine(tempDir, file.FileName);
+
     await using (var stream = File.Create(tempPath))
     {
         await file.CopyToAsync(stream);
@@ -276,10 +279,17 @@ app.MapPost("/{feedId}/api/episodes", async (
     }
     finally
     {
-        // Clean up temp file
-        if (File.Exists(tempPath))
+        // Clean up temp directory
+        if (Directory.Exists(tempDir))
         {
-            File.Delete(tempPath);
+            try
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+            catch
+            {
+                // Ignore cleanup errors
+            }
         }
     }
 })

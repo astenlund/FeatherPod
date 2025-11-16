@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using FeatherPod.Models;
 using FeatherPod.Services;
@@ -9,17 +8,15 @@ namespace FeatherPod.Tests;
 public class EpisodeServiceTests : IDisposable
 {
     private readonly string _testDirectory;
-    private readonly string _episodesPath;
     private readonly ILogger<EpisodeService> _logger;
-    private readonly IConfiguration _configuration;
+    private const string TestFeedId = "test-feed";
 
-    private readonly List<EpisodeService> _servicesToDispose = new();
-    private readonly List<TestBlobStorageService> _blobServicesToDispose = new();
+    private readonly List<EpisodeService> _servicesToDispose = [];
+    private readonly List<TestBlobStorageService> _blobServicesToDispose = [];
 
     public EpisodeServiceTests()
     {
         _testDirectory = Path.Combine(Path.GetTempPath(), $"FeatherPodTests_{Guid.NewGuid()}");
-        _episodesPath = Path.Combine(_testDirectory, "audio");
 
         Directory.CreateDirectory(_testDirectory);
 
@@ -28,17 +25,8 @@ public class EpisodeServiceTests : IDisposable
         {
             builder.SetMinimumLevel(LogLevel.Error); // Only show errors and above
         });
+
         _logger = loggerFactory.CreateLogger<EpisodeService>();
-
-        // Create test configuration
-        var configData = new Dictionary<string, string>
-        {
-            ["Podcast:UseFileMetadataForPublishDate"] = "false"
-        };
-
-        _configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(configData!)
-            .Build();
     }
 
     private EpisodeService CreateService()
@@ -46,59 +34,47 @@ public class EpisodeServiceTests : IDisposable
         var blobStorage = new TestBlobStorageService(_testDirectory);
         _blobServicesToDispose.Add(blobStorage);
 
-        var service = new EpisodeService(blobStorage, _configuration, _logger);
+        var service = new EpisodeService(blobStorage, _logger);
         _servicesToDispose.Add(service);
         return service;
     }
 
-    private EpisodeService CreateServiceWithFileMetadata(bool useFileMetadata)
+    private static async Task CreateTestFeedAsync(EpisodeService service, string feedId = TestFeedId)
     {
-        var configData = new Dictionary<string, string>
+        var feedConfig = new FeedConfig
         {
-            ["Podcast:UseFileMetadataForPublishDate"] = useFileMetadata.ToString().ToLower()
+            Id = feedId,
+            Title = "Test Podcast",
+            Description = "Test Description",
+            Author = "Test Author",
+            Email = "test@example.com",
+            Language = "en",
+            Category = "Technology"
         };
 
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(configData!)
-            .Build();
-
-        var blobStorage = new TestBlobStorageService(_testDirectory);
-        _blobServicesToDispose.Add(blobStorage);
-
-        var service = new EpisodeService(blobStorage, configuration, _logger);
-        _servicesToDispose.Add(service);
-        return service;
+        await service.CreateFeedAsync(feedConfig);
     }
 
     [Fact]
-    public async Task InitializeAsync_ShouldLoadExistingMetadata()
+    public async Task InitializeAsync_ShouldLoadExistingFeeds()
     {
         // Arrange
-        var testEpisode = new Episode
-        {
-            Id = "test123",
-            Title = "Test Episode",
-            FileName = "test.mp3",
-            FileSize = 1000
-        };
-
-        var json = System.Text.Json.JsonSerializer.Serialize(new[] { testEpisode }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-        var metadataPath = Path.Combine(_testDirectory, "metadata.json");
-        await File.WriteAllTextAsync(metadataPath, json);
-
-        // Create the actual file in the audio directory
-        Directory.CreateDirectory(_episodesPath);
-        await File.WriteAllTextAsync(Path.Combine(_episodesPath, "test.mp3"), "fake audio data");
-
         var service = CreateService();
 
         // Act
         await service.InitializeAsync();
-        var episodes = await service.GetAllEpisodesAsync();
+        await CreateTestFeedAsync(service, "feed1");
+        await CreateTestFeedAsync(service, "feed2");
+
+        // Create a new service instance to test loading
+        var service2 = CreateService();
+        await service2.InitializeAsync();
+        var feeds = await service2.GetFeedsAsync();
 
         // Assert
-        Assert.Single(episodes);
-        Assert.Equal("Test Episode", episodes[0].Title);
+        Assert.Equal(2, feeds.Count);
+        Assert.Contains(feeds, f => f.Id == "feed1");
+        Assert.Contains(feeds, f => f.Id == "feed2");
     }
 
     [Fact]
@@ -107,6 +83,7 @@ public class EpisodeServiceTests : IDisposable
         // Arrange
         var service = CreateService();
         await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
 
         // Create test files
         var file1 = Path.Combine(_testDirectory, "test1.mp3");
@@ -115,11 +92,11 @@ public class EpisodeServiceTests : IDisposable
         await File.WriteAllTextAsync(file2, "audio2");
 
         // Act
-        await service.AddEpisodeAsync(file1, "Episode 1");
+        await service.AddEpisodeAsync(TestFeedId, file1, "Episode 1");
         await Task.Delay(10); // Ensure different timestamps
-        await service.AddEpisodeAsync(file2, "Episode 2");
+        await service.AddEpisodeAsync(TestFeedId, file2, "Episode 2");
 
-        var episodes = await service.GetAllEpisodesAsync();
+        var episodes = await service.GetAllEpisodesAsync(TestFeedId);
 
         // Assert
         Assert.Equal(2, episodes.Count);
@@ -133,35 +110,38 @@ public class EpisodeServiceTests : IDisposable
         // Arrange
         var service = CreateService();
         await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
 
         var testFile = Path.Combine(_testDirectory, "test.mp3");
         await File.WriteAllTextAsync(testFile, "audio data");
         var fileSize = new FileInfo(testFile).Length;
-        var expectedId = Episode.GenerateId("test.mp3", fileSize);
+        var expectedId = Episode.GenerateId(TestFeedId, "test.mp3", fileSize);
 
         // Act
-        var episode = await service.AddEpisodeAsync(testFile, "Test");
+        var episode = await service.AddEpisodeAsync(TestFeedId, testFile, "Test");
 
         // Assert
         Assert.Equal(expectedId, episode.Id);
     }
 
     [Fact]
-    public async Task AddEpisodeAsync_ShouldCopyFileToEpisodesFolder()
+    public async Task AddEpisodeAsync_ShouldUploadToBlobStorage()
     {
         // Arrange
         var service = CreateService();
         await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
 
         var testFile = Path.Combine(_testDirectory, "test.mp3");
         await File.WriteAllTextAsync(testFile, "audio data");
 
         // Act
-        await service.AddEpisodeAsync(testFile, "Test");
+        await service.AddEpisodeAsync(TestFeedId, testFile, "Test");
 
         // Assert
-        var copiedFile = Path.Combine(_episodesPath, "test.mp3");
-        Assert.True(File.Exists(copiedFile));
+        var blobStorage = _blobServicesToDispose[0];
+        var exists = await blobStorage.AudioExistsAsync(TestFeedId, "test.mp3");
+        Assert.True(exists);
     }
 
     [Fact]
@@ -170,15 +150,16 @@ public class EpisodeServiceTests : IDisposable
         // Arrange
         var service = CreateService();
         await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
 
         var testFile = Path.Combine(_testDirectory, "test.mp3");
         await File.WriteAllTextAsync(testFile, "audio data");
 
         // Act
-        await service.AddEpisodeAsync(testFile, "Test 1");
-        await service.AddEpisodeAsync(testFile, "Test 2"); // Try to add again
+        await service.AddEpisodeAsync(TestFeedId, testFile, "Test 1");
+        await service.AddEpisodeAsync(TestFeedId, testFile, "Test 2"); // Try to add again
 
-        var episodes = await service.GetAllEpisodesAsync();
+        var episodes = await service.GetAllEpisodesAsync(TestFeedId);
 
         // Assert
         Assert.Single(episodes);
@@ -191,22 +172,24 @@ public class EpisodeServiceTests : IDisposable
         // Arrange
         var service = CreateService();
         await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
 
         var testFile = Path.Combine(_testDirectory, "test.mp3");
         await File.WriteAllTextAsync(testFile, "audio data");
 
-        var episode = await service.AddEpisodeAsync(testFile, "Test");
+        var episode = await service.AddEpisodeAsync(TestFeedId, testFile, "Test");
 
         // Act
-        var result = await service.DeleteEpisodeAsync(episode.Id);
+        var result = await service.DeleteEpisodeAsync(TestFeedId, episode.Id);
 
         // Assert
         Assert.True(result);
-        var episodes = await service.GetAllEpisodesAsync();
+        var episodes = await service.GetAllEpisodesAsync(TestFeedId);
         Assert.Empty(episodes);
 
-        var audioFile = Path.Combine(_episodesPath, "test.mp3");
-        Assert.False(File.Exists(audioFile));
+        var blobStorage = _blobServicesToDispose[0];
+        var exists = await blobStorage.AudioExistsAsync(TestFeedId, "test.mp3");
+        Assert.False(exists);
     }
 
     [Fact]
@@ -215,9 +198,10 @@ public class EpisodeServiceTests : IDisposable
         // Arrange
         var service = CreateService();
         await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
 
         // Act
-        var result = await service.DeleteEpisodeAsync("nonexistent");
+        var result = await service.DeleteEpisodeAsync(TestFeedId, "nonexistent");
 
         // Assert
         Assert.False(result);
@@ -229,20 +213,21 @@ public class EpisodeServiceTests : IDisposable
         // Arrange
         var service = CreateService();
         await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
 
         var testFile = Path.Combine(_testDirectory, "test.mp3");
         await File.WriteAllTextAsync(testFile, "audio data");
 
-        _ = await service.AddEpisodeAsync(testFile, "Test");
+        _ = await service.AddEpisodeAsync(TestFeedId, testFile, "Test");
 
         // Delete the audio file manually from blob storage
-        var audioFile = Path.Combine(_episodesPath, "test.mp3");
-        File.Delete(audioFile);
+        var blobStorage = _blobServicesToDispose[0];
+        await blobStorage.DeleteAudioAsync(TestFeedId, "test.mp3");
 
         // Act
-        await service.SyncWithBlobStorageAsync();
+        await service.SyncWithBlobStorageAsync(TestFeedId);
 
-        var episodes = await service.GetAllEpisodesAsync();
+        var episodes = await service.GetAllEpisodesAsync(TestFeedId);
 
         // Assert
         Assert.Empty(episodes);
@@ -254,14 +239,15 @@ public class EpisodeServiceTests : IDisposable
         // Arrange
         var service = CreateService();
         await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
 
         var testFile = Path.Combine(_testDirectory, "test.mp3");
         await File.WriteAllTextAsync(testFile, "audio data");
 
-        var addedEpisode = await service.AddEpisodeAsync(testFile, "Test");
+        var addedEpisode = await service.AddEpisodeAsync(TestFeedId, testFile, "Test");
 
         // Act
-        var episode = await service.GetEpisodeByIdAsync(addedEpisode.Id);
+        var episode = await service.GetEpisodeByIdAsync(TestFeedId, addedEpisode.Id);
 
         // Assert
         Assert.NotNull(episode);
@@ -274,52 +260,36 @@ public class EpisodeServiceTests : IDisposable
         // Arrange
         var service = CreateService();
         await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
 
         // Act
-        var episode = await service.GetEpisodeByIdAsync("nonexistent");
+        var episode = await service.GetEpisodeByIdAsync(TestFeedId, "nonexistent");
 
         // Assert
         Assert.Null(episode);
     }
 
     [Fact]
-    public void ParseTitleFromFilename_ShouldReplaceUnderscoresWithSpaces()
+    public async Task Episodes_ShouldBeIsolatedBetweenFeeds()
     {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service, "feed1");
+        await CreateTestFeedAsync(service, "feed2");
+
+        var testFile = Path.Combine(_testDirectory, "test.mp3");
+        await File.WriteAllTextAsync(testFile, "audio data");
+
         // Act
-        var result = EpisodeService.ParseTitleFromFilename("2000_FPS_Image_Rendering__How_GaussianImage_Broke_the_Speed_Bar.m4a");
+        await service.AddEpisodeAsync("feed1", testFile, "Feed 1 Episode");
+
+        var feed1Episodes = await service.GetAllEpisodesAsync("feed1");
+        var feed2Episodes = await service.GetAllEpisodesAsync("feed2");
 
         // Assert
-        Assert.Equal("2000 FPS Image Rendering How Gaussian Image Broke the Speed Bar", result);
-    }
-
-    [Fact]
-    public void ParseTitleFromFilename_ShouldHandlePascalCase()
-    {
-        // Act
-        var result = EpisodeService.ParseTitleFromFilename("MyPodcastEpisode.mp3");
-
-        // Assert
-        Assert.Equal("My Podcast Episode", result);
-    }
-
-    [Fact]
-    public void ParseTitleFromFilename_ShouldHandleMixedFormats()
-    {
-        // Act
-        var result = EpisodeService.ParseTitleFromFilename("Episode_01_TheBeginning.mp3");
-
-        // Assert
-        Assert.Equal("Episode 01 The Beginning", result);
-    }
-
-    [Fact]
-    public void ParseTitleFromFilename_ShouldKeepDigitLetterCombinations()
-    {
-        // Act
-        var result = EpisodeService.ParseTitleFromFilename("Introduction_to_2D_Graphics.mp3");
-
-        // Assert - "2D" should remain as "2D", not become "2 D"
-        Assert.Equal("Introduction to 2D Graphics", result);
+        Assert.Single(feed1Episodes);
+        Assert.Empty(feed2Episodes);
     }
 
     public void Dispose()
