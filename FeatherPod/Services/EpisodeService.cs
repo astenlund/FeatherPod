@@ -258,8 +258,8 @@ public sealed class EpisodeService : IDisposable
             var existing = _episodesByFeed[feedId].FirstOrDefault(e => e.Id == id);
             if (existing != null)
             {
-                _logger.LogInformation("Episode with ID {Id} already exists in feed {FeedId}, skipping", id, feedId);
-                return existing;
+                _logger.LogInformation("Episode with ID {Id} already exists in feed {FeedId}, replacing with new upload", id, feedId);
+                _episodesByFeed[feedId].Remove(existing);
             }
 
             var duration = await GetAudioDurationAsync(filePath);
