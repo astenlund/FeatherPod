@@ -739,24 +739,94 @@ internal static class CliHelpers
         return result;
     }
 
-    internal static async Task<bool> UploadEpisodeAsync(HttpClient httpClient, FeedConfig feed, string filePath, EpisodePushSettings settings)
+    internal static async Task<bool> UploadEpisodeAsync(HttpClient httpClient, IConfiguration configuration, FeedConfig feed, string filePath, EpisodePushSettings settings)
     {
         var fileName = Path.GetFileName(filePath);
         var success = false;
+        string? normalizedTempFile = null;
 
-        await AnsiConsole.Status()
-            .StartAsync($"Uploading [cyan]{fileName}[/]...", async _ =>
+        try
+        {
+            // Load audio normalization configuration
+            var normalizationConfig = new AudioNormalizationConfig();
+            configuration.GetSection("AudioNormalization").Bind(normalizationConfig);
+
+            // Check if normalization is enabled
+            string fileToUpload = filePath;
+            if (normalizationConfig.Enabled)
             {
-                try
+                // Check if FFmpeg is available
+                if (!FFmpegService.IsFFmpegAvailable())
                 {
-                    // Create multipart form data
-                    using var content = new MultipartFormDataContent();
+                    AnsiConsole.WriteLine();
+                    AnsiConsole.MarkupLine("[yellow]Warning:[/] FFmpeg is not installed or not found in PATH.");
+                    AnsiConsole.MarkupLine("  Audio normalization requires FFmpeg to be installed.");
+                    AnsiConsole.MarkupLine("  Download from: [link]https://ffmpeg.org/download.html[/]");
+                    AnsiConsole.WriteLine();
 
-                    // Add file
-                    var fileBytes = await File.ReadAllBytesAsync(filePath);
-                    var fileContent = new ByteArrayContent(fileBytes);
-                    fileContent.Headers.ContentType = new MediaTypeHeaderValue("audio/mpeg");
-                    content.Add(fileContent, "file", fileName);
+                    var continueWithoutNormalization = new MenuBuilder<bool?>()
+                        .WithTitle("Continue upload without normalization?")
+                        .WithHint("(arrow keys or Y/N, Esc to cancel)")
+                        .AddOption("Y", "Yes - Upload original file", true)
+                        .AddOption("N", "No - Cancel upload", false)
+                        .AllowCancel(true, false)
+                        .Show();
+
+                    if (continueWithoutNormalization != true)
+                    {
+                        AnsiConsole.MarkupLine("[grey]Upload cancelled.[/]");
+                        return false;
+                    }
+                    AnsiConsole.WriteLine();
+                }
+                else
+                {
+                    // Normalize audio
+                    AnsiConsole.MarkupLine($"Normalizing [cyan]{fileName}[/] to -16 LUFS...");
+                    normalizedTempFile = await FFmpegService.NormalizeAudioAsync(filePath, normalizationConfig);
+
+                    if (normalizedTempFile == null)
+                    {
+                        AnsiConsole.WriteLine();
+                        AnsiConsole.MarkupLine("[yellow]Warning:[/] Audio normalization failed.");
+
+                        var continueWithOriginal = new MenuBuilder<bool?>()
+                            .WithTitle("Continue upload with original (unnormalized) file?")
+                            .WithHint("(arrow keys or Y/N, Esc to cancel)")
+                            .AddOption("Y", "Yes - Upload original file", true)
+                            .AddOption("N", "No - Cancel upload", false)
+                            .AllowCancel(true, false)
+                            .Show();
+
+                        if (continueWithOriginal != true)
+                        {
+                            AnsiConsole.MarkupLine("[grey]Upload cancelled.[/]");
+                            return false;
+                        }
+                        AnsiConsole.WriteLine();
+                    }
+                    else
+                    {
+                        fileToUpload = normalizedTempFile;
+                        AnsiConsole.MarkupLine("[green]✓[/] Audio normalized successfully");
+                        AnsiConsole.WriteLine();
+                    }
+                }
+            }
+
+            await AnsiConsole.Status()
+                .StartAsync($"Uploading [cyan]{fileName}[/]...", async _ =>
+                {
+                    try
+                    {
+                        // Create multipart form data
+                        using var content = new MultipartFormDataContent();
+
+                        // Add file (use normalized file if available, otherwise original)
+                        var fileBytes = await File.ReadAllBytesAsync(fileToUpload);
+                        var fileContent = new ByteArrayContent(fileBytes);
+                        fileContent.Headers.ContentType = new MediaTypeHeaderValue("audio/mpeg");
+                        content.Add(fileContent, "file", fileName);
 
                     // Add optional title
                     if (!string.IsNullOrEmpty(settings.Title))
@@ -816,13 +886,29 @@ internal static class CliHelpers
                         }
                     }
                 }
-                catch (Exception ex)
-                {
-                    AnsiConsole.MarkupLine($"[red]✗[/] Error uploading [cyan]{fileName}[/]: {ex.Message}");
-                }
-            });
+                    catch (Exception ex)
+                    {
+                        AnsiConsole.MarkupLine($"[red]✗[/] Error uploading [cyan]{fileName}[/]: {ex.Message}");
+                    }
+                });
 
-        return success;
+            return success;
+        }
+        finally
+        {
+            // Clean up normalized temp file
+            if (normalizedTempFile != null && File.Exists(normalizedTempFile))
+            {
+                try
+                {
+                    File.Delete(normalizedTempFile);
+                }
+                catch
+                {
+                    // Ignore cleanup errors
+                }
+            }
+        }
     }
 
     private static string FormatFileSize(long bytes)
