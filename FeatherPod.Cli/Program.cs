@@ -27,6 +27,21 @@ internal class Program
                     .WithExample("episode", "push", "ep1.mp3,ep2.mp3", "-e", "Test");
             });
 
+            config.AddBranch("icon", icon =>
+            {
+                icon.SetDescription("Icon management commands");
+
+                icon.AddCommand<IconSetCommand>("set")
+                    .WithDescription("Upload/replace feed icon")
+                    .WithExample("icon", "set", "icon.png", "--feed", "my-podcast")
+                    .WithExample("icon", "set", "artwork.jpg");
+
+                icon.AddCommand<IconUnsetCommand>("unset")
+                    .WithDescription("Remove feed icon")
+                    .WithExample("icon", "unset", "--feed", "my-podcast")
+                    .WithExample("icon", "unset");
+            });
+
             // Alias for backward compatibility
             config.AddCommand<EpisodePushCommand>("push")
                 .WithDescription("Upload episode(s) to the podcast feed (alias for 'episode push')")

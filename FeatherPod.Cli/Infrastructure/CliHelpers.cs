@@ -275,7 +275,7 @@ internal static class CliHelpers
         }
     }
 
-    private static async Task UploadIconAsync(HttpClient httpClient, string feedId, string iconPath)
+    internal static async Task<bool> UploadIconAsync(HttpClient httpClient, string feedId, string iconPath)
     {
         try
         {
@@ -297,26 +297,59 @@ internal static class CliHelpers
             if (response.IsSuccessStatusCode)
             {
                 AnsiConsole.MarkupLine($"[green]✓[/] Uploaded icon");
+                return true;
             }
             else
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
-                AnsiConsole.MarkupLine($"[yellow]Failed to upload icon: {response.StatusCode}[/]");
-                AnsiConsole.MarkupLine($"[grey]Response length: {errorContent?.Length ?? 0} chars[/]");
+                AnsiConsole.MarkupLine($"[red]✗[/] Failed to upload icon: {response.StatusCode}");
                 if (!string.IsNullOrEmpty(errorContent))
                 {
-                    AnsiConsole.MarkupLine($"[grey]Response body:[/]");
-                    AnsiConsole.MarkupLine($"[grey]{Markup.Escape(errorContent)}[/]");
+                    AnsiConsole.MarkupLine($"[red]Error:[/] {errorContent}");
                 }
-                else
-                {
-                    AnsiConsole.MarkupLine($"[grey](empty response body)[/]");
-                }
+                return false;
             }
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[yellow]⚠[/] Error uploading icon: {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Error uploading icon: {ex.Message}");
+            return false;
+        }
+    }
+
+    internal static async Task<bool> DeleteIconAsync(HttpClient httpClient, string feedId)
+    {
+        try
+        {
+            var url = $"/{feedId}/api/icon";
+            var response = await httpClient.DeleteAsync(url);
+
+            if (response.IsSuccessStatusCode)
+            {
+                AnsiConsole.MarkupLine($"[green]✓[/] Removed icon");
+                return true;
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                AnsiConsole.MarkupLine($"[yellow]⚠[/] {errorContent}");
+                return false;
+            }
+            else
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                AnsiConsole.MarkupLine($"[red]✗[/] Failed to delete icon: {response.StatusCode}");
+                if (!string.IsNullOrEmpty(errorContent))
+                {
+                    AnsiConsole.MarkupLine($"[red]Error:[/] {errorContent}");
+                }
+                return false;
+            }
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]✗[/] Error deleting icon: {ex.Message}");
+            return false;
         }
     }
 
