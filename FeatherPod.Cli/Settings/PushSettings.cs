@@ -13,6 +13,10 @@ internal sealed class PushSettings : CommandSettings
     [Description("Target environment (Dev, Test, Prod)")]
     public string? Environment { get; init; }
 
+    [CommandOption("-f|--feed")]
+    [Description("Feed ID to upload to (optional, defaults to last-used feed)")]
+    public string? FeedId { get; init; }
+
     [CommandOption("-t|--title")]
     [Description("Episode title (optional, defaults to filename)")]
     public string? Title { get; init; }

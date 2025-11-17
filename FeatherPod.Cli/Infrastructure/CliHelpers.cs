@@ -212,6 +212,8 @@ internal static class CliHelpers
         var email = AnsiConsole.Ask("Email (optional):", string.Empty);
         var language = AnsiConsole.Ask("Language:", "en");
         var category = AnsiConsole.Ask("Category (optional):", string.Empty);
+        var iconPath = AnsiConsole.Ask("Icon path (optional, PNG/JPEG):", string.Empty);
+        iconPath = iconPath.Trim().Trim('"', '\''); // Remove surrounding quotes
 
         var feedConfig = new FeedConfig
         {
@@ -226,21 +228,13 @@ internal static class CliHelpers
 
         try
         {
+            // Create the feed first
             var json = JsonSerializer.Serialize(feedConfig, JsonSerializerOptions);
             var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
 
             var response = await httpClient.PostAsync("/api/feeds", content);
 
-            if (response.IsSuccessStatusCode)
-            {
-                var responseContent = await response.Content.ReadAsStringAsync();
-                var createdFeed = JsonSerializer.Deserialize<FeedConfig>(responseContent, JsonSerializerOptions);
-
-                AnsiConsole.MarkupLine($"[green]✓[/] Created feed: [cyan]{Markup.Escape(id)}[/]");
-                AnsiConsole.WriteLine();
-                return createdFeed;
-            }
-            else
+            if (!response.IsSuccessStatusCode)
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
                 AnsiConsole.MarkupLine($"[red]Failed to create feed:[/] {response.StatusCode}");
@@ -251,12 +245,78 @@ internal static class CliHelpers
                 AnsiConsole.WriteLine();
                 return null;
             }
+
+            var responseContent = await response.Content.ReadAsStringAsync();
+            var createdFeed = JsonSerializer.Deserialize<FeedConfig>(responseContent, JsonSerializerOptions);
+
+            AnsiConsole.MarkupLine($"[green]✓[/] Created feed: [cyan]{Markup.Escape(id)}[/]");
+
+            // Upload icon if provided
+            if (!string.IsNullOrEmpty(iconPath))
+            {
+                if (!File.Exists(iconPath))
+                {
+                    AnsiConsole.MarkupLine($"[yellow]⚠[/] Icon file not found: {Markup.Escape(iconPath)}");
+                }
+                else
+                {
+                    await UploadIconAsync(httpClient, id, iconPath);
+                }
+            }
+
+            AnsiConsole.WriteLine();
+            return createdFeed;
         }
         catch (HttpRequestException ex)
         {
             AnsiConsole.MarkupLine($"[red]Error creating feed:[/] {ex.Message}");
             AnsiConsole.WriteLine();
             return null;
+        }
+    }
+
+    private static async Task UploadIconAsync(HttpClient httpClient, string feedId, string iconPath)
+    {
+        try
+        {
+            var url = $"/{feedId}/api/icon";
+            AnsiConsole.MarkupLine($"[grey]Uploading icon to: {Markup.Escape(url)}[/]");
+            AnsiConsole.MarkupLine($"[grey]Base URL: {Markup.Escape(httpClient.BaseAddress?.ToString() ?? "null")}[/]");
+
+            await using var fileStream = File.OpenRead(iconPath);
+            using var formData = new MultipartFormDataContent();
+            using var fileContent = new StreamContent(fileStream);
+
+            fileContent.Headers.ContentType = new("image/png");
+            formData.Add(fileContent, "file", Path.GetFileName(iconPath));
+
+            var response = await httpClient.PostAsync(url, formData);
+
+            AnsiConsole.MarkupLine($"[grey]Response status: {response.StatusCode}[/]");
+
+            if (response.IsSuccessStatusCode)
+            {
+                AnsiConsole.MarkupLine($"[green]✓[/] Uploaded icon");
+            }
+            else
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                AnsiConsole.MarkupLine($"[yellow]Failed to upload icon: {response.StatusCode}[/]");
+                AnsiConsole.MarkupLine($"[grey]Response length: {errorContent?.Length ?? 0} chars[/]");
+                if (!string.IsNullOrEmpty(errorContent))
+                {
+                    AnsiConsole.MarkupLine($"[grey]Response body:[/]");
+                    AnsiConsole.MarkupLine($"[grey]{Markup.Escape(errorContent)}[/]");
+                }
+                else
+                {
+                    AnsiConsole.MarkupLine($"[grey](empty response body)[/]");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[yellow]⚠[/] Error uploading icon: {ex.Message}");
         }
     }
 
