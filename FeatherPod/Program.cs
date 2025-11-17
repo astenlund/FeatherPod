@@ -2,6 +2,7 @@ using FeatherPod.Models;
 using FeatherPod.Services;
 using FeatherPod.Middleware;
 using Microsoft.AspNetCore.Mvc;
+using System.Reflection;
 using System.Text.Json;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -48,6 +49,35 @@ await episodeService.InitializeAsync();
 // Get base URL from configuration
 var baseUrl = app.Configuration.GetSection("Podcast")["BaseUrl"]
     ?? throw new InvalidOperationException("Podcast.BaseUrl must be configured in appsettings.json");
+
+// ============================================================================
+// VERSION ENDPOINT
+// ============================================================================
+
+app.MapGet("/api/version", () =>
+{
+    var assembly = Assembly.GetEntryAssembly();
+    var versionAttribute = assembly?.GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+    var version = versionAttribute?.InformationalVersion ?? "unknown";
+
+    // Get build date from assembly file modification time
+    var assemblyLocation = assembly?.Location;
+    var buildDate = assemblyLocation != null && File.Exists(assemblyLocation)
+        ? File.GetLastWriteTimeUtc(assemblyLocation).ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
+        : DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'");
+
+    var versionInfo = new VersionInfo
+    {
+        Version = version,
+        BuildDate = buildDate,
+        Environment = app.Environment.EnvironmentName,
+        TargetFramework = assembly?.GetCustomAttribute<System.Runtime.Versioning.TargetFrameworkAttribute>()?.FrameworkName
+    };
+
+    return Results.Ok(versionInfo);
+})
+.WithName("GetVersion")
+.Produces<VersionInfo>();
 
 // ============================================================================
 // FEED MANAGEMENT ENDPOINTS
