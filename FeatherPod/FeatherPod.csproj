@@ -4,7 +4,28 @@
     <TargetFramework>net9.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Version Configuration -->
+    <Version>0.1.0</Version>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+    <!-- InformationalVersion will be set by custom target below -->
+    <!-- Prevent .NET from auto-including SourceRevisionId in InformationalVersion -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
+
+  <!-- Custom target to inject git SHA at build time -->
+  <Target Name="SetGitCommitHash" BeforeTargets="GetAssemblyVersion">
+    <Exec Command="git rev-parse --short=7 HEAD" ConsoleToMSBuild="true" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitHash" />
+    </Exec>
+
+    <!-- Fallback if git command fails (e.g., not a git repo) -->
+    <PropertyGroup>
+      <GitCommitHash Condition="'$(GitCommitHash)' == ''">0000000</GitCommitHash>
+      <InformationalVersion>$(Version)-$(GitCommitHash)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
 
   <ItemGroup>
     <InternalsVisibleTo Include="FeatherPod.Tests" />
