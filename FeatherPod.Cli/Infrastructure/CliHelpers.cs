@@ -706,7 +706,7 @@ internal static class CliHelpers
         return result;
     }
 
-    internal static async Task<bool> UploadEpisodeAsync(HttpClient httpClient, FeedConfig feed, string filePath, PushSettings settings)
+    internal static async Task<bool> UploadEpisodeAsync(HttpClient httpClient, FeedConfig feed, string filePath, EpisodePushSettings settings)
     {
         var fileName = Path.GetFileName(filePath);
         var success = false;

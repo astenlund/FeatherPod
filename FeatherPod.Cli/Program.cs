@@ -16,8 +16,20 @@ internal class Program
                 .WithDescription("Start interactive episode management")
                 .IsHidden(); // Hidden since it's the default
 
-            config.AddCommand<PushCommand>("push")
-                .WithDescription("Upload episode(s) to the podcast feed")
+            config.AddBranch("episode", episode =>
+            {
+                episode.SetDescription("Episode management commands");
+
+                episode.AddCommand<EpisodePushCommand>("push")
+                    .WithDescription("Upload episode(s) to the podcast feed")
+                    .WithExample("episode", "push", "episode.mp3", "--title", "\"My Episode\"")
+                    .WithExample("episode", "push", "*.mp3", "-x")
+                    .WithExample("episode", "push", "ep1.mp3,ep2.mp3", "-e", "Test");
+            });
+
+            // Alias for backward compatibility
+            config.AddCommand<EpisodePushCommand>("push")
+                .WithDescription("Upload episode(s) to the podcast feed (alias for 'episode push')")
                 .WithExample("push", "episode.mp3", "--title", "\"My Episode\"")
                 .WithExample("push", "*.mp3", "-x")
                 .WithExample("push", "ep1.mp3,ep2.mp3", "-e", "Test");
