@@ -1,5 +1,6 @@
 using FeatherPod.Cli.Infrastructure;
 using FeatherPod.Cli.Settings;
+using FeatherPod.Models;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -19,12 +20,25 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         var (httpClient, _) = await CliHelpers.SetupHttpClientAsync(env);
         if (httpClient == null) return 1;
 
-        // Select feed (auto-select last-used or single feed)
-        var feed = await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
-        if (feed == null)
+        // Select feed (use -f flag if provided, otherwise prompt user to select)
+        FeedConfig? feed;
+        if (!string.IsNullOrEmpty(settings.FeedId))
         {
-            AnsiConsole.MarkupLine("[red]Error:[/] No feeds available. Create a feed first.");
-            return 1;
+            feed = await CliHelpers.GetFeedByIdAsync(httpClient, settings.FeedId);
+            if (feed == null)
+            {
+                AnsiConsole.MarkupLine($"[red]Error:[/] Feed '{settings.FeedId}' not found.");
+                return 1;
+            }
+        }
+        else
+        {
+            feed = await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+            if (feed == null)
+            {
+                AnsiConsole.MarkupLine("[red]Error:[/] No feeds available. Create a feed first.");
+                return 1;
+            }
         }
 
         // Expand file patterns (wildcards and comma-separated lists)
@@ -34,6 +48,42 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         {
             AnsiConsole.MarkupLine($"[red]Error:[/] No files found matching pattern: {settings.Files}");
             return 1;
+        }
+
+        // Validate that title/description aren't used with multiple files
+        if (files.Count > 1)
+        {
+            if (!string.IsNullOrEmpty(settings.Title))
+            {
+                AnsiConsole.MarkupLine("[red]Error:[/] Cannot use -t/--title with multiple files (all episodes would get the same title)");
+                return 1;
+            }
+
+            if (!string.IsNullOrEmpty(settings.Description))
+            {
+                AnsiConsole.MarkupLine("[red]Error:[/] Cannot use -d/--description with multiple files (all episodes would get the same description)");
+                return 1;
+            }
+
+            if (!string.IsNullOrEmpty(settings.PublishedDate))
+            {
+                AnsiConsole.WriteLine();
+                AnsiConsole.MarkupLine("[yellow]Warning:[/] Using -p/--published-date with multiple files will set the same date for all episodes.");
+                var continueAnyway = new MenuBuilder<bool?>()
+                    .WithTitle("Continue anyway?")
+                    .WithHint("(arrow keys or Y/N)")
+                    .AddOption("Y", "Yes", true)
+                    .AddOption("N", "No", false)
+                    .AllowCancel(true, false)
+                    .Show();
+
+                if (continueAnyway != true)
+                {
+                    AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                    return 1;
+                }
+                AnsiConsole.WriteLine();
+            }
         }
 
         AnsiConsole.MarkupLine($"Found [cyan]{files.Count}[/] file(s) to upload");
