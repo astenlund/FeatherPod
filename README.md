@@ -112,7 +112,6 @@ curl -X POST https://your-app.azurewebsites.net/api/{feedId}/episodes \
 
 **Optional parameters:**
 - `publishedDate` - Set explicit date (ISO 8601 format)
-- `useMetadataForPublishedDate=true` - Extract date from file metadata
 
 ### Removing Episodes
 
@@ -181,7 +180,7 @@ FeatherPod includes a command-line tool for managing episodes and icons:
 
 ```bash
 # Episode management
-featherpod-cli episode push *.mp3 -f my-podcast -x
+featherpod-cli episode push *.mp3 -f my-podcast -x  # -x extracts date from file before normalization
 featherpod-cli push episode.mp3 --title "Episode Title"  # Alias
 
 # Icon management

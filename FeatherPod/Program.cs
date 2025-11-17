@@ -370,7 +370,6 @@ app.MapPost("/{feedId}/api/episodes", async (
     [FromForm] string? title,
     [FromForm] string? description,
     [FromForm] DateTime? publishedDate,
-    [FromForm] bool? useMetadataForPublishedDate,
     EpisodeService service) =>
 {
     var feed = await service.GetFeedAsync(feedId);
@@ -401,8 +400,7 @@ app.MapPost("/{feedId}/api/episodes", async (
             tempPath,
             title,
             description,
-            publishedDate,
-            useMetadataForPublishedDate);
+            publishedDate);
 
         var episodeWithUrl = episode with { Url = episode.GetAudioUrl(baseUrl) };
 

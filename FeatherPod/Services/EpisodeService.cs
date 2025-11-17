@@ -227,8 +227,7 @@ public sealed class EpisodeService : IDisposable
         string filePath,
         string? title = null,
         string? description = null,
-        DateTime? publishedDate = null,
-        bool? useMetadataForPublishedDate = null)
+        DateTime? publishedDate = null)
     {
         var fileInfo = new FileInfo(filePath);
         if (!fileInfo.Exists)
@@ -270,11 +269,6 @@ public sealed class EpisodeService : IDisposable
             {
                 finalPublishedDate = publishedDate.Value;
                 _logger.LogDebug("Using explicitly provided published date for {File}: {Date}", fileName, finalPublishedDate);
-            }
-            else if (useMetadataForPublishedDate.HasValue && useMetadataForPublishedDate.Value)
-            {
-                finalPublishedDate = GetPublishedDate(filePath);
-                _logger.LogDebug("Using file metadata (per-request) for published date for {File}: {Date}", fileName, finalPublishedDate);
             }
             else if (feed.UseFileMetadataForPublishDate)
             {
