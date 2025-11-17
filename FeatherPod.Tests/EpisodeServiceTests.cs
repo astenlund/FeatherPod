@@ -145,7 +145,7 @@ public class EpisodeServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task AddEpisodeAsync_ShouldNotAddDuplicate_WhenSameFileAlreadyExists()
+    public async Task AddEpisodeAsync_ShouldReplaceMetadata_WhenSameFileAlreadyExists()
     {
         // Arrange
         var service = CreateService();
@@ -156,14 +156,15 @@ public class EpisodeServiceTests : IDisposable
         await File.WriteAllTextAsync(testFile, "audio data");
 
         // Act
-        await service.AddEpisodeAsync(TestFeedId, testFile, "Test 1");
-        await service.AddEpisodeAsync(TestFeedId, testFile, "Test 2"); // Try to add again
+        var firstEpisode = await service.AddEpisodeAsync(TestFeedId, testFile, "Test 1");
+        var secondEpisode = await service.AddEpisodeAsync(TestFeedId, testFile, "Test 2"); // Re-upload with new title
 
         var episodes = await service.GetAllEpisodesAsync(TestFeedId);
 
         // Assert
-        Assert.Single(episodes);
-        Assert.Equal("Test 1", episodes[0].Title); // Original title preserved
+        Assert.Single(episodes); // Only one episode exists
+        Assert.Equal("Test 2", episodes[0].Title); // Metadata replaced
+        Assert.Equal(firstEpisode.Id, secondEpisode.Id); // Episode ID preserved
     }
 
     [Fact]
