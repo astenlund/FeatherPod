@@ -21,6 +21,7 @@ public interface IBlobStorageService
     Task UploadIconAsync(string feedId, string filePath);
     Task<bool> IconExistsAsync(string feedId);
     Task<Stream> DownloadIconAsync(string feedId);
+    Task DeleteIconAsync(string feedId);
 
     // Episode metadata operations (feed-aware)
     Task SaveEpisodeMetadataAsync(string feedId, string metadataJson);

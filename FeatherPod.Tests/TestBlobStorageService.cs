@@ -146,6 +146,16 @@ public class TestBlobStorageService : IBlobStorageService
         return await Task.FromResult<Stream>(fileStream);
     }
 
+    public async Task DeleteIconAsync(string feedId)
+    {
+        var feedIconPath = Path.Combine(_rootPath, feedId, "icon.png");
+        if (File.Exists(feedIconPath))
+        {
+            File.Delete(feedIconPath);
+        }
+        await Task.CompletedTask;
+    }
+
     // Feed management operations
     public async Task RenameFeedAsync(string oldFeedId, string newFeedId)
     {

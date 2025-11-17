@@ -186,6 +186,16 @@ public class BlobStorageService : IBlobStorageService
         return response.Value.Content;
     }
 
+    public async Task DeleteIconAsync(string feedId)
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+        var blobPath = $"{feedId}/icon.png";
+        var blobClient = containerClient.GetBlobClient(blobPath);
+
+        await blobClient.DeleteIfExistsAsync();
+        _logger.LogInformation("Deleted icon for feed: {FeedId}", feedId);
+    }
+
     // Episode metadata operations (feed-aware)
 
     public async Task SaveEpisodeMetadataAsync(string feedId, string metadataJson)

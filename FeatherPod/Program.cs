@@ -255,6 +255,30 @@ app.MapPost("/{feedId}/api/icon", async (
 .Produces(401)
 .Produces(404);
 
+// Delete icon for specific feed (requires API key)
+app.MapDelete("/{feedId}/api/icon", async (
+    string feedId,
+    EpisodeService episodeService,
+    IBlobStorageService blobService,
+    ILogger<Program> logger) =>
+{
+    var feed = await episodeService.GetFeedAsync(feedId);
+    if (feed == null)
+    {
+        logger.LogWarning("Feed '{FeedId}' not found for icon deletion", feedId);
+        return Results.NotFound(new { error = $"Feed '{feedId}' not found" });
+    }
+
+    await blobService.DeleteIconAsync(feedId);
+    logger.LogInformation("Deleted icon for feed '{FeedId}'", feedId);
+
+    return Results.NoContent();
+})
+.WithName("DeleteIcon")
+.Produces(204)
+.Produces(401)
+.Produces(404);
+
 // Audio file streaming with range support
 app.MapGet("/{feedId}/audio/{filename}", async (string feedId, string filename, IBlobStorageService service, HttpContext context) =>
 {
