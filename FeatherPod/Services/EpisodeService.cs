@@ -604,6 +604,9 @@ public sealed class EpisodeService : IDisposable
         // But preserve sequences like "2D", "3D", "4K" (digit followed by uppercase)
         title = Regex.Replace(title, "(?<![A-Z0-9])(?=[A-Z])", " ");
 
+        // Collapse multiple spaces into single space
+        title = Regex.Replace(title, @"\s+", " ");
+
         return title.Trim();
     }
 
