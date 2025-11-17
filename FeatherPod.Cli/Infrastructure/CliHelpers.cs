@@ -137,7 +137,24 @@ internal static class CliHelpers
         }
     }
 
-    internal static async Task<FeedConfig?> SelectFeedAsync(HttpClient httpClient, string environment, bool forcePrompt = false)
+    internal static async Task<FeedConfig?> GetFeedByIdAsync(HttpClient httpClient, string feedId)
+    {
+        try
+        {
+            var response = await httpClient.GetAsync($"/api/feeds/{feedId}");
+            response.EnsureSuccessStatusCode();
+
+            var json = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<FeedConfig>(json, JsonSerializerOptions);
+        }
+        catch (HttpRequestException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error fetching feed:[/] {ex.Message}");
+            return null;
+        }
+    }
+
+    internal static async Task<FeedConfig?> SelectFeedAsync(HttpClient httpClient, string environment, bool forcePrompt = false, string? contextMessage = null)
     {
         var feeds = await GetFeedsAsync(httpClient);
 
@@ -155,18 +172,16 @@ internal static class CliHelpers
 
         // Multiple feeds - check last-used
         var lastUsed = UserSettings.Default.GetLastUsedFeed(environment);
-        var lastUsedFeed = feeds.FirstOrDefault(f => f.Id == lastUsed);
+        var lastUsedFeed = string.IsNullOrEmpty(lastUsed) ? null : feeds.FirstOrDefault(f => f.Id == lastUsed);
 
         if (!forcePrompt && lastUsedFeed != null)
         {
             return lastUsedFeed;
         }
 
-        // Show feed selector
+        // Show feed selector with optional context message
         var menu = new MenuBuilder<FeedConfig?>()
-            .WithTitle(lastUsedFeed == null && !string.IsNullOrEmpty(lastUsed)
-                ? "Previous feed no longer exists. Select feed:"
-                : "Select feed:")
+            .WithTitle($"{contextMessage} Select feed:".Trim())
             .WithHint("(arrow keys, Enter to select)")
             .AllowCancel();
 
@@ -174,7 +189,7 @@ internal static class CliHelpers
         {
             menu.AddOption(
                 null,
-                $"[cyan]{Markup.Escape(feed.Id)}[/] - {Markup.Escape(feed.Title)}",
+                $"[cyan]{Markup.Escape(feed.Title)}[/]",
                 feed
             );
         }
@@ -245,7 +260,7 @@ internal static class CliHelpers
         }
     }
 
-    internal static async Task RenameFeedAsync(HttpClient httpClient)
+    internal static async Task<(bool wasRenamed, string? oldId, FeedConfig? renamedFeed)> RenameFeedAsync(HttpClient httpClient)
     {
         var feeds = await GetFeedsAsync(httpClient);
 
@@ -253,7 +268,7 @@ internal static class CliHelpers
         {
             AnsiConsole.MarkupLine("[yellow]No feeds to rename.[/]");
             AnsiConsole.WriteLine();
-            return;
+            return (false, null, null);
         }
 
         // Select feed to rename
@@ -271,9 +286,10 @@ internal static class CliHelpers
         {
             AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
             AnsiConsole.WriteLine();
-            return;
+            return (false, null, null);
         }
 
+        var oldId = selectedFeed.Id;
         var newId = AnsiConsole.Ask<string>("New feed ID:");
 
         try
@@ -283,6 +299,11 @@ internal static class CliHelpers
             if (response.IsSuccessStatusCode)
             {
                 AnsiConsole.MarkupLine($"[green]✓[/] Renamed feed from [cyan]{Markup.Escape(selectedFeed.Id)}[/] to [cyan]{Markup.Escape(newId)}[/]");
+                AnsiConsole.WriteLine();
+
+                // Fetch the renamed feed
+                var updatedFeed = await GetFeedByIdAsync(httpClient, newId);
+                return (true, oldId, updatedFeed);
             }
             else
             {
@@ -300,9 +321,10 @@ internal static class CliHelpers
         }
 
         AnsiConsole.WriteLine();
+        return (false, null, null);
     }
 
-    internal static async Task DeleteFeedAsync(HttpClient httpClient)
+    internal static async Task<(bool wasDeleted, string? deletedFeedId)> DeleteFeedAsync(HttpClient httpClient)
     {
         var feeds = await GetFeedsAsync(httpClient);
 
@@ -310,7 +332,7 @@ internal static class CliHelpers
         {
             AnsiConsole.MarkupLine("[yellow]No feeds to delete.[/]");
             AnsiConsole.WriteLine();
-            return;
+            return (false, null);
         }
 
         // Select feed to delete
@@ -328,7 +350,7 @@ internal static class CliHelpers
         {
             AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
             AnsiConsole.WriteLine();
-            return;
+            return (false, null);
         }
 
         // Confirm deletion
@@ -344,7 +366,7 @@ internal static class CliHelpers
         {
             AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
             AnsiConsole.WriteLine();
-            return;
+            return (false, null);
         }
 
         try
@@ -354,6 +376,8 @@ internal static class CliHelpers
             if (response.IsSuccessStatusCode)
             {
                 AnsiConsole.MarkupLine($"[green]✓[/] Deleted feed: [cyan]{Markup.Escape(selectedFeed.Id)}[/]");
+                AnsiConsole.WriteLine();
+                return (true, selectedFeed.Id);
             }
             else
             {
@@ -371,9 +395,10 @@ internal static class CliHelpers
         }
 
         AnsiConsole.WriteLine();
+        return (false, null);
     }
 
-    internal static async Task ManageFeedsAsync(HttpClient httpClient)
+    internal static async Task<FeedManagementResult> ManageFeedsAsync(HttpClient httpClient)
     {
         while (true)
         {
@@ -391,16 +416,34 @@ internal static class CliHelpers
             switch (choice)
             {
                 case "create":
-                    await CreateFeedAsync(httpClient);
-                    break;
+                    var newFeed = await CreateFeedAsync(httpClient);
+                    return new FeedManagementResult { CreatedFeed = newFeed };
                 case "rename":
-                    await RenameFeedAsync(httpClient);
+                    var (wasRenamed, oldId, renamedFeed) = await RenameFeedAsync(httpClient);
+                    if (wasRenamed)
+                    {
+                        return new FeedManagementResult { RenamedFeed = renamedFeed, OldFeedId = oldId };
+                    }
                     break;
                 case "delete":
-                    await DeleteFeedAsync(httpClient);
+                    var (wasDeleted, deletedFeedId) = await DeleteFeedAsync(httpClient);
+                    if (wasDeleted)
+                    {
+                        return new FeedManagementResult { DeletedFeedId = deletedFeedId };
+                    }
                     break;
             }
         }
+
+        return new FeedManagementResult(); // User cancelled (pressed Esc)
+    }
+
+    internal record FeedManagementResult
+    {
+        public FeedConfig? CreatedFeed { get; init; }
+        public FeedConfig? RenamedFeed { get; init; }
+        public string? OldFeedId { get; init; }
+        public string? DeletedFeedId { get; init; }
     }
 
     // ============================================================================

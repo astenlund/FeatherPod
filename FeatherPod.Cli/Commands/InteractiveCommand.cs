@@ -75,14 +75,45 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     break;
 
                 case MenuChoice.ManageFeeds:
-                    await CliHelpers.ManageFeedsAsync(httpClient);
-                    // Refresh current feed in case it was deleted or renamed
-                    if (currentFeed != null)
+                    var result = await CliHelpers.ManageFeedsAsync(httpClient);
+
+                    // Handle created feed
+                    if (result.CreatedFeed != null)
                     {
-                        var feeds = await CliHelpers.GetFeedsAsync(httpClient);
-                        currentFeed = feeds.FirstOrDefault(f => f.Id == currentFeed.Id);
+                        currentFeed = result.CreatedFeed;
+                        AnsiConsole.MarkupLine($"Switched to feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
+                        AnsiConsole.WriteLine();
                     }
-                    currentFeed ??= await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                    // Handle renamed feed
+                    else if (result.RenamedFeed != null)
+                    {
+                        // If we were on the renamed feed, follow it
+                        if (currentFeed?.Id == result.OldFeedId)
+                        {
+                            currentFeed = result.RenamedFeed;
+                            AnsiConsole.MarkupLine($"Switched to renamed feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
+                            AnsiConsole.WriteLine();
+                        }
+                    }
+                    // Handle deleted feed
+                    else if (result.DeletedFeedId != null)
+                    {
+                        // If we were on the deleted feed, clear it and prompt for a new one
+                        if (currentFeed?.Id == result.DeletedFeedId)
+                        {
+                            currentFeed = await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, contextMessage: "Previous feed was deleted.");
+                        }
+                    }
+                    else
+                    {
+                        // User cancelled or error - refresh current feed
+                        if (currentFeed != null)
+                        {
+                            var feeds = await CliHelpers.GetFeedsAsync(httpClient);
+                            currentFeed = feeds.FirstOrDefault(f => f.Id == currentFeed.Id);
+                        }
+                        currentFeed ??= await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                    }
                     break;
 
                 case MenuChoice.SwitchEnvironment:
@@ -128,7 +159,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
     private static MenuChoice ShowMenu(FeedConfig? currentFeed)
     {
         var title = currentFeed != null
-            ? $"Feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]\nWhat would you like to do?"
+            ? $"Feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]\n\nWhat would you like to do?"
             : "What would you like to do?";
 
         return new MenuBuilder<MenuChoice>()

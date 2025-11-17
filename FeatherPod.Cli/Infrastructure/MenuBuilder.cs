@@ -6,9 +6,9 @@ internal class MenuBuilder<T>
 {
     private string _title = "Select an option:";
     private string _hint = "(arrow keys, Enter to select, Esc to cancel)";
-    private readonly List<MenuOption<T>> _options = new();
+    private readonly List<MenuOption<T>> _options = [];
     private bool _allowCancel = true;
-    private T? _cancelValue = default;
+    private T? _cancelValue;
 
     public MenuBuilder<T> WithTitle(string title)
     {
@@ -42,17 +42,40 @@ internal class MenuBuilder<T>
 
         var selected = 0;
         Console.CursorVisible = false;
+        int? optionsStartTop = null;
 
         try
         {
+            // Render title and hint once (they don't change)
+            AnsiConsole.Markup($"[bold]{_title}[/] ");
+            AnsiConsole.MarkupLine($"[grey]{_hint}[/]");
+
             while (true)
             {
-                // Render menu
-                AnsiConsole.Markup($"[bold]{_title}[/] ");
-                AnsiConsole.MarkupLine($"[grey]{_hint}[/]");
-                AnsiConsole.WriteLine();
+                // Remember where the blank line starts (only on first render)
+                if (optionsStartTop == null)
+                {
+                    optionsStartTop = Console.CursorTop;
+                    AnsiConsole.WriteLine(); // Initial blank line
+                }
+                else
+                {
+                    // Clear from blank line through all options (hides flicker on first option)
+                    Console.SetCursorPosition(0, optionsStartTop.Value);
+                    for (var i = 0; i < _options.Count + 1; i++) // +1 for blank line
+                    {
+                        Console.Write(new string(' ', Console.WindowWidth));
+                        if (i < _options.Count)
+                        {
+                            Console.WriteLine();
+                        }
+                    }
+                    Console.SetCursorPosition(0, optionsStartTop.Value);
+                    AnsiConsole.WriteLine(); // Redraw blank line
+                }
 
-                for (int i = 0; i < _options.Count; i++)
+                // Render options
+                for (var i = 0; i < _options.Count; i++)
                 {
                     var option = _options[i];
                     var prefix = i == selected ? "[cyan]>[/] " : "  ";
@@ -75,8 +98,7 @@ internal class MenuBuilder<T>
                 // Check for shortcut keys first
                 foreach (var option in _options)
                 {
-                    if (!string.IsNullOrEmpty(option.Shortcut) &&
-                        keyInfo.Key.ToString().Equals(option.Shortcut, StringComparison.OrdinalIgnoreCase))
+                    if (!string.IsNullOrEmpty(option.Shortcut) && keyInfo.Key.ToString().Equals(option.Shortcut, StringComparison.OrdinalIgnoreCase))
                     {
                         Console.CursorVisible = true;
                         AnsiConsole.WriteLine();
@@ -109,9 +131,6 @@ internal class MenuBuilder<T>
                         }
                         break;
                 }
-
-                // Clear for redraw (move cursor up)
-                Console.SetCursorPosition(0, Console.CursorTop - _options.Count - 2);
             }
         }
         finally
