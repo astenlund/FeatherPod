@@ -8,6 +8,7 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 - **Azure Blob Storage** - Scalable cloud storage for audio files
 - **RSS podcast feeds** - iTunes spec compatible with per-feed configuration
 - **REST API** - Manage feeds and episodes with API key authentication
+- **CLI tool** - Command-line interface for episode and icon management
 - **Hash-based episode IDs** - Preserves play progress; re-uploading same file updates metadata
 - **Cross-feed operations** - Move or copy episodes between feeds
 - **Managed Identity** - Secure Azure authentication without secrets
@@ -133,12 +134,15 @@ curl https://your-app.azurewebsites.net/api/{feedId}/episodes
 | `/api/feeds` | POST | API Key | Create new feed |
 | `/api/feeds/{feedId}` | DELETE | API Key | Delete feed and episodes |
 | `/{feedId}/feed.xml` | GET | Public | RSS podcast feed |
-| `/audio/{feedId}/{filename}` | GET | Public | Stream audio (range requests) |
-| `/api/{feedId}/episodes` | GET | Public | List episodes |
-| `/api/{feedId}/episodes` | POST | API Key | Upload episode |
-| `/api/{feedId}/episodes/{id}` | DELETE | API Key | Delete episode |
-| `/api/episodes/{id}/move` | POST | API Key | Move episode between feeds |
-| `/api/episodes/{id}/copy` | POST | API Key | Copy episode between feeds |
+| `/{feedId}/icon.png` | GET | Public | Get feed icon |
+| `/{feedId}/api/icon` | POST | API Key | Upload/replace feed icon |
+| `/{feedId}/api/icon` | DELETE | API Key | Remove feed icon |
+| `/{feedId}/audio/{filename}` | GET | Public | Stream audio (range requests) |
+| `/{feedId}/api/episodes` | GET | Public | List episodes |
+| `/{feedId}/api/episodes` | POST | API Key | Upload episode |
+| `/{feedId}/api/episodes/{id}` | DELETE | API Key | Delete episode |
+| `/{sourceFeedId}/api/episodes/{id}/move` | POST | API Key | Move episode between feeds |
+| `/{sourceFeedId}/api/episodes/{id}/copy` | POST | API Key | Copy episode between feeds |
 
 **Authentication:**
 - Protected endpoints require `X-API-Key` header
@@ -164,9 +168,28 @@ curl https://your-app.azurewebsites.net/api/{feedId}/episodes
 }
 ```
 
-**Podcast icon:** Place a 1024x1024 PNG at `FeatherPod/wwwroot/icon.png`
+**Podcast icon:** Upload via API (`POST /{feedId}/api/icon`) or CLI (`featherpod-cli icon set icon.png`)
 
 **Additional options:** See configuration files for published date behavior, language, category, and more.
+
+## CLI Tool
+
+FeatherPod includes a command-line tool for managing episodes and icons:
+
+```bash
+# Episode management
+featherpod-cli episode push *.mp3 -f my-podcast -x
+featherpod-cli push episode.mp3 --title "Episode Title"  # Alias
+
+# Icon management
+featherpod-cli icon set icon.png -f my-podcast
+featherpod-cli icon unset -f my-podcast
+
+# Interactive mode (default)
+featherpod-cli
+```
+
+Configure API endpoint and key in `appsettings.{Environment}.Local.json` (gitignored).
 
 ## Development
 
