@@ -4,10 +4,12 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 
 ## Features
 
+- **Multi-feed support** - Host multiple podcast feeds from a single instance
 - **Azure Blob Storage** - Scalable cloud storage for audio files
-- **RSS podcast feed** - iTunes spec compatible
-- **REST API** - Manage episodes with API key authentication
+- **RSS podcast feeds** - iTunes spec compatible with per-feed configuration
+- **REST API** - Manage feeds and episodes with API key authentication
 - **Hash-based episode IDs** - Preserves play progress when re-adding files
+- **Cross-feed operations** - Move or copy episodes between feeds
 - **Managed Identity** - Secure Azure authentication without secrets
 - **Automated PR testing** - GitHub Actions deploys PRs to isolated test environment
 - **CI/CD pipeline** - Test-before-merge workflow with automated deployments
@@ -33,9 +35,10 @@ azurite --silent --location $env:USERPROFILE\.azurite
 dotnet run --project FeatherPod
 ```
 
-**3. Access the feed:**
+**3. Access feeds:**
 ```
-http://localhost:5070/feed.xml
+http://localhost:5070/feeds              # List all feeds
+http://localhost:5070/{feedId}/feed.xml  # Specific feed RSS
 ```
 
 The development configuration is already set up to use Azurite.
@@ -66,7 +69,7 @@ This creates: Storage Account, blob containers, App Service, Managed Identity, a
 
 **Subscribe in your podcast app:**
 ```
-https://your-app-name.azurewebsites.net/feed.xml
+https://your-app-name.azurewebsites.net/{feedId}/feed.xml
 ```
 
 ## Development Workflow
@@ -81,10 +84,23 @@ Pull requests are automatically deployed to an isolated test environment (`feath
 
 ## Usage
 
+### Managing Feeds
+
+```bash
+# Create a feed
+curl -X POST https://your-app.azurewebsites.net/feeds \
+  -H "X-API-Key: your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"my-podcast","title":"My Podcast","author":"Your Name",...}'
+
+# List all feeds
+curl https://your-app.azurewebsites.net/feeds
+```
+
 ### Adding Episodes
 
 ```bash
-curl -X POST https://your-app.azurewebsites.net/api/episodes \
+curl -X POST https://your-app.azurewebsites.net/api/{feedId}/episodes \
   -H "X-API-Key: your-api-key" \
   -F "file=@audio.mp3" \
   -F "title=Episode Title" \
@@ -98,30 +114,36 @@ curl -X POST https://your-app.azurewebsites.net/api/episodes \
 ### Removing Episodes
 
 ```bash
-curl -X DELETE https://your-app.azurewebsites.net/api/episodes/{episode-id} \
+curl -X DELETE https://your-app.azurewebsites.net/api/{feedId}/episodes/{episode-id} \
   -H "X-API-Key: your-api-key"
 ```
 
 ### Listing Episodes
 
 ```bash
-curl https://your-app.azurewebsites.net/api/episodes
+curl https://your-app.azurewebsites.net/api/{feedId}/episodes
 ```
 
 ## API Reference
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/feed.xml` | GET | Public | RSS podcast feed |
-| `/audio/{filename}` | GET | Public | Stream audio file (supports range requests) |
-| `/api/episodes` | GET | Public | List all episodes (JSON) |
-| `/api/episodes` | POST | API Key | Upload new episode |
-| `/api/episodes/{id}` | DELETE | API Key | Delete episode |
+| `/feeds` | GET | Public | List all feeds |
+| `/feeds/{feedId}` | GET | Public | Get feed configuration |
+| `/feeds` | POST | API Key | Create new feed |
+| `/feeds/{feedId}` | DELETE | API Key | Delete feed and episodes |
+| `/{feedId}/feed.xml` | GET | Public | RSS podcast feed |
+| `/audio/{feedId}/{filename}` | GET | Public | Stream audio (range requests) |
+| `/api/{feedId}/episodes` | GET | Public | List episodes |
+| `/api/{feedId}/episodes` | POST | API Key | Upload episode |
+| `/api/{feedId}/episodes/{id}` | DELETE | API Key | Delete episode |
+| `/api/episodes/{id}/move` | POST | API Key | Move episode between feeds |
+| `/api/episodes/{id}/copy` | POST | API Key | Copy episode between feeds |
 
 **Authentication:**
 - Protected endpoints require `X-API-Key` header
 - Configure via Azure App Service settings or `appsettings.json`
-- Read-only endpoints (feed, audio) are public
+- Read-only endpoints (feeds, audio) are public
 
 ## Configuration
 
@@ -130,8 +152,7 @@ curl https://your-app.azurewebsites.net/api/episodes
 {
   "Azure": {
     "AccountName": "your-storage-account",
-    "AudioContainerName": "audio",
-    "MetadataContainerName": "metadata"
+    "ContainerName": "featherpod"
   },
   "Podcast": {
     "Title": "My Podcast",
@@ -157,10 +178,12 @@ dotnet test           # Run tests (starts integration tests if Azurite is runnin
 ## Architecture
 
 - **.NET 9 Minimal API** - Lightweight HTTP endpoints
+- **Multi-feed architecture** - Single instance hosts multiple isolated podcast feeds
 - **Azure Blob Storage** - Cloud-native file storage with managed identity support
-- **Hash-based episode IDs** - `SHA256(filename:filesize)` ensures stability
+- **Hash-based episode IDs** - `SHA256(feedId:filename:filesize)` ensures stability
 - **API Key Authentication** - Secures management endpoints
 - **Range request support** - Enables seeking and resuming in podcast apps
+- **Cross-feed operations** - Move or copy episodes between feeds via REST API
 
 **Supported formats:** MP3, M4A, AAC, WAV, OGG, FLAC
 
