@@ -745,6 +745,17 @@ internal static class CliHelpers
         var success = false;
         string? normalizedTempFile = null;
 
+        // Extract creation time from ORIGINAL file if requested (before normalization)
+        string? extractedPublishedDate = null;
+        if (settings.ExtractDateFromFile == true)
+        {
+            var creationTime = FFmpegService.ExtractCreationTime(filePath);
+            if (creationTime.HasValue)
+            {
+                extractedPublishedDate = creationTime.Value.ToString("o"); // ISO 8601 format
+            }
+        }
+
         try
         {
             // Load audio normalization configuration
@@ -752,7 +763,7 @@ internal static class CliHelpers
             configuration.GetSection("AudioNormalization").Bind(normalizationConfig);
 
             // Check if normalization is enabled
-            string fileToUpload = filePath;
+            var fileToUpload = filePath;
             if (normalizationConfig.Enabled)
             {
                 // Check if FFmpeg is available
@@ -828,64 +839,65 @@ internal static class CliHelpers
                         fileContent.Headers.ContentType = new MediaTypeHeaderValue("audio/mpeg");
                         content.Add(fileContent, "file", fileName);
 
-                    // Add optional title
-                    if (!string.IsNullOrEmpty(settings.Title))
-                    {
-                        content.Add(new StringContent(settings.Title), "title");
-                    }
-
-                    // Add optional description
-                    if (!string.IsNullOrEmpty(settings.Description))
-                    {
-                        content.Add(new StringContent(settings.Description), "description");
-                    }
-
-                    // Add published date options
-                    if (!string.IsNullOrEmpty(settings.PublishedDate))
-                    {
-                        content.Add(new StringContent(settings.PublishedDate), "publishedDate");
-                    }
-                    else if (settings.ExtractDateFromFile == true)
-                    {
-                        content.Add(new StringContent("true"), "useMetadataForPublishedDate");
-                    }
-                    // Note: UseCurrentDate is the default behavior, no need to send anything
-
-                    // Upload
-                    var response = await httpClient.PostAsync($"/{feed.Id}/api/episodes", content);
-
-                    if (response.IsSuccessStatusCode)
-                    {
-                        success = true;
-                        var responseContent = await response.Content.ReadAsStringAsync();
-                        var episode = JsonSerializer.Deserialize<Episode>(responseContent, JsonSerializerOptions);
-
-                        AnsiConsole.MarkupLine($"[green]✓[/] Uploaded: [cyan]{fileName}[/]");
-                        AnsiConsole.WriteLine();
-
-                        if (episode != null)
+                        // Add optional title
+                        if (!string.IsNullOrEmpty(settings.Title))
                         {
-                            AnsiConsole.MarkupLine($"  ID: [grey]{episode.Id}[/]");
-                            AnsiConsole.MarkupLine($"  Title: {Markup.Escape(episode.Title)}");
-                            AnsiConsole.MarkupLine($"  Published: [grey]{episode.PublishedDate:yyyy-MM-dd HH:mm:ss}[/]");
-                            AnsiConsole.MarkupLine($"  Duration: [grey]{FormatDuration(episode.Duration)}[/]");
-                            AnsiConsole.MarkupLine($"  Size: [grey]{FormatFileSize(episode.FileSize)}[/]");
+                            content.Add(new StringContent(settings.Title), "title");
+                        }
+
+                        // Add optional description
+                        if (!string.IsNullOrEmpty(settings.Description))
+                        {
+                            content.Add(new StringContent(settings.Description), "description");
+                        }
+
+                        // Add published date options
+                        if (!string.IsNullOrEmpty(settings.PublishedDate))
+                        {
+                            content.Add(new StringContent(settings.PublishedDate), "publishedDate");
+                        }
+                        else if (!string.IsNullOrEmpty(extractedPublishedDate))
+                        {
+                            // Use extracted date from original file (before normalization)
+                            content.Add(new StringContent(extractedPublishedDate), "publishedDate");
+                        }
+                        // Note: UseCurrentDate is the default behavior, no need to send anything
+
+                        // Upload
+                        var response = await httpClient.PostAsync($"/{feed.Id}/api/episodes", content);
+
+                        if (response.IsSuccessStatusCode)
+                        {
+                            success = true;
+                            var responseContent = await response.Content.ReadAsStringAsync();
+                            var episode = JsonSerializer.Deserialize<Episode>(responseContent, JsonSerializerOptions);
+
+                            AnsiConsole.MarkupLine($"[green]✓[/] Uploaded: [cyan]{fileName}[/]");
+                            AnsiConsole.WriteLine();
+
+                            if (episode != null)
+                            {
+                                AnsiConsole.MarkupLine($"  ID: [grey]{episode.Id}[/]");
+                                AnsiConsole.MarkupLine($"  Title: {Markup.Escape(episode.Title)}");
+                                AnsiConsole.MarkupLine($"  Published: [grey]{episode.PublishedDate:yyyy-MM-dd HH:mm:ss}[/]");
+                                AnsiConsole.MarkupLine($"  Duration: [grey]{FormatDuration(episode.Duration)}[/]");
+                                AnsiConsole.MarkupLine($"  Size: [grey]{FormatFileSize(episode.FileSize)}[/]");
+                            }
+                        }
+                        else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                        {
+                            AnsiConsole.MarkupLine($"[red]✗[/] Unauthorized: Check your API key configuration");
+                        }
+                        else
+                        {
+                            var errorContent = await response.Content.ReadAsStringAsync();
+                            AnsiConsole.MarkupLine($"[red]✗[/] Failed to upload [cyan]{fileName}[/]: {response.StatusCode}");
+                            if (!string.IsNullOrEmpty(errorContent))
+                            {
+                                AnsiConsole.MarkupLine($"  [red]Error:[/] {errorContent}");
+                            }
                         }
                     }
-                    else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
-                    {
-                        AnsiConsole.MarkupLine($"[red]✗[/] Unauthorized: Check your API key configuration");
-                    }
-                    else
-                    {
-                        var errorContent = await response.Content.ReadAsStringAsync();
-                        AnsiConsole.MarkupLine($"[red]✗[/] Failed to upload [cyan]{fileName}[/]: {response.StatusCode}");
-                        if (!string.IsNullOrEmpty(errorContent))
-                        {
-                            AnsiConsole.MarkupLine($"  [red]Error:[/] {errorContent}");
-                        }
-                    }
-                }
                     catch (Exception ex)
                     {
                         AnsiConsole.MarkupLine($"[red]✗[/] Error uploading [cyan]{fileName}[/]: {ex.Message}");

@@ -279,6 +279,59 @@ internal static class FFmpegService
     }
 
     /// <summary>
+    /// Extract creation time from audio file metadata using TagLib.
+    /// Falls back to ffprobe if TagLib fails.
+    /// </summary>
+    public static DateTime? ExtractCreationTime(string filePath)
+    {
+        try
+        {
+            // Try TagLib first (works for most audio formats)
+            using var file = TagLib.File.Create(filePath);
+            if (file.Tag.DateTagged.HasValue)
+            {
+                return file.Tag.DateTagged.Value.ToUniversalTime();
+            }
+        }
+        catch
+        {
+            // TagLib failed, continue to ffprobe
+        }
+
+        try
+        {
+            // Try ffprobe to get creation_time from container metadata
+            var process = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "ffprobe",
+                    Arguments = $"-v quiet -show_entries format_tags=creation_time -of default=noprint_wrappers=1:nokey=1 \"{filePath}\"",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+
+            process.Start();
+            var output = process.StandardOutput.ReadToEnd().Trim();
+            process.WaitForExit();
+
+            if (!string.IsNullOrWhiteSpace(output) && DateTime.TryParse(output, out var creationTime))
+            {
+                return creationTime.ToUniversalTime();
+            }
+        }
+        catch
+        {
+            // ffprobe failed, return null
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Result from FFmpeg loudnorm analysis (Pass 1).
     /// </summary>
     private class LoudnormAnalysisResult
