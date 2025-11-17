@@ -8,7 +8,7 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 - **Azure Blob Storage** - Scalable cloud storage for audio files
 - **RSS podcast feeds** - iTunes spec compatible with per-feed configuration
 - **REST API** - Manage feeds and episodes with API key authentication
-- **Hash-based episode IDs** - Preserves play progress when re-adding files
+- **Hash-based episode IDs** - Preserves play progress; re-uploading same file updates metadata
 - **Cross-feed operations** - Move or copy episodes between feeds
 - **Managed Identity** - Secure Azure authentication without secrets
 - **Automated PR testing** - GitHub Actions deploys PRs to isolated test environment
@@ -37,8 +37,8 @@ dotnet run --project FeatherPod
 
 **3. Access feeds:**
 ```
-http://localhost:5070/feeds              # List all feeds
-http://localhost:5070/{feedId}/feed.xml  # Specific feed RSS
+http://localhost:8080/api/feeds          # List all feeds
+http://localhost:8080/{feedId}/feed.xml  # RSS feed
 ```
 
 The development configuration is already set up to use Azurite.
@@ -88,13 +88,13 @@ Pull requests are automatically deployed to an isolated test environment (`feath
 
 ```bash
 # Create a feed
-curl -X POST https://your-app.azurewebsites.net/feeds \
+curl -X POST https://your-app.azurewebsites.net/api/feeds \
   -H "X-API-Key: your-api-key" \
   -H "Content-Type: application/json" \
   -d '{"id":"my-podcast","title":"My Podcast","author":"Your Name",...}'
 
 # List all feeds
-curl https://your-app.azurewebsites.net/feeds
+curl https://your-app.azurewebsites.net/api/feeds
 ```
 
 ### Adding Episodes
@@ -128,10 +128,10 @@ curl https://your-app.azurewebsites.net/api/{feedId}/episodes
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/feeds` | GET | Public | List all feeds |
-| `/feeds/{feedId}` | GET | Public | Get feed configuration |
-| `/feeds` | POST | API Key | Create new feed |
-| `/feeds/{feedId}` | DELETE | API Key | Delete feed and episodes |
+| `/api/feeds` | GET | Public | List all feeds |
+| `/api/feeds/{feedId}` | GET | Public | Get feed configuration |
+| `/api/feeds` | POST | API Key | Create new feed |
+| `/api/feeds/{feedId}` | DELETE | API Key | Delete feed and episodes |
 | `/{feedId}/feed.xml` | GET | Public | RSS podcast feed |
 | `/audio/{feedId}/{filename}` | GET | Public | Stream audio (range requests) |
 | `/api/{feedId}/episodes` | GET | Public | List episodes |
