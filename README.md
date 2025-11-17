@@ -5,9 +5,11 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 ## Features
 
 - **Multi-feed support** - Host multiple podcast feeds from a single instance
+- **Audio normalization** - Automatic loudness normalization (-16 LUFS) via FFmpeg
 - **Azure Blob Storage** - Scalable cloud storage for audio files
 - **RSS podcast feeds** - iTunes spec compatible with per-feed configuration
 - **REST API** - Manage feeds and episodes with API key authentication
+- **Version tracking** - Git SHA embedded in binaries and available via `/api/version`
 - **CLI tool** - Command-line interface for episode and icon management
 - **Hash-based episode IDs** - Preserves play progress; re-uploading same file updates metadata
 - **Cross-feed operations** - Move or copy episodes between feeds
@@ -129,6 +131,7 @@ curl https://your-app.azurewebsites.net/api/{feedId}/episodes
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
+| `/api/version` | GET | Public | Version info (with git SHA) |
 | `/api/feeds` | GET | Public | List all feeds |
 | `/api/feeds/{feedId}` | GET | Public | Get feed configuration |
 | `/api/feeds` | POST | API Key | Create new feed |
