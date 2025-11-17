@@ -17,8 +17,8 @@ internal sealed class EpisodePushCommand : AsyncCommand<EpisodePushSettings>
         var env = CliHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
 
-        var (httpClient, _) = await CliHelpers.SetupHttpClientAsync(env);
-        if (httpClient == null) return 1;
+        var (httpClient, configuration) = await CliHelpers.SetupHttpClientAsync(env);
+        if (httpClient == null || configuration == null) return 1;
 
         // Select feed (use -f flag if provided, otherwise prompt user to select)
         FeedConfig? feed;
@@ -144,7 +144,7 @@ internal sealed class EpisodePushCommand : AsyncCommand<EpisodePushSettings>
 
         foreach (var file in files)
         {
-            var success = await CliHelpers.UploadEpisodeAsync(httpClient, feed, file, effectiveSettings);
+            var success = await CliHelpers.UploadEpisodeAsync(httpClient, configuration, feed, file, effectiveSettings);
             if (success)
                 successCount++;
             else
