@@ -6,9 +6,9 @@ using Spectre.Console.Cli;
 
 namespace FeatherPod.Cli.Commands;
 
-internal sealed class PushCommand : AsyncCommand<PushSettings>
+internal sealed class EpisodePushCommand : AsyncCommand<EpisodePushSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, PushSettings settings, CancellationToken cancellationToken)
+    public override async Task<int> ExecuteAsync(CommandContext context, EpisodePushSettings settings, CancellationToken cancellationToken)
     {
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("[bold]FeatherPod Episode Upload[/]");

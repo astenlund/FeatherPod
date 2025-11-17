@@ -3,7 +3,7 @@ using System.ComponentModel;
 
 namespace FeatherPod.Cli.Settings;
 
-internal sealed class PushSettings : CommandSettings
+internal sealed class EpisodePushSettings : CommandSettings
 {
     [CommandArgument(0, "<files>")]
     [Description("Audio file(s) to upload (supports wildcards and comma-separated lists)")]
