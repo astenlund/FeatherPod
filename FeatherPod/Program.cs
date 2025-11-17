@@ -178,6 +178,83 @@ app.MapGet("/{feedId}/icon.png", async (string feedId, IBlobStorageService servi
 .Produces(200, contentType: "image/png")
 .Produces(404);
 
+// Upload icon for specific feed (requires API key)
+app.MapPost("/{feedId}/api/icon", async (
+    string feedId,
+    [FromForm] IFormFile? file,
+    EpisodeService episodeService,
+    IBlobStorageService blobService,
+    ILogger<Program> logger) =>
+{
+    try
+    {
+        logger.LogInformation("Icon upload request for feed '{FeedId}'", feedId);
+
+        var feed = await episodeService.GetFeedAsync(feedId);
+        if (feed == null)
+        {
+            logger.LogWarning("Feed '{FeedId}' not found for icon upload", feedId);
+            return Results.NotFound(new { error = $"Feed '{feedId}' not found" });
+        }
+
+        if (file == null || file.Length == 0)
+        {
+            logger.LogWarning("No file uploaded for feed '{FeedId}'", feedId);
+            return Results.BadRequest(new { error = "No file uploaded" });
+        }
+
+        logger.LogInformation("Uploading icon for feed '{FeedId}', size: {Size} bytes, type: {ContentType}",
+            feedId, file.Length, file.ContentType);
+
+        // Validate file type
+        var allowedTypes = new[] { "image/png", "image/jpeg", "image/jpg" };
+        if (!allowedTypes.Contains(file.ContentType.ToLower()))
+        {
+            logger.LogWarning("Invalid file type '{ContentType}' for feed '{FeedId}'", file.ContentType, feedId);
+            return Results.BadRequest(new { error = "Only PNG and JPEG images are allowed" });
+        }
+
+        // Save uploaded file to temp location
+        var tempDir = Path.Combine(Path.GetTempPath(), "FeatherPod", Guid.NewGuid().ToString());
+        Directory.CreateDirectory(tempDir);
+        var tempPath = Path.Combine(tempDir, "icon.png");
+
+        await using (var stream = File.Create(tempPath))
+        {
+            await file.CopyToAsync(stream);
+        }
+
+        logger.LogDebug("Saved temporary icon to {TempPath}", tempPath);
+
+        try
+        {
+            await blobService.UploadIconAsync(feedId, tempPath);
+            logger.LogInformation("Successfully uploaded icon for feed '{FeedId}'", feedId);
+            return Results.Ok(new { message = $"Icon uploaded for feed '{feedId}'", iconUrl = $"{baseUrl}/{feedId}/icon.png" });
+        }
+        finally
+        {
+            // Clean up temp file
+            if (File.Exists(tempPath))
+                File.Delete(tempPath);
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir);
+        }
+    }
+    catch (Exception ex)
+    {
+        logger.LogError(ex, "Error uploading icon for feed '{FeedId}'", feedId);
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+})
+.WithName("UploadIcon")
+.DisableAntiforgery()
+.Accepts<IFormFile>("multipart/form-data")
+.Produces(200)
+.Produces(400)
+.Produces(401)
+.Produces(404);
+
 // Audio file streaming with range support
 app.MapGet("/{feedId}/audio/{filename}", async (string feedId, string filename, IBlobStorageService service, HttpContext context) =>
 {

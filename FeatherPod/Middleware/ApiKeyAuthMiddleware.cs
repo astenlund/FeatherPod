@@ -60,6 +60,12 @@ public class ApiKeyAuthMiddleware
             return method is "POST" or "DELETE";
         }
 
+        // Icon upload endpoint (POST)
+        if (path.Contains("/api/icon"))
+        {
+            return method is "POST";
+        }
+
         return false;
     }
 }
