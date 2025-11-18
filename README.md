@@ -37,7 +37,7 @@ azurite --silent --location $env:USERPROFILE\.azurite
 
 **2. Run FeatherPod:**
 ```bash
-dotnet run --project FeatherPod
+dotnet run --project FeatherPod.Server
 ```
 
 **3. Access feeds:**

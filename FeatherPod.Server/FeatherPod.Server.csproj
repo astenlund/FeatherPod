@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Version Configuration -->
+    <Version>0.1.0</Version>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
+    <!-- InformationalVersion will be set by custom target below -->
+    <!-- Prevent .NET from auto-including SourceRevisionId in InformationalVersion -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+  <!-- Custom target to inject git SHA at build time -->
+  <Target Name="SetGitCommitHash" BeforeTargets="GetAssemblyVersion">
+    <Exec Command="git rev-parse --short=7 HEAD" ConsoleToMSBuild="true" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="GitCommitHash" />
+    </Exec>
+
+    <!-- Fallback if git command fails (e.g., not a git repo) -->
+    <PropertyGroup>
+      <GitCommitHash Condition="'$(GitCommitHash)' == ''">0000000</GitCommitHash>
+      <InformationalVersion>$(Version)-$(GitCommitHash)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="FeatherPod.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.17.0" />
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.26.0" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.10" />
+    <PackageReference Include="TagLibSharp" Version="2.3.0" />
+  </ItemGroup>
+
+</Project>
