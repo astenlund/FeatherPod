@@ -1,4 +1,4 @@
-using FeatherPod.Services;
+using FeatherPod.Server.Services;
 
 namespace FeatherPod.Tests;
 

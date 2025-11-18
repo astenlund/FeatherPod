@@ -1,4 +1,4 @@
-namespace FeatherPod.Models;
+namespace FeatherPod.Server.Models;
 
 /// <summary>
 /// Container for all users in the system. Persisted as users.json in blob storage.

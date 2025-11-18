@@ -5,7 +5,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Spectre.Console;
 
-namespace FeatherPod.Cli.Infrastructure;
+namespace FeatherPod.Infrastructure;
 
 /// <summary>
 /// Service for FFmpeg-based audio processing operations.

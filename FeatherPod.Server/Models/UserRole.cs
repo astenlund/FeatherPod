@@ -1,4 +1,4 @@
-namespace FeatherPod.Models;
+namespace FeatherPod.Server.Models;
 
 /// <summary>
 /// Defines the roles a user can have in the system.

@@ -1,6 +1,6 @@
-using FeatherPod.Models;
+using FeatherPod.Server.Models;
 
-namespace FeatherPod.Services;
+namespace FeatherPod.Server.Services;
 
 /// <summary>
 /// Service for managing users and their permissions.

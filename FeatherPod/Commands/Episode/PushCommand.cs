@@ -1,10 +1,10 @@
-using FeatherPod.Cli.Infrastructure;
-using FeatherPod.Cli.Settings.Episode;
-using FeatherPod.Models;
+using FeatherPod.Infrastructure;
+using FeatherPod.Server.Models;
+using FeatherPod.Settings.Episode;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
-namespace FeatherPod.Cli.Commands.Episode;
+namespace FeatherPod.Commands.Episode;
 
 internal sealed class PushCommand : AsyncCommand<PushSettings>
 {

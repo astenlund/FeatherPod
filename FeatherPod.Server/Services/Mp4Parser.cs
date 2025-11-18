@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace FeatherPod.Services;
+namespace FeatherPod.Server.Services;
 
 /// <summary>
 /// Simple MP4/M4A parser to extract creation time from the movie header box (mvhd).

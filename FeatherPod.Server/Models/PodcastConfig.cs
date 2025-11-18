@@ -1,4 +1,4 @@
-namespace FeatherPod.Models;
+namespace FeatherPod.Server.Models;
 
 public record FeedConfig
 {

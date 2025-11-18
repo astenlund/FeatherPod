@@ -1,7 +1,7 @@
-using Azure.Storage.Blobs;
 using Azure.Identity;
+using Azure.Storage.Blobs;
 
-namespace FeatherPod.Services;
+namespace FeatherPod.Server.Services;
 
 public class BlobStorageService : IBlobStorageService
 {

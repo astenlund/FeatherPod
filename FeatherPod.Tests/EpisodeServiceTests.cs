@@ -1,6 +1,6 @@
+using FeatherPod.Server.Models;
+using FeatherPod.Server.Services;
 using Microsoft.Extensions.Logging;
-using FeatherPod.Models;
-using FeatherPod.Services;
 
 namespace FeatherPod.Tests;
 

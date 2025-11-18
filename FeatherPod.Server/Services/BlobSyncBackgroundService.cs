@@ -1,4 +1,4 @@
-namespace FeatherPod.Services;
+namespace FeatherPod.Server.Services;
 
 /// <summary>
 /// Background service that periodically syncs the in-memory episode list with blob storage.

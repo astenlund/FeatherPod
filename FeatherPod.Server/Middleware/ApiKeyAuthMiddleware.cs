@@ -1,10 +1,10 @@
-using FeatherPod.Models;
-using FeatherPod.Services;
+using FeatherPod.Server.Models;
+using FeatherPod.Server.Services;
 
 using static System.StringSplitOptions;
-using static FeatherPod.Models.UserRole;
+using static FeatherPod.Server.Models.UserRole;
 
-namespace FeatherPod.Middleware;
+namespace FeatherPod.Server.Middleware;
 
 public class ApiKeyAuthMiddleware
 {

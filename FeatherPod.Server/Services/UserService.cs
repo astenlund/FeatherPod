@@ -1,9 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using FeatherPod.Models;
+using FeatherPod.Server.Models;
 
-namespace FeatherPod.Services;
+namespace FeatherPod.Server.Services;
 
 /// <summary>
 /// Service for managing users and their permissions.

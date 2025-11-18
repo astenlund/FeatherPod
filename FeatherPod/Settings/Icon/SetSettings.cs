@@ -1,7 +1,7 @@
-using Spectre.Console.Cli;
 using System.ComponentModel;
+using Spectre.Console.Cli;
 
-namespace FeatherPod.Cli.Settings.Icon;
+namespace FeatherPod.Settings.Icon;
 
 internal sealed class SetSettings : CommandSettings
 {

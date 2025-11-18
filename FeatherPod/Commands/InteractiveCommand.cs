@@ -1,10 +1,10 @@
-using FeatherPod.Cli.Infrastructure;
-using FeatherPod.Cli.Settings;
-using FeatherPod.Models;
+using FeatherPod.Infrastructure;
+using FeatherPod.Server.Models;
+using FeatherPod.Settings;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
-namespace FeatherPod.Cli.Commands;
+namespace FeatherPod.Commands;
 
 internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 {
