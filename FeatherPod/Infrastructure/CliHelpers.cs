@@ -851,6 +851,12 @@ internal static class CliHelpers
                             content.Add(new StringContent(settings.Description), "description");
                         }
 
+                        // Add optional summary
+                        if (!string.IsNullOrEmpty(settings.Summary))
+                        {
+                            content.Add(new StringContent(settings.Summary), "summary");
+                        }
+
                         // Add published date options
                         if (!string.IsNullOrEmpty(settings.PublishedDate))
                         {

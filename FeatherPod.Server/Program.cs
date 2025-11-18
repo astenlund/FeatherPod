@@ -201,6 +201,7 @@ app.MapPost("/api/feeds/{feedId}/episodes", async (
     [FromForm] IFormFile? file,
     [FromForm] string? title,
     [FromForm] string? description,
+    [FromForm] string? summary,
     [FromForm] DateTime? publishedDate,
     EpisodeService service) =>
 {
@@ -232,6 +233,7 @@ app.MapPost("/api/feeds/{feedId}/episodes", async (
             tempPath,
             title,
             description,
+            summary,
             publishedDate);
 
         var episodeWithUrl = episode with { Url = episode.GetAudioUrl(baseUrl) };

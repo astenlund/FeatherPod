@@ -532,6 +532,119 @@ public class IntegrationTests : IDisposable
         var targetJson = await targetResponse.Content.ReadAsStringAsync();
         Assert.Contains("Copyable Episode", targetJson);
     }
+
+    [AzuriteFact]
+    public async Task Episode_WithBothDescriptionAndSummary_ShouldUseCorrectFieldsInRSS()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "test.mp3");
+        content.Add(new StringContent("Test Episode"), "title");
+        content.Add(new StringContent("This is the full RSS description with lots of detail"), "description");
+        content.Add(new StringContent("Short iTunes summary"), "summary");
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        request.Content = content;
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        // Verify RSS feed uses description for <description> and summary for <itunes:summary>
+        var feedResponse = await _client.GetAsync($"/{TestFeedId}/feed.xml");
+        var feedContent = await feedResponse.Content.ReadAsStringAsync();
+        var doc = XDocument.Parse(feedContent);
+        var ns = XNamespace.Get("http://www.itunes.com/dtds/podcast-1.0.dtd");
+
+        var item = doc.Root!.Element("channel")!.Element("item")!;
+        var description = item.Element("description")!.Value;
+        var itunesSummary = item.Element(ns + "summary")!.Value;
+
+        Assert.Equal("This is the full RSS description with lots of detail", description);
+        Assert.Equal("Short iTunes summary", itunesSummary);
+    }
+
+    [AzuriteFact]
+    public async Task Episode_WithOnlyDescription_ShouldFallbackToDescriptionForSummary()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "test.mp3");
+        content.Add(new StringContent("Test Episode"), "title");
+        content.Add(new StringContent("Single description for both"), "description");
+        // No summary provided
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        request.Content = content;
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        // Verify RSS feed uses description for both fields
+        var feedResponse = await _client.GetAsync($"/{TestFeedId}/feed.xml");
+        var feedContent = await feedResponse.Content.ReadAsStringAsync();
+        var doc = XDocument.Parse(feedContent);
+        var ns = XNamespace.Get("http://www.itunes.com/dtds/podcast-1.0.dtd");
+
+        var item = doc.Root!.Element("channel")!.Element("item")!;
+        var description = item.Element("description")!.Value;
+        var itunesSummary = item.Element(ns + "summary")!.Value;
+
+        Assert.Equal("Single description for both", description);
+        Assert.Equal("Single description for both", itunesSummary);
+    }
+
+    [AzuriteFact]
+    public async Task Episode_WithNoDescriptionOrSummary_ShouldHaveEmptyFields()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "test.mp3");
+        content.Add(new StringContent("Test Episode"), "title");
+        // No description or summary provided
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        request.Content = content;
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+
+        // Verify RSS feed has empty description and summary
+        var feedResponse = await _client.GetAsync($"/{TestFeedId}/feed.xml");
+        var feedContent = await feedResponse.Content.ReadAsStringAsync();
+        var doc = XDocument.Parse(feedContent);
+        var ns = XNamespace.Get("http://www.itunes.com/dtds/podcast-1.0.dtd");
+
+        var item = doc.Root!.Element("channel")!.Element("item")!;
+        var description = item.Element("description")!.Value;
+        var itunesSummary = item.Element(ns + "summary")!.Value;
+
+        Assert.Equal(string.Empty, description);
+        Assert.Equal(string.Empty, itunesSummary);
+    }
 }
 
 internal class FeatherPodWebApplicationFactory : WebApplicationFactory<Program>

@@ -109,10 +109,13 @@ curl -X POST https://your-app.azurewebsites.net/api/feeds/{feedId}/episodes \
   -H "X-API-Key: your-api-key" \
   -F "file=@audio.mp3" \
   -F "title=Episode Title" \
-  -F "description=Episode description"
+  -F "description=Full episode description for RSS" \
+  -F "summary=Short summary for iTunes (optional)"
 ```
 
 **Optional parameters:**
+- `description` - Full description for RSS feed
+- `summary` - Short summary for iTunes (defaults to description if not provided)
 - `publishedDate` - Set explicit date (ISO 8601 format)
 
 ### Removing Episodes
@@ -237,7 +240,7 @@ FeatherPod includes a command-line tool for managing episodes, icons, and users:
 ```bash
 # Episode management
 featherpod-cli episode push *.mp3 -f my-podcast -x  # -x extracts date from file before normalization
-featherpod-cli push episode.mp3 --title "Episode Title"  # Alias
+featherpod-cli push episode.mp3 --title "Episode Title" --description "Full description" --summary "Short summary"  # Alias
 
 # Icon management
 featherpod-cli icon set icon.png -f my-podcast

@@ -227,6 +227,7 @@ public sealed class EpisodeService : IDisposable
         string filePath,
         string? title = null,
         string? description = null,
+        string? summary = null,
         DateTime? publishedDate = null)
     {
         var fileInfo = new FileInfo(filePath);
@@ -291,6 +292,7 @@ public sealed class EpisodeService : IDisposable
                 FeedId = feedId,
                 Title = title ?? ParseTitleFromFilename(fileName),
                 Description = description,
+                Summary = summary,
                 FileName = fileName,
                 FileSize = fileSize,
                 Duration = duration,

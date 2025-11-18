@@ -25,6 +25,10 @@ internal sealed class PushSettings : CommandSettings
     [Description("Episode description (optional)")]
     public string? Description { get; init; }
 
+    [CommandOption("-s|--summary")]
+    [Description("Short summary for iTunes (optional, defaults to description)")]
+    public string? Summary { get; init; }
+
     [CommandOption("-p|--published-date")]
     [Description("Published date in ISO 8601 format (optional)")]
     public string? PublishedDate { get; init; }
