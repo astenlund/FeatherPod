@@ -1,4 +1,4 @@
-using FeatherPod.Cli.Settings;
+using FeatherPod.Cli.Settings.Episode;
 using FeatherPod.Models;
 using Microsoft.Extensions.Configuration;
 using Spectre.Console;
@@ -739,7 +739,7 @@ internal static class CliHelpers
         return result;
     }
 
-    internal static async Task<bool> UploadEpisodeAsync(HttpClient httpClient, IConfiguration configuration, FeedConfig feed, string filePath, EpisodePushSettings settings)
+    internal static async Task<bool> UploadEpisodeAsync(HttpClient httpClient, IConfiguration configuration, FeedConfig feed, string filePath, PushSettings settings)
     {
         var fileName = Path.GetFileName(filePath);
         var success = false;

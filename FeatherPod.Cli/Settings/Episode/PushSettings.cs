@@ -1,9 +1,9 @@
 using Spectre.Console.Cli;
 using System.ComponentModel;
 
-namespace FeatherPod.Cli.Settings;
+namespace FeatherPod.Cli.Settings.Episode;
 
-internal sealed class EpisodePushSettings : CommandSettings
+internal sealed class PushSettings : CommandSettings
 {
     [CommandArgument(0, "<files>")]
     [Description("Audio file(s) to upload (supports wildcards and comma-separated lists)")]

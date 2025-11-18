@@ -1,9 +1,9 @@
 using Spectre.Console.Cli;
 using System.ComponentModel;
 
-namespace FeatherPod.Cli.Settings;
+namespace FeatherPod.Cli.Settings.Icon;
 
-internal sealed class IconUnsetSettings : CommandSettings
+internal sealed class UnsetSettings : CommandSettings
 {
     [CommandOption("-e|--environment")]
     [Description("Target environment (Dev, Test, Prod)")]

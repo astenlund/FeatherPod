@@ -1,9 +1,9 @@
 using Spectre.Console.Cli;
 using System.ComponentModel;
 
-namespace FeatherPod.Cli.Settings;
+namespace FeatherPod.Cli.Settings.Icon;
 
-internal sealed class IconSetSettings : CommandSettings
+internal sealed class SetSettings : CommandSettings
 {
     [CommandArgument(0, "<icon-path>")]
     [Description("Path to the icon file (PNG/JPEG)")]
