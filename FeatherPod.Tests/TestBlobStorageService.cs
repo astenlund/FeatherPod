@@ -10,11 +10,13 @@ public class TestBlobStorageService : IBlobStorageService
 {
     private readonly string _rootPath;
     private readonly string _feedsConfigPath;
+    private readonly string _usersConfigPath;
 
     public TestBlobStorageService(string testDirectory)
     {
         _rootPath = testDirectory;
         _feedsConfigPath = Path.Combine(testDirectory, "feeds.json");
+        _usersConfigPath = Path.Combine(testDirectory, "users.json");
         Directory.CreateDirectory(testDirectory);
     }
 
@@ -24,7 +26,6 @@ public class TestBlobStorageService : IBlobStorageService
         await Task.CompletedTask;
     }
 
-    // Feed configuration
     public async Task<string?> LoadFeedsConfigAsync()
     {
         if (!File.Exists(_feedsConfigPath))
@@ -39,7 +40,20 @@ public class TestBlobStorageService : IBlobStorageService
         await File.WriteAllTextAsync(_feedsConfigPath, feedsJson);
     }
 
-    // Audio operations (feed-aware)
+    public async Task<string?> LoadUsersConfigAsync()
+    {
+        if (!File.Exists(_usersConfigPath))
+        {
+            return null;
+        }
+        return await File.ReadAllTextAsync(_usersConfigPath);
+    }
+
+    public async Task SaveUsersConfigAsync(string usersJson)
+    {
+        await File.WriteAllTextAsync(_usersConfigPath, usersJson);
+    }
+
     public async Task UploadAudioAsync(string feedId, string fileName, string filePath)
     {
         var feedAudioPath = Path.Combine(_rootPath, feedId, "audio");
@@ -104,7 +118,6 @@ public class TestBlobStorageService : IBlobStorageService
         return await Task.FromResult(tempPath);
     }
 
-    // Episode metadata operations (feed-aware)
     public async Task SaveEpisodeMetadataAsync(string feedId, string metadataJson)
     {
         var feedMetadataPath = Path.Combine(_rootPath, feedId, "episodes.json");
@@ -123,7 +136,6 @@ public class TestBlobStorageService : IBlobStorageService
         return await File.ReadAllTextAsync(feedMetadataPath);
     }
 
-    // Icon operations (feed-aware)
     public async Task UploadIconAsync(string feedId, string filePath)
     {
         var feedIconPath = Path.Combine(_rootPath, feedId, "icon.png");
@@ -156,7 +168,6 @@ public class TestBlobStorageService : IBlobStorageService
         await Task.CompletedTask;
     }
 
-    // Feed management operations
     public async Task RenameFeedAsync(string oldFeedId, string newFeedId)
     {
         var oldPath = Path.Combine(_rootPath, oldFeedId);

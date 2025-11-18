@@ -30,6 +30,7 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(optio
 // Add services
 builder.Services.AddSingleton<IBlobStorageService, BlobStorageService>();
 builder.Services.AddSingleton<EpisodeService>();
+builder.Services.AddSingleton<IUserService, UserService>();
 
 // Add background service for periodic blob storage sync
 builder.Services.AddHostedService<BlobSyncBackgroundService>();
@@ -40,11 +41,9 @@ var app = builder.Build();
 app.UseMiddleware<ApiKeyAuthMiddleware>();
 
 // Initialize blob storage and episode service
-var blobStorage = app.Services.GetRequiredService<IBlobStorageService>();
-await blobStorage.InitializeAsync();
-
-var episodeService = app.Services.GetRequiredService<EpisodeService>();
-await episodeService.InitializeAsync();
+await app.Services.GetRequiredService<IBlobStorageService>().InitializeAsync();
+await app.Services.GetRequiredService<EpisodeService>().InitializeAsync();
+await app.Services.GetRequiredService<IUserService>().LoadUsersAsync();
 
 // Get base URL from configuration
 var baseUrl = app.Configuration.GetSection("Podcast")["BaseUrl"]
@@ -533,6 +532,7 @@ app.MapPost("/{sourceFeedId}/api/episodes/{id}/copy", async (
 static string GetMimeType(string fileName)
 {
     var extension = Path.GetExtension(fileName).ToLowerInvariant();
+
     return extension switch
     {
         ".mp3" => "audio/mpeg",
