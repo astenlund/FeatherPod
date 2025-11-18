@@ -5,12 +5,14 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 ## Features
 
 - **Multi-feed support** - Host multiple podcast feeds from a single instance
+- **Role-based access control** - Admin and FeedOwner roles with per-user API keys
+- **User management** - Create users, manage permissions, and assign feed ownership via API and CLI
 - **Audio normalization** - Automatic loudness normalization (-16 LUFS) via FFmpeg
 - **Azure Blob Storage** - Scalable cloud storage for audio files
 - **RSS podcast feeds** - iTunes spec compatible with per-feed configuration
-- **REST API** - Manage feeds and episodes with API key authentication
+- **REST API** - Comprehensive API with `/api` prefix for consistency
 - **Version tracking** - Git SHA embedded in binaries and available via `/api/version`
-- **CLI tool** - Command-line interface for episode and icon management
+- **CLI tool** - Command-line interface for episode, icon, and user management
 - **Hash-based episode IDs** - Preserves play progress; re-uploading same file updates metadata
 - **Cross-feed operations** - Move or copy episodes between feeds
 - **Managed Identity** - Secure Azure authentication without secrets
@@ -103,7 +105,7 @@ curl https://your-app.azurewebsites.net/api/feeds
 ### Adding Episodes
 
 ```bash
-curl -X POST https://your-app.azurewebsites.net/api/{feedId}/episodes \
+curl -X POST https://your-app.azurewebsites.net/api/feeds/{feedId}/episodes \
   -H "X-API-Key: your-api-key" \
   -F "file=@audio.mp3" \
   -F "title=Episode Title" \
@@ -116,40 +118,94 @@ curl -X POST https://your-app.azurewebsites.net/api/{feedId}/episodes \
 ### Removing Episodes
 
 ```bash
-curl -X DELETE https://your-app.azurewebsites.net/api/{feedId}/episodes/{episode-id} \
+curl -X DELETE https://your-app.azurewebsites.net/api/feeds/{feedId}/episodes/{episode-id} \
   -H "X-API-Key: your-api-key"
 ```
 
 ### Listing Episodes
 
 ```bash
-curl https://your-app.azurewebsites.net/api/{feedId}/episodes
+curl https://your-app.azurewebsites.net/api/feeds/{feedId}/episodes \
+  -H "X-API-Key: your-api-key"
+```
+
+### Managing Users (Admin only)
+
+```bash
+# Create user
+curl -X POST https://your-app.azurewebsites.net/api/users \
+  -H "X-API-Key: admin-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"user123","name":"John Doe","email":"john@example.com","role":"FeedOwner","ownedFeeds":["my-podcast"]}'
+
+# List users
+curl https://your-app.azurewebsites.net/api/users \
+  -H "X-API-Key: admin-api-key"
+
+# Grant feed ownership
+curl -X POST https://your-app.azurewebsites.net/api/users/{userId}/feeds \
+  -H "X-API-Key: admin-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"feedId":"my-podcast"}'
 ```
 
 ## API Reference
+
+### Feed Management
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
 | `/api/version` | GET | Public | Version info (with git SHA) |
 | `/api/feeds` | GET | Public | List all feeds |
 | `/api/feeds/{feedId}` | GET | Public | Get feed configuration |
-| `/api/feeds` | POST | API Key | Create new feed |
-| `/api/feeds/{feedId}` | DELETE | API Key | Delete feed and episodes |
-| `/{feedId}/feed.xml` | GET | Public | RSS podcast feed |
-| `/{feedId}/icon.png` | GET | Public | Get feed icon |
-| `/{feedId}/api/icon` | POST | API Key | Upload/replace feed icon |
-| `/{feedId}/api/icon` | DELETE | API Key | Remove feed icon |
-| `/{feedId}/audio/{filename}` | GET | Public | Stream audio (range requests) |
-| `/{feedId}/api/episodes` | GET | Public | List episodes |
-| `/{feedId}/api/episodes` | POST | API Key | Upload episode |
-| `/{feedId}/api/episodes/{id}` | DELETE | API Key | Delete episode |
-| `/{sourceFeedId}/api/episodes/{id}/move` | POST | API Key | Move episode between feeds |
-| `/{sourceFeedId}/api/episodes/{id}/copy` | POST | API Key | Copy episode between feeds |
+| `/api/feeds` | POST | Admin | Create new feed |
+| `/api/feeds/{feedId}` | PUT | Admin/Owner | Update feed metadata |
+| `/api/feeds/{feedId}/rename?newId=...` | POST | Admin | Rename feed ID |
+| `/api/feeds/{feedId}` | DELETE | Admin | Delete feed and all episodes |
 
-**Authentication:**
+### Episode Management
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/feeds/{feedId}/episodes` | GET | Admin/Owner | List episodes for feed |
+| `/api/feeds/{feedId}/episodes` | POST | Admin/Owner | Upload episode |
+| `/api/feeds/{feedId}/episodes/{id}` | DELETE | Admin/Owner | Delete episode |
+| `/api/feeds/{feedId}/episodes/{id}/move` | POST | Admin/Owner | Move episode between feeds |
+| `/api/feeds/{feedId}/episodes/{id}/copy` | POST | Admin/Owner | Copy episode between feeds |
+
+### Icon Management
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/feeds/{feedId}/icon` | POST | Admin/Owner | Upload/replace feed icon |
+| `/api/feeds/{feedId}/icon` | DELETE | Admin/Owner | Remove feed icon |
+
+### User Management
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/users` | GET | Admin | List all users |
+| `/api/users/{userId}` | GET | Admin | Get user by ID |
+| `/api/users` | POST | Admin | Create user (returns API key once) |
+| `/api/users/{userId}` | DELETE | Admin | Delete user (soft delete) |
+| `/api/users/{userId}/key/regenerate` | POST | Admin/Self | Regenerate user API key |
+| `/api/users/{userId}/feeds` | POST | Admin | Grant feed ownership |
+| `/api/users/{userId}/feeds/{feedId}` | DELETE | Admin | Revoke feed ownership |
+
+### Public Endpoints
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/{feedId}/feed.xml` | GET | Public | RSS podcast feed |
+| `/{feedId}/icon.png` | GET | Public | Feed icon |
+| `/{feedId}/audio/{filename}` | GET | Public | Stream audio (range requests) |
+
+**Authentication & Authorization:**
 - Protected endpoints require `X-API-Key` header
-- Configure via Azure App Service settings or `appsettings.json`
-- Read-only endpoints (feeds, audio) are public
+- **Admin** role has full access to all feeds and user management
+- **FeedOwner** role has access only to owned feeds
+- Legacy API key automatically migrated to admin user on first use
+- Each user has their own API key (32-byte random, SHA256 hashed)
 
 ## Configuration
 
@@ -170,13 +226,13 @@ curl https://your-app.azurewebsites.net/api/{feedId}/episodes
 }
 ```
 
-**Podcast icon:** Upload via API (`POST /{feedId}/api/icon`) or CLI (`featherpod-cli icon set icon.png`)
+**Podcast icon:** Upload via API (`POST /api/feeds/{feedId}/icon`) or CLI (`featherpod-cli icon set icon.png`)
 
 **Additional options:** See configuration files for published date behavior, language, category, and more.
 
 ## CLI Tool
 
-FeatherPod includes a command-line tool for managing episodes and icons:
+FeatherPod includes a command-line tool for managing episodes, icons, and users:
 
 ```bash
 # Episode management
@@ -186,6 +242,19 @@ featherpod-cli push episode.mp3 --title "Episode Title"  # Alias
 # Icon management
 featherpod-cli icon set icon.png -f my-podcast
 featherpod-cli icon unset -f my-podcast
+
+# User management (Admin only)
+featherpod-cli user create
+featherpod-cli user list
+featherpod-cli user delete
+featherpod-cli user regenerate-key
+featherpod-cli user grant-feed
+featherpod-cli user revoke-feed
+
+# Environment selection
+featherpod-cli -e Dev user list  # Target dev environment
+featherpod-cli -e Test user list # Target test environment
+# (Defaults to Prod if not specified)
 
 # Interactive mode (default)
 featherpod-cli
@@ -204,9 +273,10 @@ dotnet test           # Run tests (starts integration tests if Azurite is runnin
 
 - **.NET 9 Minimal API** - Lightweight HTTP endpoints
 - **Multi-feed architecture** - Single instance hosts multiple isolated podcast feeds
+- **Role-based access control** - Admin and FeedOwner roles with per-user API keys and feed ownership
 - **Azure Blob Storage** - Cloud-native file storage with managed identity support
 - **Hash-based episode IDs** - `SHA256(feedId:filename:filesize)` ensures stability
-- **API Key Authentication** - Secures management endpoints
+- **User management** - User accounts stored in `users.json` with SHA256 hashed API keys
 - **Range request support** - Enables seeking and resuming in podcast apps
 - **Cross-feed operations** - Move or copy episodes between feeds via REST API
 
