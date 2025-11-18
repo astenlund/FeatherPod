@@ -287,7 +287,7 @@ This workflow only deploys to the test environment. Production deployments are m
 
 ```bash
 # Build and deploy to production
-dotnet publish FeatherPod/FeatherPod.csproj -c Release -o publish
+dotnet publish FeatherPod.Server/FeatherPod.Server.csproj -c Release -o publish
 cd publish
 zip -r ../deploy.zip .
 cd ..

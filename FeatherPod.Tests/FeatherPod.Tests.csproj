@@ -20,7 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\FeatherPod\FeatherPod.csproj" />
+    <ProjectReference Include="..\FeatherPod.Server\FeatherPod.Server.csproj" />
   </ItemGroup>
 
 </Project>

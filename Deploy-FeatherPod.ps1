@@ -62,7 +62,7 @@ function Deploy-Environment {
         "Prod" { "featherpod" }
     }
 
-    $projectPath = Join-Path $PSScriptRoot "FeatherPod\FeatherPod.csproj"
+    $projectPath = Join-Path $PSScriptRoot "FeatherPod.Server\FeatherPod.Server.csproj"
     $publishPath = Join-Path $PSScriptRoot "publish"
     $zipPath = Join-Path $PSScriptRoot "deploy.zip"
 

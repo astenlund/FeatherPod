@@ -3,7 +3,7 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FeatherPod", "FeatherPod\FeatherPod.csproj", "{366398C0-F260-4CF1-9C63-A18AE7DC130A}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FeatherPod.Server", "FeatherPod.Server\FeatherPod.Server.csproj", "{366398C0-F260-4CF1-9C63-A18AE7DC130A}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FeatherPod.Tests", "FeatherPod.Tests\FeatherPod.Tests.csproj", "{AB62D729-7C33-4BC9-ABF6-CD0A55B31B17}"
 EndProject
@@ -15,7 +15,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SolutionItems", "SolutionIt
 		Deploy-FeatherPod.ps1 = Deploy-FeatherPod.ps1
 	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FeatherPod.Cli", "FeatherPod.Cli\FeatherPod.Cli.csproj", "{BF2242EC-1812-4D7C-92F4-C333FAB41262}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FeatherPod", "FeatherPod\FeatherPod.csproj", "{BF2242EC-1812-4D7C-92F4-C333FAB41262}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
