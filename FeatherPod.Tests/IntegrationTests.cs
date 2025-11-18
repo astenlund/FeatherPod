@@ -87,7 +87,7 @@ public class IntegrationTests : IDisposable
         content.Add(new StringContent("Test Episode"), "title");
         content.Add(new StringContent("This is a test episode"), "description");
 
-        var request = new HttpRequestMessage(HttpMethod.Post, $"/{TestFeedId}/api/episodes");
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
         request.Content = content;
         request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
 
@@ -124,7 +124,7 @@ public class IntegrationTests : IDisposable
         content.Add(fileContent, "file", "test-audio.mp3");
         content.Add(new StringContent("Test Audio"), "title");
 
-        var request = new HttpRequestMessage(HttpMethod.Post, $"/{TestFeedId}/api/episodes");
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
         request.Content = content;
         request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
 
@@ -166,7 +166,7 @@ public class IntegrationTests : IDisposable
         content.Add(fileContent, "file", "deleteme.mp3");
         content.Add(new StringContent("Delete Me"), "title");
 
-        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/{TestFeedId}/api/episodes");
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
         postRequest.Content = content;
         postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
 
@@ -178,7 +178,7 @@ public class IntegrationTests : IDisposable
         var episodeId = idMatch.Groups[1].Value;
 
         // Act - Delete episode
-        var deleteRequest = new HttpRequestMessage(HttpMethod.Delete, $"/{TestFeedId}/api/episodes/{episodeId}");
+        var deleteRequest = new HttpRequestMessage(HttpMethod.Delete, $"/api/feeds/{TestFeedId}/episodes/{episodeId}");
         deleteRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
         var deleteResponse = await _client.SendAsync(deleteRequest);
 
@@ -208,7 +208,7 @@ public class IntegrationTests : IDisposable
             content.Add(fileContent, "file", $"episode{i}.mp3");
             content.Add(new StringContent($"Episode {i}"), "title");
 
-            var request = new HttpRequestMessage(HttpMethod.Post, $"/{TestFeedId}/api/episodes");
+            var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
             request.Content = content;
             request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
 
@@ -216,7 +216,9 @@ public class IntegrationTests : IDisposable
         }
 
         // Act
-        var response = await _client.GetAsync($"/{TestFeedId}/api/episodes");
+        var getRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/feeds/{TestFeedId}/episodes");
+        getRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var response = await _client.SendAsync(getRequest);
 
         // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -238,7 +240,7 @@ public class IntegrationTests : IDisposable
         content.Add(new StringContent("Test"), "title");
 
         // Act - Post without API key
-        var response = await _client.PostAsync($"/{TestFeedId}/api/episodes", content);
+        var response = await _client.PostAsync($"/api/feeds/{TestFeedId}/episodes", content);
 
         // Assert
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
@@ -256,7 +258,7 @@ public class IntegrationTests : IDisposable
         content.Add(fileContent, "file", "test.mp3");
         content.Add(new StringContent("Test"), "title");
 
-        var request = new HttpRequestMessage(HttpMethod.Post, $"/{TestFeedId}/api/episodes");
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
         request.Content = content;
         request.Headers.Add("X-API-Key", "wrong-key");
 
@@ -359,7 +361,7 @@ public class IntegrationTests : IDisposable
         content.Add(fileContent, "file", "episode.mp3");
         content.Add(new StringContent("Episode"), "title");
 
-        var uploadRequest = new HttpRequestMessage(HttpMethod.Post, "/delete-me/api/episodes");
+        var uploadRequest = new HttpRequestMessage(HttpMethod.Post, "/api/feeds/delete-me/episodes");
         uploadRequest.Content = content;
         uploadRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
         await _client.SendAsync(uploadRequest);
@@ -400,7 +402,7 @@ public class IntegrationTests : IDisposable
         contentA.Add(fileContentA, "file", "episode-a.mp3");
         contentA.Add(new StringContent("Episode A"), "title");
 
-        var requestA = new HttpRequestMessage(HttpMethod.Post, "/feed-a/api/episodes");
+        var requestA = new HttpRequestMessage(HttpMethod.Post, "/api/feeds/feed-a/episodes");
         requestA.Content = contentA;
         requestA.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
         await _client.SendAsync(requestA);
@@ -412,17 +414,21 @@ public class IntegrationTests : IDisposable
         contentB.Add(fileContentB, "file", "episode-b.mp3");
         contentB.Add(new StringContent("Episode B"), "title");
 
-        var requestB = new HttpRequestMessage(HttpMethod.Post, "/feed-b/api/episodes");
+        var requestB = new HttpRequestMessage(HttpMethod.Post, "/api/feeds/feed-b/episodes");
         requestB.Content = contentB;
         requestB.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
         await _client.SendAsync(requestB);
 
         // Act - Get episodes from feed-a
-        var responseA = await _client.GetAsync("/feed-a/api/episodes");
+        var getRequestA = new HttpRequestMessage(HttpMethod.Get, "/api/feeds/feed-a/episodes");
+        getRequestA.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var responseA = await _client.SendAsync(getRequestA);
         var jsonA = await responseA.Content.ReadAsStringAsync();
 
         // Act - Get episodes from feed-b
-        var responseB = await _client.GetAsync("/feed-b/api/episodes");
+        var getRequestB = new HttpRequestMessage(HttpMethod.Get, "/api/feeds/feed-b/episodes");
+        getRequestB.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var responseB = await _client.SendAsync(getRequestB);
         var jsonB = await responseB.Content.ReadAsStringAsync();
 
         // Assert - Episodes are isolated
@@ -447,7 +453,7 @@ public class IntegrationTests : IDisposable
         content.Add(fileContent, "file", "movable.mp3");
         content.Add(new StringContent("Movable Episode"), "title");
 
-        var uploadRequest = new HttpRequestMessage(HttpMethod.Post, "/source-feed/api/episodes");
+        var uploadRequest = new HttpRequestMessage(HttpMethod.Post, "/api/feeds/source-feed/episodes");
         uploadRequest.Content = content;
         uploadRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
         var uploadResponse = await _client.SendAsync(uploadRequest);
@@ -457,7 +463,7 @@ public class IntegrationTests : IDisposable
 
         // Act - Move episode
         var moveJson = """{"targetFeedId": "target-feed"}""";
-        var moveRequest = new HttpRequestMessage(HttpMethod.Post, $"/source-feed/api/episodes/{episodeId}/move");
+        var moveRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/source-feed/episodes/{episodeId}/move");
         moveRequest.Content = new StringContent(moveJson, System.Text.Encoding.UTF8, "application/json");
         moveRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
         var moveResponse = await _client.SendAsync(moveRequest);
@@ -466,12 +472,16 @@ public class IntegrationTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, moveResponse.StatusCode);
 
         // Verify episode is gone from source
-        var sourceResponse = await _client.GetAsync("/source-feed/api/episodes");
+        var getSourceRequest = new HttpRequestMessage(HttpMethod.Get, "/api/feeds/source-feed/episodes");
+        getSourceRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var sourceResponse = await _client.SendAsync(getSourceRequest);
         var sourceJson = await sourceResponse.Content.ReadAsStringAsync();
         Assert.DoesNotContain("Movable Episode", sourceJson);
 
         // Verify episode is in target
-        var targetResponse = await _client.GetAsync("/target-feed/api/episodes");
+        var getTargetRequest = new HttpRequestMessage(HttpMethod.Get, "/api/feeds/target-feed/episodes");
+        getTargetRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var targetResponse = await _client.SendAsync(getTargetRequest);
         var targetJson = await targetResponse.Content.ReadAsStringAsync();
         Assert.Contains("Movable Episode", targetJson);
     }
@@ -490,7 +500,7 @@ public class IntegrationTests : IDisposable
         content.Add(fileContent, "file", "copyable.mp3");
         content.Add(new StringContent("Copyable Episode"), "title");
 
-        var uploadRequest = new HttpRequestMessage(HttpMethod.Post, "/source-feed/api/episodes");
+        var uploadRequest = new HttpRequestMessage(HttpMethod.Post, "/api/feeds/source-feed/episodes");
         uploadRequest.Content = content;
         uploadRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
         var uploadResponse = await _client.SendAsync(uploadRequest);
@@ -500,7 +510,7 @@ public class IntegrationTests : IDisposable
 
         // Act - Copy episode
         var copyJson = """{"targetFeedId": "target-feed"}""";
-        var copyRequest = new HttpRequestMessage(HttpMethod.Post, $"/source-feed/api/episodes/{episodeId}/copy");
+        var copyRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/source-feed/episodes/{episodeId}/copy");
         copyRequest.Content = new StringContent(copyJson, System.Text.Encoding.UTF8, "application/json");
         copyRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
         var copyResponse = await _client.SendAsync(copyRequest);
@@ -509,12 +519,16 @@ public class IntegrationTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, copyResponse.StatusCode);
 
         // Verify episode is still in source
-        var sourceResponse = await _client.GetAsync("/source-feed/api/episodes");
+        var getSourceRequest = new HttpRequestMessage(HttpMethod.Get, "/api/feeds/source-feed/episodes");
+        getSourceRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var sourceResponse = await _client.SendAsync(getSourceRequest);
         var sourceJson = await sourceResponse.Content.ReadAsStringAsync();
         Assert.Contains("Copyable Episode", sourceJson);
 
         // Verify episode is also in target
-        var targetResponse = await _client.GetAsync("/target-feed/api/episodes");
+        var getTargetRequest = new HttpRequestMessage(HttpMethod.Get, "/api/feeds/target-feed/episodes");
+        getTargetRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var targetResponse = await _client.SendAsync(getTargetRequest);
         var targetJson = await targetResponse.Content.ReadAsStringAsync();
         Assert.Contains("Copyable Episode", targetJson);
     }
