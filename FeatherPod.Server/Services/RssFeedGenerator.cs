@@ -105,7 +105,7 @@ public class RssFeedGenerator
 
         // iTunes specific episode tags
         writer.WriteElementString("itunes", "author", null, feedConfig.Author);
-        writer.WriteElementString("itunes", "summary", null, episode.Description ?? string.Empty);
+        writer.WriteElementString("itunes", "summary", null, episode.Summary ?? episode.Description ?? string.Empty);
         writer.WriteElementString("itunes", "explicit", null, "false");
 
         if (episode.Duration > TimeSpan.Zero)

@@ -9,6 +9,7 @@ public record Episode
     required public string FeedId { get; init; }
     required public string Title { get; init; }
     public string? Description { get; init; }
+    public string? Summary { get; init; }
     required public string FileName { get; init; }
     required public long FileSize { get; init; }
     public TimeSpan Duration { get; init; }
