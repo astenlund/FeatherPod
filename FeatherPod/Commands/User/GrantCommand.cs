@@ -1,11 +1,11 @@
-using FeatherPod.Cli.Infrastructure;
-using FeatherPod.Cli.Settings.User;
-using Spectre.Console;
-using Spectre.Console.Cli;
 using System.Text;
 using System.Text.Json;
+using FeatherPod.Infrastructure;
+using FeatherPod.Settings.User;
+using Spectre.Console;
+using Spectre.Console.Cli;
 
-namespace FeatherPod.Cli.Commands.User;
+namespace FeatherPod.Commands.User;
 
 internal sealed class GrantCommand : AsyncCommand<GrantSettings>
 {

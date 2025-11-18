@@ -1,9 +1,9 @@
-using FeatherPod.Cli.Infrastructure;
-using FeatherPod.Cli.Settings.Icon;
+using FeatherPod.Infrastructure;
+using FeatherPod.Settings.Icon;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
-namespace FeatherPod.Cli.Commands.Icon;
+namespace FeatherPod.Commands.Icon;
 
 internal sealed class UnsetCommand : AsyncCommand<UnsetSettings>
 {

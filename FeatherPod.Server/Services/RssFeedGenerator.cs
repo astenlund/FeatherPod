@@ -1,8 +1,8 @@
 using System.Text;
 using System.Xml;
-using FeatherPod.Models;
+using FeatherPod.Server.Models;
 
-namespace FeatherPod.Services;
+namespace FeatherPod.Server.Services;
 
 public class RssFeedGenerator
 {

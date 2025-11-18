@@ -1,4 +1,4 @@
-namespace FeatherPod.Cli.Infrastructure;
+namespace FeatherPod.Infrastructure;
 
 /// <summary>
 /// Configuration for FFmpeg-based audio loudness normalization.

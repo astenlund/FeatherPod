@@ -1,4 +1,4 @@
-namespace FeatherPod.Services;
+namespace FeatherPod.Server.Services;
 
 public interface IBlobStorageService
 {

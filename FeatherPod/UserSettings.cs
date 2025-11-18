@@ -1,6 +1,6 @@
 using System.Configuration;
 
-namespace FeatherPod.Cli;
+namespace FeatherPod;
 
 /// <summary>
 /// User settings stored in AppData/Local/FeatherPod.Cli/user.config

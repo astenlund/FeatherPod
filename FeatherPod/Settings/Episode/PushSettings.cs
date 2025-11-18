@@ -1,7 +1,7 @@
-using Spectre.Console.Cli;
 using System.ComponentModel;
+using Spectre.Console.Cli;
 
-namespace FeatherPod.Cli.Settings.Episode;
+namespace FeatherPod.Settings.Episode;
 
 internal sealed class PushSettings : CommandSettings
 {

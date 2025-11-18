@@ -1,7 +1,7 @@
-using Spectre.Console.Cli;
 using System.ComponentModel;
+using Spectre.Console.Cli;
 
-namespace FeatherPod.Cli.Settings.User;
+namespace FeatherPod.Settings.User;
 
 internal sealed class CreateSettings : CommandSettings
 {

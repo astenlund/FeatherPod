@@ -1,8 +1,8 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using FeatherPod.Models;
+using FeatherPod.Server.Models;
 
-namespace FeatherPod.Services;
+namespace FeatherPod.Server.Services;
 
 public sealed class EpisodeService : IDisposable
 {

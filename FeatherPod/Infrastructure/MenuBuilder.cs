@@ -1,6 +1,6 @@
 using Spectre.Console;
 
-namespace FeatherPod.Cli.Infrastructure;
+namespace FeatherPod.Infrastructure;
 
 internal class MenuBuilder<T>
 {

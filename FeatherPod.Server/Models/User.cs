@@ -1,4 +1,4 @@
-namespace FeatherPod.Models;
+namespace FeatherPod.Server.Models;
 
 /// <summary>
 /// Represents a user in the FeatherPod system.

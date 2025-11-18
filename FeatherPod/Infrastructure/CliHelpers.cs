@@ -1,11 +1,11 @@
-using FeatherPod.Cli.Settings.Episode;
-using FeatherPod.Models;
-using Microsoft.Extensions.Configuration;
-using Spectre.Console;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using FeatherPod.Server.Models;
+using FeatherPod.Settings.Episode;
+using Microsoft.Extensions.Configuration;
+using Spectre.Console;
 
-namespace FeatherPod.Cli.Infrastructure;
+namespace FeatherPod.Infrastructure;
 
 internal static class CliHelpers
 {

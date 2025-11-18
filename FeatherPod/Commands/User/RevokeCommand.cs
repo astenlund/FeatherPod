@@ -1,9 +1,9 @@
-using FeatherPod.Cli.Infrastructure;
-using FeatherPod.Cli.Settings.User;
+using FeatherPod.Infrastructure;
+using FeatherPod.Settings.User;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
-namespace FeatherPod.Cli.Commands.User;
+namespace FeatherPod.Commands.User;
 
 internal sealed class RevokeCommand : AsyncCommand<RevokeSettings>
 {

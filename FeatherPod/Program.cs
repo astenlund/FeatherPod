@@ -1,10 +1,10 @@
-using FeatherPod.Cli.Commands;
-using FeatherPod.Cli.Commands.Episode;
-using FeatherPod.Cli.Commands.Icon;
-using FeatherPod.Cli.Commands.User;
+using FeatherPod.Commands;
+using FeatherPod.Commands.Episode;
+using FeatherPod.Commands.Icon;
+using FeatherPod.Commands.User;
 using Spectre.Console.Cli;
 
-namespace FeatherPod.Cli;
+namespace FeatherPod;
 
 internal class Program
 {
