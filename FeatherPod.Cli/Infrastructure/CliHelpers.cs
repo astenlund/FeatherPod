@@ -279,7 +279,7 @@ internal static class CliHelpers
     {
         try
         {
-            var url = $"/{feedId}/api/icon";
+            var url = $"/api/feeds/{feedId}/icon";
             AnsiConsole.MarkupLine($"[grey]Uploading icon to: {Markup.Escape(url)}[/]");
             AnsiConsole.MarkupLine($"[grey]Base URL: {Markup.Escape(httpClient.BaseAddress?.ToString() ?? "null")}[/]");
 
@@ -321,7 +321,7 @@ internal static class CliHelpers
     {
         try
         {
-            var url = $"/{feedId}/api/icon";
+            var url = $"/api/feeds/{feedId}/icon";
             var response = await httpClient.DeleteAsync(url);
 
             if (response.IsSuccessStatusCode)
@@ -547,7 +547,7 @@ internal static class CliHelpers
     {
         try
         {
-            var response = await httpClient.GetAsync($"/{feed.Id}/api/episodes");
+            var response = await httpClient.GetAsync($"/api/feeds/{feed.Id}/episodes");
             response.EnsureSuccessStatusCode();
 
             var json = await response.Content.ReadAsStringAsync();
@@ -637,7 +637,7 @@ internal static class CliHelpers
     {
         try
         {
-            var response = await httpClient.GetAsync($"/{feed.Id}/api/episodes");
+            var response = await httpClient.GetAsync($"/api/feeds/{feed.Id}/episodes");
             response.EnsureSuccessStatusCode();
 
             var json = await response.Content.ReadAsStringAsync();
@@ -670,7 +670,7 @@ internal static class CliHelpers
                 return;
             }
 
-            var deleteResponse = await httpClient.DeleteAsync($"/{feed.Id}/api/episodes/{episodeToDelete.Id}");
+            var deleteResponse = await httpClient.DeleteAsync($"/api/feeds/{feed.Id}/episodes/{episodeToDelete.Id}");
 
             if (deleteResponse.IsSuccessStatusCode)
             {
@@ -864,7 +864,7 @@ internal static class CliHelpers
                         // Note: UseCurrentDate is the default behavior, no need to send anything
 
                         // Upload
-                        var response = await httpClient.PostAsync($"/{feed.Id}/api/episodes", content);
+                        var response = await httpClient.PostAsync($"/api/feeds/{feed.Id}/episodes", content);
 
                         if (response.IsSuccessStatusCode)
                         {
