@@ -1,5 +1,7 @@
 using FeatherPod.Cli.Commands;
-using FeatherPod.Cli.Settings;
+using FeatherPod.Cli.Commands.Episode;
+using FeatherPod.Cli.Commands.Icon;
+using FeatherPod.Cli.Commands.User;
 using Spectre.Console.Cli;
 
 namespace FeatherPod.Cli;
@@ -20,7 +22,7 @@ internal class Program
             {
                 episode.SetDescription("Episode management commands");
 
-                episode.AddCommand<EpisodePushCommand>("push")
+                episode.AddCommand<PushCommand>("push")
                     .WithDescription("Upload episode(s) to the podcast feed")
                     .WithExample("episode", "push", "episode.mp3", "--title", "\"My Episode\"")
                     .WithExample("episode", "push", "*.mp3", "-x")
@@ -31,19 +33,49 @@ internal class Program
             {
                 icon.SetDescription("Icon management commands");
 
-                icon.AddCommand<IconSetCommand>("set")
+                icon.AddCommand<SetCommand>("set")
                     .WithDescription("Upload/replace feed icon")
                     .WithExample("icon", "set", "icon.png", "--feed", "my-podcast")
                     .WithExample("icon", "set", "artwork.jpg");
 
-                icon.AddCommand<IconUnsetCommand>("unset")
+                icon.AddCommand<UnsetCommand>("unset")
                     .WithDescription("Remove feed icon")
                     .WithExample("icon", "unset", "--feed", "my-podcast")
                     .WithExample("icon", "unset");
             });
 
+            config.AddBranch("user", user =>
+            {
+                user.SetDescription("User management commands (Admin only)");
+
+                user.AddCommand<CreateCommand>("create")
+                    .WithDescription("Create a new user")
+                    .WithExample("user", "create", "john", "--name", "\"John Doe\"", "--email", "john@example.com", "--role", "Admin")
+                    .WithExample("user", "create", "alice", "--role", "FeedOwner", "--feeds", "podcast1,podcast2");
+
+                user.AddCommand<ListCommand>("list")
+                    .WithDescription("List all users")
+                    .WithExample("user", "list");
+
+                user.AddCommand<DeleteCommand>("delete")
+                    .WithDescription("Delete a user")
+                    .WithExample("user", "delete", "john");
+
+                user.AddCommand<GrantCommand>("grant")
+                    .WithDescription("Grant feed ownership to a user")
+                    .WithExample("user", "grant", "alice", "my-podcast");
+
+                user.AddCommand<RevokeCommand>("revoke")
+                    .WithDescription("Revoke feed ownership from a user")
+                    .WithExample("user", "revoke", "alice", "my-podcast");
+
+                user.AddCommand<RotateKeyCommand>("rotate-key")
+                    .WithDescription("Regenerate a user's API key")
+                    .WithExample("user", "rotate-key", "john");
+            });
+
             // Alias for backward compatibility
-            config.AddCommand<EpisodePushCommand>("push")
+            config.AddCommand<PushCommand>("push")
                 .WithDescription("Upload episode(s) to the podcast feed (alias for 'episode push')")
                 .WithExample("push", "episode.mp3", "--title", "\"My Episode\"")
                 .WithExample("push", "*.mp3", "-x")

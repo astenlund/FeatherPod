@@ -1,14 +1,14 @@
 using FeatherPod.Cli.Infrastructure;
-using FeatherPod.Cli.Settings;
+using FeatherPod.Cli.Settings.Episode;
 using FeatherPod.Models;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
-namespace FeatherPod.Cli.Commands;
+namespace FeatherPod.Cli.Commands.Episode;
 
-internal sealed class EpisodePushCommand : AsyncCommand<EpisodePushSettings>
+internal sealed class PushCommand : AsyncCommand<PushSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, EpisodePushSettings settings, CancellationToken cancellationToken)
+    public override async Task<int> ExecuteAsync(CommandContext context, PushSettings settings, CancellationToken cancellationToken)
     {
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("[bold]FeatherPod Episode Upload[/]");
