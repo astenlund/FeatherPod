@@ -8,6 +8,10 @@ public interface IBlobStorageService
     Task<string?> LoadFeedsConfigAsync();
     Task SaveFeedsConfigAsync(string feedsJson);
 
+    // User operations
+    Task<string?> LoadUsersConfigAsync();
+    Task SaveUsersConfigAsync(string usersJson);
+
     // Audio file operations (feed-aware)
     Task UploadAudioAsync(string feedId, string fileName, string filePath);
     Task<Stream> DownloadAudioAsync(string feedId, string fileName);

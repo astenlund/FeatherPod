@@ -44,8 +44,6 @@ public class BlobStorageService : IBlobStorageService
         _logger.LogInformation("Blob storage initialized. Container: {Container}", _containerName);
     }
 
-    // Feed operations
-
     public async Task<string?> LoadFeedsConfigAsync()
     {
         var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
@@ -71,7 +69,31 @@ public class BlobStorageService : IBlobStorageService
         _logger.LogInformation("Saved feeds configuration to blob storage");
     }
 
-    // Audio file operations (feed-aware)
+    public async Task<string?> LoadUsersConfigAsync()
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+        var blobClient = containerClient.GetBlobClient("users.json");
+
+        if (!await blobClient.ExistsAsync())
+        {
+            return null;
+        }
+
+        var response = await blobClient.DownloadContentAsync();
+
+        return response.Value.Content.ToString();
+    }
+
+    public async Task SaveUsersConfigAsync(string usersJson)
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+        var blobClient = containerClient.GetBlobClient("users.json");
+
+        await using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(usersJson));
+        await blobClient.UploadAsync(stream, overwrite: true);
+
+        _logger.LogInformation("Saved users configuration to blob storage");
+    }
 
     public async Task UploadAudioAsync(string feedId, string fileName, string filePath)
     {
@@ -153,8 +175,6 @@ public class BlobStorageService : IBlobStorageService
         return tempPath;
     }
 
-    // Icon operations
-
     public async Task UploadIconAsync(string feedId, string filePath)
     {
         var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
@@ -196,8 +216,6 @@ public class BlobStorageService : IBlobStorageService
         _logger.LogInformation("Deleted icon for feed: {FeedId}", feedId);
     }
 
-    // Episode metadata operations (feed-aware)
-
     public async Task SaveEpisodeMetadataAsync(string feedId, string metadataJson)
     {
         var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
@@ -224,8 +242,6 @@ public class BlobStorageService : IBlobStorageService
         var response = await blobClient.DownloadContentAsync();
         return response.Value.Content.ToString();
     }
-
-    // Feed management operations
 
     public async Task RenameFeedAsync(string oldFeedId, string newFeedId)
     {
