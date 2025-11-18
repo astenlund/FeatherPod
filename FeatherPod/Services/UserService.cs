@@ -13,12 +13,14 @@ public sealed class UserService : IUserService, IDisposable
 {
     private readonly IBlobStorageService _blobStorage;
     private readonly ILogger<UserService> _logger;
+    private readonly IConfiguration _configuration;
     private readonly SemaphoreSlim _lock = new(1, 1);
     private UsersMetadata _usersMetadata = new();
 
-    public UserService(IBlobStorageService blobStorage, ILogger<UserService> logger)
+    public UserService(IBlobStorageService blobStorage, IConfiguration configuration, ILogger<UserService> logger)
     {
         _blobStorage = blobStorage;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -35,8 +37,42 @@ public sealed class UserService : IUserService, IDisposable
             }
             else
             {
-                _logger.LogInformation("No users.json found in blob storage. Starting with empty user list.");
-                _usersMetadata = new();
+                _logger.LogInformation("No users.json found in blob storage.");
+
+                // Check for legacy API key to migrate
+                var legacyApiKey = _configuration["ApiKey"];
+                if (!string.IsNullOrEmpty(legacyApiKey))
+                {
+                    _logger.LogWarning("Legacy API key detected. Migrating to user-based authentication...");
+
+                    // Create admin user with legacy API key
+                    var adminUser = new User
+                    {
+                        Id = "admin",
+                        Name = "Administrator",
+                        Email = "admin@featherpod.local",
+                        Role = UserRole.Admin,
+                        ApiKeyHash = HashApiKey(legacyApiKey),
+                        OwnedFeeds = [],
+                        CreatedAt = DateTime.UtcNow,
+                        IsActive = true
+                    };
+
+                    _usersMetadata = new()
+                    {
+                        Users = [adminUser]
+                    };
+
+                    await SaveUsersAsync();
+
+                    _logger.LogWarning("Migrated legacy API key to admin user 'admin'. " +
+                        "The existing API key will continue to work, but consider rotating to a new key using the user management API.");
+                }
+                else
+                {
+                    _logger.LogInformation("No legacy API key found. Starting with empty user list.");
+                    _usersMetadata = new();
+                }
             }
         }
         finally
