@@ -242,6 +242,10 @@ FeatherPod includes a command-line tool for managing episodes, icons, and users:
 featherpod-cli episode push *.mp3 -f my-podcast -x  # -x extracts date from file before normalization
 featherpod-cli push episode.mp3 --title "Episode Title" --description "Full description" --summary "Short summary"  # Alias
 
+# Move/copy episodes between feeds
+featherpod-cli episode move --from feed1 --to feed2 --episode "Episode*"  # Pattern matching
+featherpod-cli episode copy --from feed1 --to feed2  # Interactive multi-select
+
 # Icon management
 featherpod-cli icon set icon.png -f my-podcast
 featherpod-cli icon unset -f my-podcast

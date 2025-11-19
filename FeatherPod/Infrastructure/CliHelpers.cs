@@ -950,4 +950,150 @@ internal static class CliHelpers
             ? $"{(int)duration.TotalHours}:{duration.Minutes:D2}:{duration.Seconds:D2}"
             : $"{duration.Minutes}:{duration.Seconds:D2}";
     }
+
+    // ============================================================================
+    // Episode Move/Copy Helpers
+    // ============================================================================
+
+    internal static async Task<List<Episode>?> GetEpisodesAsync(HttpClient httpClient, string feedId)
+    {
+        try
+        {
+            var response = await httpClient.GetAsync($"/api/feeds/{feedId}/episodes");
+
+            if (!response.IsSuccessStatusCode)
+            {
+                AnsiConsole.MarkupLine($"[red]Error:[/] Failed to fetch episodes from feed '{feedId}'");
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            var episodes = JsonSerializer.Deserialize<List<Episode>>(json, JsonSerializerOptions);
+            return episodes;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error fetching episodes:[/] {ex.Message}");
+            return null;
+        }
+    }
+
+    internal static async Task<bool> MoveEpisodeAsync(HttpClient httpClient, string fromFeed, string episodeId, string toFeed)
+    {
+        try
+        {
+            var requestBody = new { targetFeedId = toFeed };
+            var json = JsonSerializer.Serialize(requestBody);
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+            var response = await httpClient.PostAsync($"/api/feeds/{fromFeed}/episodes/{episodeId}/move", content);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorJson = await response.Content.ReadAsStringAsync();
+                var errorObj = JsonSerializer.Deserialize<JsonElement>(errorJson);
+                var errorMsg = errorObj.TryGetProperty("error", out var err) ? err.GetString() : "Unknown error";
+                AnsiConsole.MarkupLine($"[red]Error:[/] {errorMsg}");
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error moving episode:[/] {ex.Message}");
+            return false;
+        }
+    }
+
+    internal static async Task<bool> CopyEpisodeAsync(HttpClient httpClient, string fromFeed, string episodeId, string toFeed)
+    {
+        try
+        {
+            var requestBody = new { targetFeedId = toFeed };
+            var json = JsonSerializer.Serialize(requestBody);
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+            var response = await httpClient.PostAsync($"/api/feeds/{fromFeed}/episodes/{episodeId}/copy", content);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorJson = await response.Content.ReadAsStringAsync();
+                var errorObj = JsonSerializer.Deserialize<JsonElement>(errorJson);
+                var errorMsg = errorObj.TryGetProperty("error", out var err) ? err.GetString() : "Unknown error";
+                AnsiConsole.MarkupLine($"[red]Error:[/] {errorMsg}");
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error copying episode:[/] {ex.Message}");
+            return false;
+        }
+    }
+
+    internal static List<Episode> SelectEpisodesMulti(List<Episode> episodes)
+    {
+        if (episodes.Count == 0)
+        {
+            return [];
+        }
+
+        var prompt = new MultiSelectionPrompt<Episode>()
+            .Title("Select episodes:")
+            .PageSize(10)
+            .Required()
+            .MoreChoicesText("[grey](Move up/down for more)[/]")
+            .InstructionsText("[grey]([blue]Space[/] to toggle, [green]Enter[/] to confirm)[/]")
+            .UseConverter(ep => $"[grey]{ep.PublishedDate:yyyy-MM-dd}[/] {Markup.Escape(ep.Title)}")
+            .AddChoices(episodes);
+
+        return AnsiConsole.Prompt(prompt);
+    }
+
+    internal static List<Episode> MatchEpisodesByPattern(List<Episode> episodes, string pattern)
+    {
+        // Try exact ID match first
+        var exactMatch = episodes.FirstOrDefault(e => e.Id == pattern);
+        if (exactMatch != null) return [exactMatch];
+
+        // Wildcard match on filename or title (case-insensitive)
+        if (pattern == "*") return episodes;
+
+        var lower = pattern.ToLower();
+
+        // Contains pattern: *text*
+        if (pattern.StartsWith("*") && pattern.EndsWith("*"))
+        {
+            var contains = lower.Trim('*');
+            return episodes.Where(e =>
+                e.FileName.ToLower().Contains(contains) ||
+                e.Title.ToLower().Contains(contains)).ToList();
+        }
+
+        // Prefix pattern: text*
+        if (pattern.EndsWith("*"))
+        {
+            var prefix = lower[..^1];
+            return episodes.Where(e =>
+                e.FileName.ToLower().StartsWith(prefix) ||
+                e.Title.ToLower().StartsWith(prefix)).ToList();
+        }
+
+        // Suffix pattern: *text
+        if (pattern.StartsWith("*"))
+        {
+            var suffix = lower[1..];
+            return episodes.Where(e =>
+                e.FileName.ToLower().EndsWith(suffix) ||
+                e.Title.ToLower().EndsWith(suffix)).ToList();
+        }
+
+        // Literal match (no wildcards) - match filename or title
+        return episodes.Where(e =>
+            e.FileName.Equals(pattern, StringComparison.OrdinalIgnoreCase) ||
+            e.Title.Equals(pattern, StringComparison.OrdinalIgnoreCase)).ToList();
+    }
 }
