@@ -1,3 +1,4 @@
+using System.Reflection;
 using FeatherPod.Commands;
 using FeatherPod.Commands.Episode;
 using FeatherPod.Commands.Icon;
@@ -24,11 +25,21 @@ internal class Program
             {
                 episode.SetDescription("Episode management commands");
 
+                episode.AddCommand<ListCommand>("list")
+                    .WithDescription("List episodes in a feed")
+                    .WithExample("episode", "list", "-f", "my-podcast")
+                    .WithExample("episode", "list");
+
                 episode.AddCommand<PushCommand>("push")
                     .WithDescription("Upload episode(s) to the podcast feed")
                     .WithExample("episode", "push", "episode.mp3", "--title", "\"My Episode\"")
                     .WithExample("episode", "push", "*.mp3", "-x")
                     .WithExample("episode", "push", "ep1.mp3,ep2.mp3", "-e", "Test");
+
+                episode.AddCommand<DeleteCommand>("delete")
+                    .WithDescription("Delete an episode")
+                    .WithExample("episode", "delete", "abc123", "-f", "my-podcast")
+                    .WithExample("episode", "delete", "-f", "my-podcast");
 
                 episode.AddCommand<MoveCommand>("move")
                     .WithDescription("Move episode(s) from one feed to another")
@@ -116,6 +127,12 @@ internal class Program
                     .WithExample("feed", "delete", "my-podcast", "--force");
             });
 
+            // Version command
+            config.AddCommand<VersionCommand>("version")
+                .WithDescription("Show CLI and server version information")
+                .WithExample("version")
+                .WithExample("version", "-e", "Test");
+
             // Alias for backward compatibility
             config.AddCommand<PushCommand>("push")
                 .WithDescription("Upload episode(s) to the podcast feed (alias for 'episode push')")
@@ -124,6 +141,10 @@ internal class Program
                 .WithExample("push", "ep1.mp3,ep2.mp3", "-e", "Test");
 
             config.SetApplicationName("featherpod-cli");
+
+            var versionAttribute = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+
+            config.SetApplicationVersion(versionAttribute?.InformationalVersion ?? "0.1.0");
         });
 
         // If no command specified, run interactive mode
