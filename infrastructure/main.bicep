@@ -64,10 +64,6 @@ param podcastLanguage string = 'en-us'
 @description('Podcast category')
 param podcastCategory string
 
-@description('API key for management endpoints (leave empty to set manually later)')
-@secure()
-param apiKey string = ''
-
 // Storage Account
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
@@ -142,7 +138,6 @@ resource appServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
   properties: {
     Azure__AccountName: storageAccountName
     Azure__ContainerName: containerName
-    ApiKey: apiKey
     Podcast__Title: podcastTitle
     Podcast__Description: podcastDescription
     Podcast__Author: podcastAuthor
