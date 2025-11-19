@@ -126,6 +126,7 @@ resource appService 'Microsoft.Web/sites@2023-01-01' = {
     httpsOnly: true
     siteConfig: {
       linuxFxVersion: dotnetVersion
+      appCommandLine: 'dotnet FeatherPod.Server.dll'
       alwaysOn: appServicePlanSku != 'F1' // AlwaysOn not supported on F1
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
