@@ -10,9 +10,9 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 - **Audio normalization** - Automatic loudness normalization (-16 LUFS) via FFmpeg
 - **Azure Blob Storage** - Scalable cloud storage for audio files
 - **RSS podcast feeds** - iTunes spec compatible with per-feed configuration
-- **REST API** - Comprehensive API with `/api` prefix for consistency
+- **CLI tool** - Command-line interface for episode, icon, feed, and user management
+- **REST API** - REST API for management (consumed by CLI tool)
 - **Version tracking** - Git SHA embedded in binaries and available via `/api/version`
-- **CLI tool** - Command-line interface for episode, icon, and user management
 - **Hash-based episode IDs** - Preserves play progress; re-uploading same file updates metadata
 - **Cross-feed operations** - Move or copy episodes between feeds
 - **Managed Identity** - Secure Azure authentication without secrets
@@ -53,13 +53,15 @@ The development configuration is already set up to use Azurite.
 **Deploy infrastructure with Bicep:**
 ```bash
 az login
-az group create --name featherpod-rg --location swedencentral
+az group create --name <your-resource-group> --location swedencentral
 
 az deployment group create \
-  --resource-group featherpod-rg \
+  --resource-group <your-resource-group> \
   --template-file infrastructure/main.bicep \
   --parameters infrastructure/parameters.json
 ```
+
+> **Note:** You'll need to choose unique names for your resources (resource group, storage account, app service) in `parameters.json`. Azure resource names must be globally unique.
 
 This creates: Storage Account, blob containers, App Service, Managed Identity, and RBAC.
 
@@ -74,12 +76,12 @@ This creates: Storage Account, blob containers, App Service, Managed Identity, a
 
 **Subscribe in your podcast app:**
 ```
-https://your-app-name.azurewebsites.net/{feedId}/feed.xml
+https://<your-app-name>.azurewebsites.net/{feedId}/feed.xml
 ```
 
 ## Development Workflow
 
-Pull requests are automatically deployed to an isolated test environment (`featherpod-test.azurewebsites.net`) where you can validate changes before merging to production. The GitHub Actions workflow:
+Pull requests are automatically deployed to an isolated test environment where you can validate changes before promoting to production. The GitHub Actions workflow:
 
 1. Builds and deploys PR changes to test environment
 2. Comments on PR with test URLs
@@ -93,20 +95,20 @@ Pull requests are automatically deployed to an isolated test environment (`feath
 
 ```bash
 # Create a feed
-curl -X POST https://your-app.azurewebsites.net/api/feeds \
-  -H "X-API-Key: your-api-key" \
+curl -X POST https://<your-app>.azurewebsites.net/api/feeds \
+  -H "X-API-Key: <your-api-key>" \
   -H "Content-Type: application/json" \
   -d '{"id":"my-podcast","title":"My Podcast","author":"Your Name",...}'
 
 # List all feeds
-curl https://your-app.azurewebsites.net/api/feeds
+curl https://<your-app>.azurewebsites.net/api/feeds
 ```
 
 ### Adding Episodes
 
 ```bash
-curl -X POST https://your-app.azurewebsites.net/api/feeds/{feedId}/episodes \
-  -H "X-API-Key: your-api-key" \
+curl -X POST https://<your-app>.azurewebsites.net/api/feeds/{feedId}/episodes \
+  -H "X-API-Key: <your-api-key>" \
   -F "file=@audio.mp3" \
   -F "title=Episode Title" \
   -F "description=Full episode description for RSS" \
@@ -121,33 +123,33 @@ curl -X POST https://your-app.azurewebsites.net/api/feeds/{feedId}/episodes \
 ### Removing Episodes
 
 ```bash
-curl -X DELETE https://your-app.azurewebsites.net/api/feeds/{feedId}/episodes/{episode-id} \
-  -H "X-API-Key: your-api-key"
+curl -X DELETE https://<your-app>.azurewebsites.net/api/feeds/{feedId}/episodes/{episode-id} \
+  -H "X-API-Key: <your-api-key>"
 ```
 
 ### Listing Episodes
 
 ```bash
-curl https://your-app.azurewebsites.net/api/feeds/{feedId}/episodes \
-  -H "X-API-Key: your-api-key"
+curl https://<your-app>.azurewebsites.net/api/feeds/{feedId}/episodes \
+  -H "X-API-Key: <your-api-key>"
 ```
 
 ### Managing Users (Admin only)
 
 ```bash
 # Create user
-curl -X POST https://your-app.azurewebsites.net/api/users \
-  -H "X-API-Key: admin-api-key" \
+curl -X POST https://<your-app>.azurewebsites.net/api/users \
+  -H "X-API-Key: <admin-api-key>" \
   -H "Content-Type: application/json" \
   -d '{"id":"user123","name":"John Doe","email":"john@example.com","role":"FeedOwner","ownedFeeds":["my-podcast"]}'
 
 # List users
-curl https://your-app.azurewebsites.net/api/users \
-  -H "X-API-Key: admin-api-key"
+curl https://<your-app>.azurewebsites.net/api/users \
+  -H "X-API-Key: <admin-api-key>"
 
 # Grant feed ownership
-curl -X POST https://your-app.azurewebsites.net/api/users/{userId}/feeds \
-  -H "X-API-Key: admin-api-key" \
+curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
+  -H "X-API-Key: <admin-api-key>" \
   -H "Content-Type: application/json" \
   -d '{"feedId":"my-podcast"}'
 ```
@@ -216,55 +218,67 @@ curl -X POST https://your-app.azurewebsites.net/api/users/{userId}/feeds \
 ```json
 {
   "Azure": {
-    "AccountName": "your-storage-account",
-    "ContainerName": "featherpod"
+    "AccountName": "<your-storage-account>",
+    "ContainerName": "<your-container>"
   },
   "Podcast": {
     "Title": "My Podcast",
     "Author": "Your Name",
     "Email": "your@email.com",
-    "BaseUrl": "https://your-app.azurewebsites.net",
-    "ImageUrl": "https://your-app.azurewebsites.net/icon.png"
+    "BaseUrl": "https://<your-app>.azurewebsites.net",
+    "ImageUrl": "https://<your-app>.azurewebsites.net/icon.png"
   }
 }
 ```
 
-**Podcast icon:** Upload via API (`POST /api/feeds/{feedId}/icon`) or CLI (`featherpod-cli icon set icon.png`)
+**Podcast icon:** Upload via API (`POST /api/feeds/{feedId}/icon`) or CLI (`FeatherPod icon set icon.png`)
 
 **Additional options:** See configuration files for published date behavior, language, category, and more.
 
 ## CLI Tool
 
-FeatherPod includes a command-line tool for managing episodes, icons, and users:
+FeatherPod includes a command-line tool for managing feeds, episodes, icons, and users:
 
 ```bash
 # Episode management
-featherpod-cli episode push *.mp3 -f my-podcast -x  # -x extracts date from file before normalization
-featherpod-cli push episode.mp3 --title "Episode Title" --description "Full description" --summary "Short summary"  # Alias
+FeatherPod episode push *.mp3 -f my-podcast -x  # -x extracts date from file before normalization
+FeatherPod episode list -f my-podcast           # List episodes
+FeatherPod episode delete -f my-podcast         # Interactive delete
+FeatherPod episode delete abc123 -f my-podcast --force  # Delete by ID
+FeatherPod push episode.mp3 --title "Episode Title" --description "Full description"  # Alias
 
 # Move/copy episodes between feeds
-featherpod-cli episode move --from feed1 --to feed2 --episode "Episode*"  # Pattern matching
-featherpod-cli episode copy --from feed1 --to feed2  # Interactive multi-select
+FeatherPod episode move --from feed1 --to feed2 --episode "Episode*"  # Pattern matching
+FeatherPod episode copy --from feed1 --to feed2  # Interactive multi-select
+
+# Feed management
+FeatherPod feed list
+FeatherPod feed create --id my-podcast --title "My Podcast" --author "John Doe"
+FeatherPod feed update my-podcast --title "New Title"
+FeatherPod feed rename old-id new-id
+FeatherPod feed delete my-podcast --force
 
 # Icon management
-featherpod-cli icon set icon.png -f my-podcast
-featherpod-cli icon unset -f my-podcast
+FeatherPod icon set icon.png -f my-podcast
+FeatherPod icon unset -f my-podcast
 
 # User management (Admin only)
-featherpod-cli user create
-featherpod-cli user list
-featherpod-cli user delete
-featherpod-cli user regenerate-key
-featherpod-cli user grant-feed
-featherpod-cli user revoke-feed
+FeatherPod user create
+FeatherPod user list
+FeatherPod user delete
+FeatherPod user rotate-key
+FeatherPod user grant
+FeatherPod user revoke
 
-# Environment selection
-featherpod-cli -e Dev user list  # Target dev environment
-featherpod-cli -e Test user list # Target test environment
-# (Defaults to Prod if not specified)
+# Version info
+FeatherPod version           # Shows CLI and server versions
+FeatherPod --version         # Shows CLI version
+
+# Environment selection (defaults to Prod)
+FeatherPod -e Test feed list
 
 # Interactive mode (default)
-featherpod-cli
+FeatherPod
 ```
 
 Configure API endpoint and key in `appsettings.{Environment}.Local.json` (gitignored).
@@ -278,7 +292,7 @@ dotnet test           # Run tests (starts integration tests if Azurite is runnin
 
 ## Architecture
 
-- **.NET 9 Minimal API** - Lightweight HTTP endpoints
+- **.NET 9 ASP.NET Core** - Controllers-based REST API
 - **Multi-feed architecture** - Single instance hosts multiple isolated podcast feeds
 - **Role-based access control** - Admin and FeedOwner roles with per-user API keys and feed ownership
 - **Azure Blob Storage** - Cloud-native file storage with managed identity support
