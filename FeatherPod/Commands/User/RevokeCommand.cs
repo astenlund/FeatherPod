@@ -13,10 +13,10 @@ internal sealed class RevokeCommand : AsyncCommand<RevokeSettings>
         AnsiConsole.MarkupLine("[bold]FeatherPod User Management - Revoke Feed Ownership[/]");
         AnsiConsole.WriteLine();
 
-        var env = CliHelpers.GetEnvironment(settings.Environment);
+        var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
 
-        var (httpClient, _) = await CliHelpers.SetupHttpClientAsync(env);
+        var (httpClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
         if (httpClient == null) return 1;
 
         var userId = settings.UserId.Trim();

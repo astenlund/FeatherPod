@@ -14,14 +14,14 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         AnsiConsole.MarkupLine("[bold]FeatherPod Episode Manager[/]");
         AnsiConsole.WriteLine();
 
-        var env = CliHelpers.GetEnvironment(settings.Environment, useDefault: true);
+        var env = EnvironmentHelpers.GetEnvironment(settings.Environment, useDefault: true);
         if (env == null) return 1;
 
-        var (httpClient, _) = await CliHelpers.SetupHttpClientAsync(env);
+        var (httpClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
         if (httpClient == null) return 1;
 
         // Select initial feed
-        var currentFeed = await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+        var currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
         if (currentFeed == null)
         {
             AnsiConsole.MarkupLine("[yellow]No feeds available. Create one using 'M: Manage Feeds'.[/]");
@@ -43,7 +43,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     }
                     else
                     {
-                        await CliHelpers.ListEpisodesAsync(httpClient, currentFeed);
+                        await EpisodeHelpers.ListEpisodesAsync(httpClient, currentFeed);
                     }
                     break;
 
@@ -55,12 +55,12 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     }
                     else
                     {
-                        await CliHelpers.DeleteEpisodeAsync(httpClient, currentFeed);
+                        await EpisodeHelpers.DeleteEpisodeAsync(httpClient, currentFeed);
                     }
                     break;
 
                 case MenuChoice.SwitchFeed:
-                    var newFeed = await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+                    var newFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
                     if (newFeed != null)
                     {
                         currentFeed = newFeed;
@@ -75,7 +75,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     break;
 
                 case MenuChoice.ManageFeeds:
-                    var result = await CliHelpers.ManageFeedsAsync(httpClient);
+                    var result = await FeedHelpers.ManageFeedsAsync(httpClient);
 
                     // Handle created feed
                     if (result.CreatedFeed != null)
@@ -101,7 +101,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         // If we were on the deleted feed, clear it and prompt for a new one
                         if (currentFeed?.Id == result.DeletedFeedId)
                         {
-                            currentFeed = await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, contextMessage: "Previous feed was deleted.");
+                            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, contextMessage: "Previous feed was deleted.");
                         }
                     }
                     else
@@ -109,15 +109,15 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         // User cancelled or error - refresh current feed
                         if (currentFeed != null)
                         {
-                            var feeds = await CliHelpers.GetFeedsAsync(httpClient);
+                            var feeds = await FeedHelpers.GetFeedsAsync(httpClient);
                             currentFeed = feeds.FirstOrDefault(f => f.Id == currentFeed.Id);
                         }
-                        currentFeed ??= await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                        currentFeed ??= await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
                     }
                     break;
 
                 case MenuChoice.SwitchEnvironment:
-                    var newEnv = CliHelpers.SelectEnvironment();
+                    var newEnv = EnvironmentHelpers.SelectEnvironment();
                     if (newEnv != null && newEnv != env)
                     {
                         env = newEnv;
@@ -127,12 +127,12 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         AnsiConsole.MarkupLine($"Environment: [cyan]{env}[/]");
                         AnsiConsole.WriteLine();
 
-                        var (newClient, _) = await CliHelpers.SetupHttpClientAsync(env);
+                        var (newClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
                         if (newClient != null)
                         {
                             httpClient = newClient;
                             // Select feed for new environment
-                            currentFeed = await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
                         }
                     }
                     else if (newEnv != null)

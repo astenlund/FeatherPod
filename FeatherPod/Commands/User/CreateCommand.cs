@@ -15,10 +15,10 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
         AnsiConsole.MarkupLine("[bold]FeatherPod User Management - Create User[/]");
         AnsiConsole.WriteLine();
 
-        var env = CliHelpers.GetEnvironment(settings.Environment);
+        var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
 
-        var (httpClient, _) = await CliHelpers.SetupHttpClientAsync(env);
+        var (httpClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
         if (httpClient == null) return 1;
 
         // Validate user ID
