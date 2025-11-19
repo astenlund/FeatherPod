@@ -23,10 +23,6 @@ param appServicePlanSku string = 'F1'
 @description('.NET runtime version')
 param dotnetVersion string = 'DOTNETCORE|9.0'
 
-@description('API key for test environment (leave empty to set via GitHub secret)')
-@secure()
-param apiKey string = ''
-
 @description('Podcast title for test environment')
 param podcastTitle string = 'FeatherPod Test'
 
@@ -92,7 +88,6 @@ resource testAppServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
   properties: {
     Azure__AccountName: storageAccountName
     Azure__ContainerName: testContainerName
-    ApiKey: apiKey
     Podcast__Title: podcastTitle
     Podcast__Description: podcastDescription
     Podcast__Author: podcastAuthor
