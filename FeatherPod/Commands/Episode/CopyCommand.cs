@@ -15,17 +15,17 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
         AnsiConsole.MarkupLine("[bold]FeatherPod Episode Copy[/]");
         AnsiConsole.WriteLine();
 
-        var env = CliHelpers.GetEnvironment(settings.Environment);
+        var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
 
-        var (httpClient, configuration) = await CliHelpers.SetupHttpClientAsync(env);
+        var (httpClient, configuration) = await EnvironmentHelpers.SetupHttpClientAsync(env);
         if (httpClient == null || configuration == null) return 1;
 
         // Determine source feed
         FeedConfig? sourceFeed;
         if (!string.IsNullOrEmpty(settings.FromFeed))
         {
-            sourceFeed = await CliHelpers.GetFeedByIdAsync(httpClient, settings.FromFeed);
+            sourceFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FromFeed);
             if (sourceFeed == null)
             {
                 AnsiConsole.MarkupLine($"[red]Error:[/] Source feed '{settings.FromFeed}' not found.");
@@ -34,7 +34,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
         }
         else
         {
-            sourceFeed = await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, contextMessage: "Select source feed:");
+            sourceFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, contextMessage: "Select source feed:");
             if (sourceFeed == null)
             {
                 AnsiConsole.MarkupLine("[red]Error:[/] No feeds available.");
@@ -43,7 +43,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
         }
 
         // Get episodes from source feed
-        var episodes = await CliHelpers.GetEpisodesAsync(httpClient, sourceFeed.Id);
+        var episodes = await EpisodeHelpers.GetEpisodesAsync(httpClient, sourceFeed.Id);
         if (episodes == null || episodes.Count == 0)
         {
             AnsiConsole.MarkupLine($"[yellow]Feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]' has no episodes.[/]");
@@ -55,7 +55,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
         if (!string.IsNullOrEmpty(settings.Episode))
         {
             // CLI mode: use pattern matching
-            episodesToCopy = CliHelpers.MatchEpisodesByPattern(episodes, settings.Episode);
+            episodesToCopy = EpisodeHelpers.MatchEpisodesByPattern(episodes, settings.Episode);
             if (episodesToCopy.Count == 0)
             {
                 AnsiConsole.MarkupLine($"[red]Error:[/] No episodes match pattern '{settings.Episode}'");
@@ -68,7 +68,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
         else
         {
             // Interactive mode: multi-select
-            episodesToCopy = CliHelpers.SelectEpisodesMulti(episodes);
+            episodesToCopy = EpisodeHelpers.SelectEpisodesMulti(episodes);
             if (episodesToCopy.Count == 0)
             {
                 AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
@@ -81,7 +81,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
         FeedConfig? targetFeed;
         if (!string.IsNullOrEmpty(settings.ToFeed))
         {
-            targetFeed = await CliHelpers.GetFeedByIdAsync(httpClient, settings.ToFeed);
+            targetFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.ToFeed);
             if (targetFeed == null)
             {
                 AnsiConsole.MarkupLine($"[red]Error:[/] Target feed '{settings.ToFeed}' not found.");
@@ -91,7 +91,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
         else
         {
             // Get all feeds (can copy to same feed - creates duplicate)
-            var allFeeds = await CliHelpers.GetFeedsAsync(httpClient);
+            var allFeeds = await FeedHelpers.GetFeedsAsync(httpClient);
             if (allFeeds.Count == 0)
             {
                 AnsiConsole.MarkupLine("[red]Error:[/] No feeds available.");
@@ -154,7 +154,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
 
                 foreach (var episode in episodesToCopy)
                 {
-                    var success = await CliHelpers.CopyEpisodeAsync(httpClient, sourceFeed.Id, episode.Id, targetFeed.Id);
+                    var success = await EpisodeHelpers.CopyEpisodeAsync(httpClient, sourceFeed.Id, episode.Id, targetFeed.Id);
                     if (success)
                     {
                         successCount++;

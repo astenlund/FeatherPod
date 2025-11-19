@@ -14,17 +14,17 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         AnsiConsole.MarkupLine("[bold]FeatherPod Episode Upload[/]");
         AnsiConsole.WriteLine();
 
-        var env = CliHelpers.GetEnvironment(settings.Environment);
+        var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
 
-        var (httpClient, configuration) = await CliHelpers.SetupHttpClientAsync(env);
+        var (httpClient, configuration) = await EnvironmentHelpers.SetupHttpClientAsync(env);
         if (httpClient == null || configuration == null) return 1;
 
         // Select feed (use -f flag if provided, otherwise prompt user to select)
         FeedConfig? feed;
         if (!string.IsNullOrEmpty(settings.FeedId))
         {
-            feed = await CliHelpers.GetFeedByIdAsync(httpClient, settings.FeedId);
+            feed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FeedId);
             if (feed == null)
             {
                 AnsiConsole.MarkupLine($"[red]Error:[/] Feed '{settings.FeedId}' not found.");
@@ -33,7 +33,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         }
         else
         {
-            feed = await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+            feed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
             if (feed == null)
             {
                 AnsiConsole.MarkupLine("[red]Error:[/] No feeds available. Create a feed first.");
@@ -42,7 +42,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         }
 
         // Expand file patterns (wildcards and comma-separated lists)
-        var files = CliHelpers.ExpandFilePatterns(settings.Files);
+        var files = EpisodeHelpers.ExpandFilePatterns(settings.Files);
 
         if (files.Count == 0)
         {
@@ -144,7 +144,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
 
         foreach (var file in files)
         {
-            var success = await CliHelpers.UploadEpisodeAsync(httpClient, configuration, feed, file, effectiveSettings);
+            var success = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, feed, file, effectiveSettings);
             if (success)
                 successCount++;
             else

@@ -13,13 +13,13 @@ internal sealed class SetCommand : AsyncCommand<SetSettings>
         AnsiConsole.MarkupLine("[bold]FeatherPod Icon Upload[/]");
         AnsiConsole.WriteLine();
 
-        var env = CliHelpers.GetEnvironment(settings.Environment);
+        var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null)
         {
             return 1;
         }
 
-        var (httpClient, _) = await CliHelpers.SetupHttpClientAsync(env);
+        var (httpClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
         if (httpClient == null)
         {
             return 1;
@@ -45,8 +45,8 @@ internal sealed class SetCommand : AsyncCommand<SetSettings>
 
         // Select feed (use -f flag if provided, otherwise prompt user to select)
         var feed = !string.IsNullOrEmpty(settings.FeedId)
-            ? await CliHelpers.GetFeedByIdAsync(httpClient, settings.FeedId)
-            : await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+            ? await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FeedId)
+            : await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
 
         if (feed == null)
         {
@@ -58,7 +58,7 @@ internal sealed class SetCommand : AsyncCommand<SetSettings>
         }
 
         // Upload icon
-        var success = await CliHelpers.UploadIconAsync(httpClient, feed.Id, iconPath);
+        var success = await FeedHelpers.UploadIconAsync(httpClient, feed.Id, iconPath);
 
         AnsiConsole.WriteLine();
 

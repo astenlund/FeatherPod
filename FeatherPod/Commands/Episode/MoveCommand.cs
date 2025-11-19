@@ -15,17 +15,17 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
         AnsiConsole.MarkupLine("[bold]FeatherPod Episode Move[/]");
         AnsiConsole.WriteLine();
 
-        var env = CliHelpers.GetEnvironment(settings.Environment);
+        var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
 
-        var (httpClient, configuration) = await CliHelpers.SetupHttpClientAsync(env);
+        var (httpClient, configuration) = await EnvironmentHelpers.SetupHttpClientAsync(env);
         if (httpClient == null || configuration == null) return 1;
 
         // Determine source feed
         FeedConfig? sourceFeed;
         if (!string.IsNullOrEmpty(settings.FromFeed))
         {
-            sourceFeed = await CliHelpers.GetFeedByIdAsync(httpClient, settings.FromFeed);
+            sourceFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FromFeed);
             if (sourceFeed == null)
             {
                 AnsiConsole.MarkupLine($"[red]Error:[/] Source feed '{settings.FromFeed}' not found.");
@@ -34,7 +34,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
         }
         else
         {
-            sourceFeed = await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, contextMessage: "Select source feed:");
+            sourceFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, contextMessage: "Select source feed:");
             if (sourceFeed == null)
             {
                 AnsiConsole.MarkupLine("[red]Error:[/] No feeds available.");
@@ -43,7 +43,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
         }
 
         // Get episodes from source feed
-        var episodes = await CliHelpers.GetEpisodesAsync(httpClient, sourceFeed.Id);
+        var episodes = await EpisodeHelpers.GetEpisodesAsync(httpClient, sourceFeed.Id);
         if (episodes == null || episodes.Count == 0)
         {
             AnsiConsole.MarkupLine($"[yellow]Feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]' has no episodes.[/]");
@@ -55,7 +55,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
         if (!string.IsNullOrEmpty(settings.Episode))
         {
             // CLI mode: use pattern matching
-            episodesToMove = CliHelpers.MatchEpisodesByPattern(episodes, settings.Episode);
+            episodesToMove = EpisodeHelpers.MatchEpisodesByPattern(episodes, settings.Episode);
             if (episodesToMove.Count == 0)
             {
                 AnsiConsole.MarkupLine($"[red]Error:[/] No episodes match pattern '{settings.Episode}'");
@@ -68,7 +68,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
         else
         {
             // Interactive mode: multi-select
-            episodesToMove = CliHelpers.SelectEpisodesMulti(episodes);
+            episodesToMove = EpisodeHelpers.SelectEpisodesMulti(episodes);
             if (episodesToMove.Count == 0)
             {
                 AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
@@ -81,7 +81,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
         FeedConfig? targetFeed;
         if (!string.IsNullOrEmpty(settings.ToFeed))
         {
-            targetFeed = await CliHelpers.GetFeedByIdAsync(httpClient, settings.ToFeed);
+            targetFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.ToFeed);
             if (targetFeed == null)
             {
                 AnsiConsole.MarkupLine($"[red]Error:[/] Target feed '{settings.ToFeed}' not found.");
@@ -91,7 +91,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
         else
         {
             // Get all feeds except the source for selection
-            var allFeeds = await CliHelpers.GetFeedsAsync(httpClient);
+            var allFeeds = await FeedHelpers.GetFeedsAsync(httpClient);
             if (allFeeds.Count <= 1)
             {
                 AnsiConsole.MarkupLine("[red]Error:[/] No other feeds available. Create another feed first.");
@@ -164,7 +164,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
 
                 foreach (var episode in episodesToMove)
                 {
-                    var success = await CliHelpers.MoveEpisodeAsync(httpClient, sourceFeed.Id, episode.Id, targetFeed.Id);
+                    var success = await EpisodeHelpers.MoveEpisodeAsync(httpClient, sourceFeed.Id, episode.Id, targetFeed.Id);
                     if (success)
                     {
                         successCount++;

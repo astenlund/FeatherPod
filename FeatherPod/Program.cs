@@ -1,8 +1,10 @@
 using FeatherPod.Commands;
 using FeatherPod.Commands.Episode;
 using FeatherPod.Commands.Icon;
-using FeatherPod.Commands.User;
 using Spectre.Console.Cli;
+
+using FeedCommands = FeatherPod.Commands.Feed;
+using UserCommands = FeatherPod.Commands.User;
 
 namespace FeatherPod;
 
@@ -59,30 +61,59 @@ internal class Program
             {
                 user.SetDescription("User management commands (Admin only)");
 
-                user.AddCommand<CreateCommand>("create")
+                user.AddCommand<UserCommands.CreateCommand>("create")
                     .WithDescription("Create a new user")
                     .WithExample("user", "create", "john", "--name", "\"John Doe\"", "--email", "john@example.com", "--role", "Admin")
                     .WithExample("user", "create", "alice", "--role", "FeedOwner", "--feeds", "podcast1,podcast2");
 
-                user.AddCommand<ListCommand>("list")
+                user.AddCommand<UserCommands.ListCommand>("list")
                     .WithDescription("List all users")
                     .WithExample("user", "list");
 
-                user.AddCommand<DeleteCommand>("delete")
+                user.AddCommand<UserCommands.DeleteCommand>("delete")
                     .WithDescription("Delete a user")
                     .WithExample("user", "delete", "john");
 
-                user.AddCommand<GrantCommand>("grant")
+                user.AddCommand<UserCommands.GrantCommand>("grant")
                     .WithDescription("Grant feed ownership to a user")
                     .WithExample("user", "grant", "alice", "my-podcast");
 
-                user.AddCommand<RevokeCommand>("revoke")
+                user.AddCommand<UserCommands.RevokeCommand>("revoke")
                     .WithDescription("Revoke feed ownership from a user")
                     .WithExample("user", "revoke", "alice", "my-podcast");
 
-                user.AddCommand<RotateKeyCommand>("rotate-key")
+                user.AddCommand<UserCommands.RotateKeyCommand>("rotate-key")
                     .WithDescription("Regenerate a user's API key")
                     .WithExample("user", "rotate-key", "john");
+            });
+
+            config.AddBranch("feed", feed =>
+            {
+                feed.SetDescription("Feed management commands");
+
+                feed.AddCommand<FeedCommands.ListCommand>("list")
+                    .WithDescription("List all feeds")
+                    .WithExample("feed", "list");
+
+                feed.AddCommand<FeedCommands.CreateCommand>("create")
+                    .WithDescription("Create a new feed")
+                    .WithExample("feed", "create", "--id", "my-podcast", "--title", "\"My Podcast\"", "--author", "\"John Doe\"")
+                    .WithExample("feed", "create");
+
+                feed.AddCommand<FeedCommands.UpdateCommand>("update")
+                    .WithDescription("Update feed metadata")
+                    .WithExample("feed", "update", "my-podcast", "--title", "\"New Title\"")
+                    .WithExample("feed", "update", "--description", "\"New description\"");
+
+                feed.AddCommand<FeedCommands.RenameCommand>("rename")
+                    .WithDescription("Rename a feed ID")
+                    .WithExample("feed", "rename", "old-id", "new-id")
+                    .WithExample("feed", "rename");
+
+                feed.AddCommand<FeedCommands.DeleteCommand>("delete")
+                    .WithDescription("Delete a feed and all its episodes")
+                    .WithExample("feed", "delete", "my-podcast")
+                    .WithExample("feed", "delete", "my-podcast", "--force");
             });
 
             // Alias for backward compatibility

@@ -13,13 +13,13 @@ internal sealed class UnsetCommand : AsyncCommand<UnsetSettings>
         AnsiConsole.MarkupLine("[bold]FeatherPod Icon Removal[/]");
         AnsiConsole.WriteLine();
 
-        var env = CliHelpers.GetEnvironment(settings.Environment);
+        var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null)
         {
             return 1;
         }
 
-        var (httpClient, _) = await CliHelpers.SetupHttpClientAsync(env);
+        var (httpClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
         if (httpClient == null)
         {
             return 1;
@@ -27,8 +27,8 @@ internal sealed class UnsetCommand : AsyncCommand<UnsetSettings>
 
         // Select feed (use -f flag if provided, otherwise prompt user to select)
         var feed = !string.IsNullOrEmpty(settings.FeedId)
-            ? await CliHelpers.GetFeedByIdAsync(httpClient, settings.FeedId)
-            : await CliHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+            ? await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FeedId)
+            : await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
 
         if (feed == null)
         {
@@ -58,7 +58,7 @@ internal sealed class UnsetCommand : AsyncCommand<UnsetSettings>
         AnsiConsole.WriteLine();
 
         // Delete icon
-        var success = await CliHelpers.DeleteIconAsync(httpClient, feed.Id);
+        var success = await FeedHelpers.DeleteIconAsync(httpClient, feed.Id);
 
         AnsiConsole.WriteLine();
 
