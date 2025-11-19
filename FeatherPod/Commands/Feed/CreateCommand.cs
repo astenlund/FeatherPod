@@ -42,6 +42,7 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
 
         // Optional fields
         var description = settings.Description ?? AnsiConsole.Ask("Description (optional):", string.Empty);
+        var summary = settings.Summary ?? AnsiConsole.Ask("Summary (optional, defaults to description):", string.Empty);
         var email = settings.Email ?? AnsiConsole.Ask("Email (optional):", string.Empty);
         var language = settings.Language ?? AnsiConsole.Ask("Language:", "en");
         var category = settings.Category ?? AnsiConsole.Ask("Category (optional):", string.Empty);
@@ -51,6 +52,7 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
             Id = id.Trim(),
             Title = title.Trim(),
             Description = string.IsNullOrEmpty(description) ? null : description.Trim(),
+            Summary = string.IsNullOrEmpty(summary) ? null : summary.Trim(),
             Author = author.Trim(),
             Email = string.IsNullOrEmpty(email) ? null : email.Trim(),
             Language = language.Trim(),

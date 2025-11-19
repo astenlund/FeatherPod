@@ -39,7 +39,7 @@ public class RssFeedGenerator
         writer.WriteEndElement();
 
         writer.WriteStartElement("itunes", "summary", null);
-        writer.WriteString(feedConfig.Description ?? string.Empty);
+        writer.WriteString(feedConfig.Summary ?? feedConfig.Description ?? string.Empty);
         writer.WriteEndElement();
 
         writer.WriteStartElement("itunes", "owner", null);

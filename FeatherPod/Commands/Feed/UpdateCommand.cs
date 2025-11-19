@@ -50,6 +50,8 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
             updateFields["author"] = settings.Author.Trim();
         if (settings.Description != null)
             updateFields["description"] = settings.Description.Trim();
+        if (settings.Summary != null)
+            updateFields["summary"] = settings.Summary.Trim();
         if (settings.Email != null)
             updateFields["email"] = settings.Email.Trim();
         if (!string.IsNullOrWhiteSpace(settings.Language))

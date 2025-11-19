@@ -21,6 +21,10 @@ internal sealed class UpdateSettings : CommandSettings
     [Description("New feed description")]
     public string? Description { get; init; }
 
+    [CommandOption("-s|--summary <SUMMARY>")]
+    [Description("New short summary for iTunes")]
+    public string? Summary { get; init; }
+
     [CommandOption("--email <EMAIL>")]
     [Description("New author email")]
     public string? Email { get; init; }
