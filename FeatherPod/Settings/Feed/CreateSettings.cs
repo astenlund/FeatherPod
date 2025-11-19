@@ -5,7 +5,7 @@ namespace FeatherPod.Settings.Feed;
 
 internal sealed class CreateSettings : CommandSettings
 {
-    [CommandOption("-i|--id <ID>")]
+    [CommandOption("--id <ID>")]
     [Description("Feed ID (URL-friendly slug)")]
     public string? Id { get; init; }
 
@@ -21,7 +21,11 @@ internal sealed class CreateSettings : CommandSettings
     [Description("Feed description")]
     public string? Description { get; init; }
 
-    [CommandOption("--email <EMAIL>")]
+    [CommandOption("-s|--summary <SUMMARY>")]
+    [Description("Short summary for iTunes (defaults to description)")]
+    public string? Summary { get; init; }
+
+    [CommandOption("-m|--email <EMAIL>")]
     [Description("Author email")]
     public string? Email { get; init; }
 
@@ -33,7 +37,7 @@ internal sealed class CreateSettings : CommandSettings
     [Description("Podcast category")]
     public string? Category { get; init; }
 
-    [CommandOption("--icon <PATH>")]
+    [CommandOption("-i|--icon <PATH>")]
     [Description("Icon file path (PNG/JPEG)")]
     public string? IconPath { get; init; }
 
