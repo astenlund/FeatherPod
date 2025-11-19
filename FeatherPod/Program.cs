@@ -27,6 +27,17 @@ internal class Program
                     .WithExample("episode", "push", "episode.mp3", "--title", "\"My Episode\"")
                     .WithExample("episode", "push", "*.mp3", "-x")
                     .WithExample("episode", "push", "ep1.mp3,ep2.mp3", "-e", "Test");
+
+                episode.AddCommand<MoveCommand>("move")
+                    .WithDescription("Move episode(s) from one feed to another")
+                    .WithExample("episode", "move")
+                    .WithExample("episode", "move", "--from", "feed1", "--to", "feed2", "--episode", "abc123")
+                    .WithExample("episode", "move", "--from", "feed1", "--to", "feed2", "--episode", "*");
+
+                episode.AddCommand<CopyCommand>("copy")
+                    .WithDescription("Copy episode(s) from one feed to another")
+                    .WithExample("episode", "copy")
+                    .WithExample("episode", "copy", "--from", "feed1", "--to", "feed2", "--episode", "Episode*");
             });
 
             config.AddBranch("icon", icon =>
