@@ -76,6 +76,7 @@ resource testAppService 'Microsoft.Web/sites@2023-01-01' = {
     httpsOnly: true
     siteConfig: {
       linuxFxVersion: dotnetVersion
+      appCommandLine: 'dotnet FeatherPod.Server.dll'
       alwaysOn: false // F1 doesn't support AlwaysOn
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
