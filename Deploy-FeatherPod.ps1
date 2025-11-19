@@ -73,7 +73,7 @@ function Deploy-Environment {
     Write-Host "======================================`n" -ForegroundColor Magenta
 
     try {
-        Write-Host "Publishing FeatherPod..." -ForegroundColor Cyan
+        Write-Host "Publishing FeatherPod...`n" -ForegroundColor Cyan
         dotnet publish $projectPath -c Release -o $publishPath
         if ($LASTEXITCODE -ne 0) {
             throw "dotnet publish failed with exit code $LASTEXITCODE"
@@ -92,13 +92,13 @@ function Deploy-Environment {
             Pop-Location
         }
 
-        Write-Host "`nDeploying to Azure App Service..." -ForegroundColor Cyan
-        az webapp deploy --resource-group $ResourceGroup --name $AppName --src-path $zipPath --type zip
+        Write-Host "Deploying to Azure App Service...`n" -ForegroundColor Cyan
+        az webapp deploy --resource-group $ResourceGroup --name $AppName --src-path $zipPath --type zip --clean true
         if ($LASTEXITCODE -ne 0) {
             throw "az webapp deploy failed with exit code $LASTEXITCODE"
         }
 
-        Write-Host "`nDeployment successful!" -ForegroundColor Green
+        Write-Host "`nDeployment successful!`n" -ForegroundColor Green
         Write-Host "App URL: https://$AppName.azurewebsites.net" -ForegroundColor Yellow
         Write-Host "Feed URL: https://$AppName.azurewebsites.net/feed.xml" -ForegroundColor Yellow
     }
@@ -108,7 +108,7 @@ function Deploy-Environment {
     }
     finally {
         # Clean up
-        Write-Host "`nCleaning up..." -ForegroundColor Cyan
+        Write-Host "`nCleaning up...`n" -ForegroundColor Cyan
 
         if (Test-Path $zipPath) {
             Remove-Item $zipPath -Force
@@ -120,7 +120,7 @@ function Deploy-Environment {
             Write-Host "Removed $publishPath" -ForegroundColor Gray
         }
 
-        Write-Host "Cleanup complete." -ForegroundColor Green
+        Write-Host "`nCleanup complete." -ForegroundColor Green
     }
 }
 
