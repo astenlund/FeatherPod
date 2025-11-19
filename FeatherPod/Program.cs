@@ -140,7 +140,7 @@ internal class Program
                 .WithExample("push", "*.mp3", "-x")
                 .WithExample("push", "ep1.mp3,ep2.mp3", "-e", "Test");
 
-            config.SetApplicationName("featherpod-cli");
+            config.SetApplicationName("FeatherPod");
 
             var versionAttribute = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>();
 
