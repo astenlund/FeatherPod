@@ -192,7 +192,7 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 | `/api/users` | GET | Admin | List all users |
 | `/api/users/{userId}` | GET | Admin | Get user by ID |
 | `/api/users` | POST | Admin | Create user (returns API key once) |
-| `/api/users/{userId}` | DELETE | Admin | Delete user (soft delete) |
+| `/api/users/{userId}` | DELETE | Admin | Delete user |
 | `/api/users/{userId}/key/regenerate` | POST | Admin/Self | Regenerate user API key |
 | `/api/users/{userId}/feeds` | POST | Admin | Grant feed ownership |
 | `/api/users/{userId}/feeds/{feedId}` | DELETE | Admin | Revoke feed ownership |

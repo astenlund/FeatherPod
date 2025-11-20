@@ -13,7 +13,7 @@ public interface IUserService
     Task LoadUsersAsync();
 
     /// <summary>
-    /// Gets all active users in the system.
+    /// Gets all users in the system.
     /// </summary>
     Task<IReadOnlyList<User>> GetAllUsersAsync();
 
@@ -23,7 +23,7 @@ public interface IUserService
     Task<User?> GetUserByIdAsync(string userId);
 
     /// <summary>
-    /// Gets a user by their API key. Returns null if not found or inactive.
+    /// Gets a user by their API key. Returns null if not found.
     /// </summary>
     Task<User?> GetUserByApiKeyAsync(string apiKey);
 
@@ -34,7 +34,7 @@ public interface IUserService
     Task<string> CreateUserAsync(User user);
 
     /// <summary>
-    /// Deletes a user (soft delete - sets IsActive to false).
+    /// Deletes a user.
     /// </summary>
     Task<bool> DeleteUserAsync(string userId);
 
