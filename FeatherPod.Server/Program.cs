@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using FeatherPod.Server.Middleware;
 using FeatherPod.Server.Services;
 
@@ -32,7 +33,13 @@ builder.Services.AddSingleton<IUserService, UserService>();
 builder.Services.AddHostedService<BlobSyncBackgroundService>();
 
 // Add controllers
-builder.Services.AddControllers();
+builder.Services
+    .AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    });
+
 builder.Services.AddEndpointsApiExplorer();
 
 var app = builder.Build();
