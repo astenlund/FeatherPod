@@ -47,14 +47,6 @@ internal sealed class VersionCommand : AsyncCommand<VersionSettings>
                 {
                     AnsiConsole.MarkupLine($"[cyan]Server Version:[/] {version.GetString()}");
                 }
-                if (versionInfo.TryGetProperty("buildDate", out var buildDate))
-                {
-                    AnsiConsole.MarkupLine($"[cyan]Build Date:[/] {buildDate.GetString()}");
-                }
-                if (versionInfo.TryGetProperty("environment", out var envName))
-                {
-                    AnsiConsole.MarkupLine($"[cyan]Server Environment:[/] {envName.GetString()}");
-                }
             }
             else
             {

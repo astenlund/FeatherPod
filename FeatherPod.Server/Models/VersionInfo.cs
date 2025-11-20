@@ -11,11 +11,6 @@ public record VersionInfo
     required public string Version { get; init; }
 
     /// <summary>
-    /// Build date in ISO 8601 format (UTC).
-    /// </summary>
-    required public string BuildDate { get; init; }
-
-    /// <summary>
     /// Current environment (Development, Production, etc.).
     /// </summary>
     public string? Environment { get; init; }
