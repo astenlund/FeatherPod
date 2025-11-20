@@ -15,6 +15,8 @@ public sealed class UserService : IUserService, IDisposable
     private readonly ILogger<UserService> _logger;
     private readonly IConfiguration _configuration;
     private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly JsonSerializerOptions _jsonSerializerOptions = new() { WriteIndented = true };
+
     private UsersMetadata _usersMetadata = new();
 
     public UserService(IBlobStorageService blobStorage, IConfiguration configuration, ILogger<UserService> logger)
@@ -54,8 +56,7 @@ public sealed class UserService : IUserService, IDisposable
                         Role = UserRole.Admin,
                         ApiKeyHash = HashApiKey(legacyApiKey),
                         OwnedFeeds = [],
-                        CreatedAt = DateTime.UtcNow,
-                        IsActive = true
+                        CreatedAt = DateTime.UtcNow
                     };
 
                     _usersMetadata = new()
@@ -86,7 +87,7 @@ public sealed class UserService : IUserService, IDisposable
         await _lock.WaitAsync();
         try
         {
-            return _usersMetadata.Users.Where(u => u.IsActive).ToList();
+            return _usersMetadata.Users.ToList();
         }
         finally
         {
@@ -99,7 +100,7 @@ public sealed class UserService : IUserService, IDisposable
         await _lock.WaitAsync();
         try
         {
-            return _usersMetadata.Users.FirstOrDefault(u => u.Id == userId && u.IsActive);
+            return _usersMetadata.Users.FirstOrDefault(u => u.Id == userId);
         }
         finally
         {
@@ -114,7 +115,7 @@ public sealed class UserService : IUserService, IDisposable
         await _lock.WaitAsync();
         try
         {
-            return _usersMetadata.Users.FirstOrDefault(u => u.ApiKeyHash == keyHash && u.IsActive);
+            return _usersMetadata.Users.FirstOrDefault(u => u.ApiKeyHash == keyHash);
         }
         finally
         {
@@ -172,12 +173,9 @@ public sealed class UserService : IUserService, IDisposable
                 return false;
             }
 
-            // Soft delete - set IsActive to false
-            var updatedUser = user with { IsActive = false };
-
             _usersMetadata = _usersMetadata with
             {
-                Users = _usersMetadata.Users.Select(u => u.Id == userId ? updatedUser : u).ToList()
+                Users = _usersMetadata.Users.Where(u => u.Id != userId).ToList()
             };
 
             await SaveUsersAsync();
@@ -200,7 +198,7 @@ public sealed class UserService : IUserService, IDisposable
         await _lock.WaitAsync();
         try
         {
-            var user = _usersMetadata.Users.FirstOrDefault(u => u.Id == userId && u.IsActive);
+            var user = _usersMetadata.Users.FirstOrDefault(u => u.Id == userId);
             if (user == null)
             {
                 return null;
@@ -257,7 +255,7 @@ public sealed class UserService : IUserService, IDisposable
         await _lock.WaitAsync();
         try
         {
-            var user = _usersMetadata.Users.FirstOrDefault(u => u.Id == userId && u.IsActive);
+            var user = _usersMetadata.Users.FirstOrDefault(u => u.Id == userId);
             if (user == null || user.Role != UserRole.FeedOwner)
             {
                 return false;
@@ -295,7 +293,7 @@ public sealed class UserService : IUserService, IDisposable
         await _lock.WaitAsync();
         try
         {
-            var user = _usersMetadata.Users.FirstOrDefault(u => u.Id == userId && u.IsActive);
+            var user = _usersMetadata.Users.FirstOrDefault(u => u.Id == userId);
             if (user == null || user.Role != UserRole.FeedOwner)
             {
                 return false;
@@ -348,7 +346,7 @@ public sealed class UserService : IUserService, IDisposable
     private async Task SaveUsersAsync()
     {
         // Must be called within lock
-        var json = JsonSerializer.Serialize(_usersMetadata, new JsonSerializerOptions { WriteIndented = true });
+        var json = JsonSerializer.Serialize(_usersMetadata, _jsonSerializerOptions);
         await _blobStorage.SaveUsersConfigAsync(json);
     }
 

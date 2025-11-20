@@ -67,8 +67,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.FeedOwner,
             OwnedFeeds = ["feed1"],
             ApiKeyHash = "", // Will be generated
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
 
         // Act
@@ -86,7 +85,6 @@ public class UserServiceTests : IDisposable
         Assert.Equal(UserRole.FeedOwner, retrieved.Role);
         Assert.Single(retrieved.OwnedFeeds);
         Assert.Contains("feed1", retrieved.OwnedFeeds);
-        Assert.True(retrieved.IsActive);
     }
 
     [Fact]
@@ -104,8 +102,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.Admin,
             OwnedFeeds = [],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         await service.CreateUserAsync(user1);
 
@@ -117,8 +114,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.Admin,
             OwnedFeeds = [],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
 
         // Act & Assert
@@ -141,8 +137,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.Admin,
             OwnedFeeds = [],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         await service.CreateUserAsync(user);
 
@@ -184,8 +179,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.Admin,
             OwnedFeeds = [],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         var apiKey = await service.CreateUserAsync(user);
 
@@ -212,7 +206,7 @@ public class UserServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetUserByApiKeyAsync_ShouldReturnNull_WhenUserInactive()
+    public async Task GetUserByApiKeyAsync_ShouldReturnNull_WhenUserDeleted()
     {
         // Arrange
         var service = CreateService();
@@ -226,11 +220,10 @@ public class UserServiceTests : IDisposable
             Role = UserRole.Admin,
             OwnedFeeds = [],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         var apiKey = await service.CreateUserAsync(user);
-        await service.DeleteUserAsync("testuser"); // Marks as inactive
+        await service.DeleteUserAsync("testuser");
 
         // Act
         var retrieved = await service.GetUserByApiKeyAsync(apiKey);
@@ -240,7 +233,7 @@ public class UserServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task DeleteUserAsync_ShouldMarkUserInactive()
+    public async Task DeleteUserAsync_ShouldRemoveUser()
     {
         // Arrange
         var service = CreateService();
@@ -254,8 +247,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.Admin,
             OwnedFeeds = [],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         var apiKey = await service.CreateUserAsync(user);
 
@@ -265,15 +257,15 @@ public class UserServiceTests : IDisposable
         // Assert
         Assert.True(success);
 
-        // GetUserByIdAsync filters by IsActive, so deleted user should not be returned
+        // User should be completely removed
         var retrieved = await service.GetUserByIdAsync("testuser");
         Assert.Null(retrieved);
 
-        // API key should also not work anymore
+        // API key should no longer work
         var retrievedByKey = await service.GetUserByApiKeyAsync(apiKey);
         Assert.Null(retrievedByKey);
 
-        // User should not appear in active users list
+        // User should not appear in users list
         var allUsers = await service.GetAllUsersAsync();
         Assert.DoesNotContain(allUsers, u => u.Id == "testuser");
     }
@@ -307,8 +299,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.Admin,
             OwnedFeeds = [],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         var oldApiKey = await service.CreateUserAsync(user);
 
@@ -358,8 +349,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.FeedOwner,
             OwnedFeeds = [],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         await service.CreateUserAsync(user);
 
@@ -388,8 +378,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.FeedOwner,
             OwnedFeeds = ["existing-feed"],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         await service.CreateUserAsync(user);
 
@@ -432,8 +421,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.FeedOwner,
             OwnedFeeds = ["feed1", "feed2"],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         await service.CreateUserAsync(user);
 
@@ -477,8 +465,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.Admin,
             OwnedFeeds = [],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         await service.CreateUserAsync(admin);
         var adminUser = await service.GetUserByIdAsync("admin");
@@ -503,8 +490,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.FeedOwner,
             OwnedFeeds = ["owned-feed"],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         await service.CreateUserAsync(owner);
         var ownerUser = await service.GetUserByIdAsync("owner");
@@ -529,8 +515,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.FeedOwner,
             OwnedFeeds = [],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         await service.CreateUserAsync(owner);
         var ownerUser = await service.GetUserByIdAsync("owner");
@@ -607,8 +592,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.FeedOwner,
             OwnedFeeds = [],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         await service.CreateUserAsync(user);
 
@@ -638,8 +622,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.Admin,
             OwnedFeeds = [],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         await service.CreateUserAsync(user);
 
@@ -669,7 +652,7 @@ public class UserServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task GetAllUsersAsync_ShouldReturnOnlyActiveUsers()
+    public async Task GetAllUsersAsync_ShouldNotIncludeDeletedUsers()
     {
         // Arrange
         var service = CreateService();
@@ -683,8 +666,7 @@ public class UserServiceTests : IDisposable
             Role = UserRole.Admin,
             OwnedFeeds = [],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         await service.CreateUserAsync(user1);
 
@@ -696,11 +678,10 @@ public class UserServiceTests : IDisposable
             Role = UserRole.Admin,
             OwnedFeeds = [],
             ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow,
-            IsActive = true
+            CreatedAt = DateTime.UtcNow
         };
         await service.CreateUserAsync(user2);
-        await service.DeleteUserAsync("user2"); // Mark inactive
+        await service.DeleteUserAsync("user2");
 
         // Act
         var users = await service.GetAllUsersAsync();

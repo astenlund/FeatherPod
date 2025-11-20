@@ -45,9 +45,4 @@ public record User
     /// Last time the user made an authenticated API request. Null if never used.
     /// </summary>
     public DateTime? LastActive { get; init; }
-
-    /// <summary>
-    /// Whether the user account is active. False for soft-deleted users.
-    /// </summary>
-    public bool IsActive { get; init; } = true;
 }

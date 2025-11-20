@@ -35,8 +35,7 @@ public class UsersController : ControllerBase
             u.Role,
             u.OwnedFeeds,
             u.CreatedAt,
-            u.LastActive,
-            u.IsActive
+            u.LastActive
         });
 
         return Ok(safeUsers);
@@ -64,8 +63,7 @@ public class UsersController : ControllerBase
             user.Role,
             user.OwnedFeeds,
             user.CreatedAt,
-            user.LastActive,
-            user.IsActive
+            user.LastActive
         };
 
         return Ok(safeUser);
