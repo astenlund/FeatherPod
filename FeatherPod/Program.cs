@@ -4,6 +4,7 @@ using FeatherPod.Commands.Episode;
 using FeatherPod.Commands.Icon;
 using Spectre.Console.Cli;
 
+using ConfigCommands = FeatherPod.Commands.Config;
 using FeedCommands = FeatherPod.Commands.Feed;
 using UserCommands = FeatherPod.Commands.User;
 
@@ -125,6 +126,21 @@ internal class Program
                     .WithDescription("Delete a feed and all its episodes")
                     .WithExample("feed", "delete", "my-podcast")
                     .WithExample("feed", "delete", "my-podcast", "--force");
+            });
+
+            config.AddBranch("config", cfg =>
+            {
+                cfg.SetDescription("CLI configuration commands");
+
+                cfg.AddCommand<ConfigCommands.SetCommand>("set")
+                    .WithDescription("Set a configuration value")
+                    .WithExample("config", "set", "api-key", "<your-api-key>")
+                    .WithExample("config", "set", "api-key", "<your-api-key>", "-e", "Test");
+
+                cfg.AddCommand<ConfigCommands.ShowCommand>("show")
+                    .WithDescription("Show current configuration")
+                    .WithExample("config", "show")
+                    .WithExample("config", "show", "-e", "Test");
             });
 
             // Version command

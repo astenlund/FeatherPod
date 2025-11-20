@@ -62,16 +62,27 @@ internal static class EnvironmentHelpers
 
         if (string.IsNullOrEmpty(apiKey))
         {
-            AnsiConsole.MarkupLine("[red]ERROR:[/] API key not configured.");
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("[yellow]Option 1[/] (Recommended): Create a local settings file:");
-            AnsiConsole.MarkupLine($"  File: [cyan]appsettings.{environment}.Local.json[/]");
-            AnsiConsole.MarkupLine("  Content: { \"Api\": { \"ApiKey\": \"your-api-key-here\" } }");
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("[yellow]Option 2[/]: Set environment variable:");
-            AnsiConsole.MarkupLine("  [grey]$env:Api__ApiKey = \"your-api-key-here\"  (PowerShell)[/]");
-            AnsiConsole.MarkupLine("  [grey]export Api__ApiKey=\"your-api-key-here\"  (Bash)[/]");
-            return (null, null);
+            // Prompt user to enter API key
+            if (!ApiKeyHelpers.PromptAndSaveApiKey(environment))
+            {
+                return (null, null);
+            }
+
+            // Reload configuration to get the new API key
+            configuration = new ConfigurationBuilder()
+                .SetBasePath(AppContext.BaseDirectory)
+                .AddJsonFile("appsettings.json", optional: false)
+                .AddJsonFile($"appsettings.{environment}.json", optional: true)
+                .AddJsonFile($"appsettings.{environment}.Local.json", optional: true)
+                .AddEnvironmentVariables()
+                .Build();
+
+            apiKey = configuration["Api:ApiKey"];
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                AnsiConsole.MarkupLine("[red]ERROR:[/] Failed to load API key after saving.");
+                return (null, null);
+            }
         }
 
         AnsiConsole.MarkupLine($"API: [cyan]{apiBaseUrl}/api[/]");

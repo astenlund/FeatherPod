@@ -21,7 +21,6 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
         var (httpClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
         if (httpClient == null) return 1;
 
-        // Validate user ID
         var userId = settings.UserId.Trim();
         if (string.IsNullOrWhiteSpace(userId))
         {
@@ -29,7 +28,6 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
             return 1;
         }
 
-        // Get or prompt for user details
         var name = settings.Name;
         if (string.IsNullOrWhiteSpace(name))
         {
@@ -42,7 +40,6 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
             email = AnsiConsole.Ask<string>("User's [cyan]email address[/]:");
         }
 
-        // Get or prompt for role
         var role = settings.Role;
         if (string.IsNullOrWhiteSpace(role))
         {
@@ -52,14 +49,13 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
                     .AddChoices("Admin", "FeedOwner"));
         }
 
-        // Validate role
         if (role != "Admin" && role != "FeedOwner")
         {
             AnsiConsole.MarkupLine("[red]Error:[/] Role must be either 'Admin' or 'FeedOwner'");
+
             return 1;
         }
 
-        // Get owned feeds if FeedOwner
         var ownedFeeds = new List<string>();
         if (role == "FeedOwner")
         {
@@ -69,8 +65,7 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
             }
             else
             {
-                // Prompt for feeds
-                var feedsInput = AnsiConsole.Ask<string>("Enter [cyan]feed IDs[/] to own (comma-separated, or leave empty):", string.Empty);
+                var feedsInput = AnsiConsole.Ask("Enter [cyan]feed IDs[/] to own (comma-separated, or leave empty):", string.Empty);
                 if (!string.IsNullOrWhiteSpace(feedsInput))
                 {
                     ownedFeeds = feedsInput.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
@@ -78,7 +73,6 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
             }
         }
 
-        // Create request body
         var requestBody = new
         {
             id = userId,
@@ -93,52 +87,52 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
 
         try
         {
-            var response = await httpClient.PostAsync("/api/users", content);
+            var response = await httpClient.PostAsync("/api/users", content, cancellationToken);
 
             if (response.IsSuccessStatusCode)
             {
-                var responseJson = await response.Content.ReadAsStringAsync();
+                var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
                 var responseData = JsonSerializer.Deserialize<JsonElement>(responseJson);
 
                 AnsiConsole.MarkupLine($"[green]✓[/] User created successfully");
                 AnsiConsole.WriteLine();
 
-                // Display API key (only shown once!)
                 if (responseData.TryGetProperty("apiKey", out var apiKeyElement))
                 {
                     var apiKey = apiKeyElement.GetString();
-                    AnsiConsole.MarkupLine("[yellow bold]⚠ API Key (save this now - it will NOT be shown again!):[/]");
-                    AnsiConsole.MarkupLine($"[cyan]{Markup.Escape(apiKey ?? "")}[/]");
+                    AnsiConsole.MarkupLine($"[yellow bold]API Key (save this now, it will NOT be shown again):[/] [cyan]{Markup.Escape(apiKey ?? "")}[/]");
                     AnsiConsole.WriteLine();
                 }
 
                 return 0;
             }
-            else
+
+            var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            AnsiConsole.MarkupLine($"[red]✗[/] Failed to create user: {response.StatusCode}");
+
+            if (!string.IsNullOrEmpty(errorContent))
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                AnsiConsole.MarkupLine($"[red]✗[/] Failed to create user: {response.StatusCode}");
-                if (!string.IsNullOrEmpty(errorContent))
+                try
                 {
-                    try
+                    var errorData = JsonSerializer.Deserialize<JsonElement>(errorContent);
+                    if (errorData.TryGetProperty("error", out var errorMsg))
                     {
-                        var errorData = JsonSerializer.Deserialize<JsonElement>(errorContent);
-                        if (errorData.TryGetProperty("error", out var errorMsg))
-                        {
-                            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorMsg.GetString() ?? "")}");
-                        }
-                    }
-                    catch
-                    {
-                        AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                        AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorMsg.GetString() ?? "")}");
                     }
                 }
-                return 1;
+                catch
+                {
+                    AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                }
             }
+
+            return 1;
         }
         catch (Exception ex)
         {
             AnsiConsole.MarkupLine($"[red]✗[/] Error creating user: {ex.Message}");
+
             return 1;
         }
     }
