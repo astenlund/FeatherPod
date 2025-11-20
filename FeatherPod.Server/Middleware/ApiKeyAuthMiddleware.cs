@@ -1,8 +1,8 @@
-using FeatherPod.Server.Models;
+using FeatherPod.Shared.Models;
 using FeatherPod.Server.Services;
 
 using static System.StringSplitOptions;
-using static FeatherPod.Server.Models.UserRole;
+using static FeatherPod.Shared.Models.UserRole;
 
 namespace FeatherPod.Server.Middleware;
 

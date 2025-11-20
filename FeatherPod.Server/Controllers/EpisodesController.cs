@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-using FeatherPod.Server.Models;
+using FeatherPod.Shared.Models;
 using FeatherPod.Server.Services;
 using Microsoft.AspNetCore.Mvc;
 

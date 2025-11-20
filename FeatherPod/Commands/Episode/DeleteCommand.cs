@@ -2,6 +2,7 @@ using FeatherPod.Infrastructure;
 using FeatherPod.Settings.Episode;
 using Spectre.Console;
 using Spectre.Console.Cli;
+using EpisodeModel = FeatherPod.Shared.Models.Episode;
 
 namespace FeatherPod.Commands.Episode;
 
@@ -49,7 +50,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
         }
 
         // Find episode by ID or select interactively
-        Server.Models.Episode? episodeToDelete;
+        EpisodeModel? episodeToDelete;
 
         if (!string.IsNullOrEmpty(settings.EpisodeId))
         {

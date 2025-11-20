@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace FeatherPod.Server.Models;
+namespace FeatherPod.Shared.Models;
 
 public record Episode
 {

@@ -1,6 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
-using FeatherPod.Server.Models;
+using FeatherPod.Shared.Models;
 using Spectre.Console;
 
 namespace FeatherPod.Infrastructure;

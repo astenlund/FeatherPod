@@ -1,6 +1,6 @@
 using System.Text.Json;
 using FeatherPod.Infrastructure;
-using FeatherPod.Server.Models;
+using FeatherPod.Shared.Models;
 using FeatherPod.Settings.Feed;
 using Spectre.Console;
 using Spectre.Console.Cli;

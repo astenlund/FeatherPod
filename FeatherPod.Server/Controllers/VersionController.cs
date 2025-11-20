@@ -1,5 +1,5 @@
 using System.Reflection;
-using FeatherPod.Server.Models;
+using FeatherPod.Shared.Models;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FeatherPod.Server.Controllers;

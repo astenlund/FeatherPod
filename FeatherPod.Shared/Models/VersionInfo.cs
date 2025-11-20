@@ -1,4 +1,4 @@
-namespace FeatherPod.Server.Models;
+namespace FeatherPod.Shared.Models;
 
 /// <summary>
 /// Version information for the FeatherPod API.

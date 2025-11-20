@@ -2,8 +2,8 @@ using FeatherPod.Infrastructure;
 using FeatherPod.Settings.Episode;
 using Spectre.Console;
 using Spectre.Console.Cli;
-using EpisodeModel = FeatherPod.Server.Models.Episode;
-using FeedConfig = FeatherPod.Server.Models.FeedConfig;
+using EpisodeModel = FeatherPod.Shared.Models.Episode;
+using FeedConfig = FeatherPod.Shared.Models.FeedConfig;
 
 namespace FeatherPod.Commands.Episode;
 

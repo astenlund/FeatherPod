@@ -1,4 +1,4 @@
-using FeatherPod.Server.Models;
+using FeatherPod.Shared.Models;
 
 namespace FeatherPod.Tests;
 

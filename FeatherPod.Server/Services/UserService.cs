@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using FeatherPod.Server.Models;
+using FeatherPod.Shared.Models;
 
 namespace FeatherPod.Server.Services;
 
