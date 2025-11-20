@@ -1,5 +1,5 @@
 using FeatherPod.Infrastructure;
-using FeatherPod.Server.Models;
+using FeatherPod.Shared.Models;
 using FeatherPod.Settings.Episode;
 using Spectre.Console;
 using Spectre.Console.Cli;

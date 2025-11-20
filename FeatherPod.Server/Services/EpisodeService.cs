@@ -1,6 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using FeatherPod.Server.Models;
+using FeatherPod.Shared.Models;
 
 namespace FeatherPod.Server.Services;
 

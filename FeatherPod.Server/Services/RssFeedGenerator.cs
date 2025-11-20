@@ -1,6 +1,6 @@
 using System.Text;
 using System.Xml;
-using FeatherPod.Server.Models;
+using FeatherPod.Shared.Models;
 
 namespace FeatherPod.Server.Services;
 

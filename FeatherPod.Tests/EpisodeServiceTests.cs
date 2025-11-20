@@ -1,4 +1,4 @@
-using FeatherPod.Server.Models;
+using FeatherPod.Shared.Models;
 using FeatherPod.Server.Services;
 using Microsoft.Extensions.Logging;
 
