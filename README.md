@@ -270,6 +270,10 @@ FeatherPod user rotate-key
 FeatherPod user grant
 FeatherPod user revoke
 
+# Configuration
+FeatherPod config show       # Show current API key (masked)
+FeatherPod config set api-key <key>  # Set API key
+
 # Version info
 FeatherPod version           # Shows CLI and server versions
 FeatherPod --version         # Shows CLI version
@@ -281,7 +285,7 @@ FeatherPod -e Test feed list
 FeatherPod
 ```
 
-Configure API endpoint and key in `appsettings.{Environment}.Local.json` (gitignored).
+API keys are stored in `appsettings.{Environment}.Local.json` (gitignored). The CLI prompts for the API key on first use and saves it automatically.
 
 ## Development
 
