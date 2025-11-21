@@ -494,6 +494,98 @@ public class UserManagementIntegrationTests : IDisposable
         var response = await _client.GetAsync("/api/feeds/legacy-feed");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
+
+    // ============================================================================
+    // GET CURRENT USER (/api/users/me) TESTS
+    // ============================================================================
+
+    [AzuriteFact]
+    public async Task GetMe_ShouldReturnCurrentUser_WhenAdmin()
+    {
+        // Arrange
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/users/me");
+        request.Headers.Add("X-API-Key", AdminApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var content = await response.Content.ReadAsStringAsync();
+        var doc = JsonSerializer.Deserialize<JsonElement>(content);
+
+        Assert.Equal("admin", doc.GetProperty("id").GetString());
+        Assert.Equal("Admin", doc.GetProperty("role").GetString());
+    }
+
+    [AzuriteFact]
+    public async Task GetMe_ShouldReturnCurrentUser_WhenFeedOwner()
+    {
+        // Arrange
+        var feedOwnerApiKey = await CreateTestUserAsync("feedowner", "FeedOwner", ["feed1", "feed2"]);
+
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/users/me");
+        request.Headers.Add("X-API-Key", feedOwnerApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var content = await response.Content.ReadAsStringAsync();
+        var doc = JsonSerializer.Deserialize<JsonElement>(content);
+
+        Assert.Equal("feedowner", doc.GetProperty("id").GetString());
+        Assert.Equal("feedowner Name", doc.GetProperty("name").GetString());
+        Assert.Equal("feedowner@example.com", doc.GetProperty("email").GetString());
+        Assert.Equal("FeedOwner", doc.GetProperty("role").GetString());
+
+        var ownedFeeds = doc.GetProperty("ownedFeeds").EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Contains("feed1", ownedFeeds);
+        Assert.Contains("feed2", ownedFeeds);
+    }
+
+    [AzuriteFact]
+    public async Task GetMe_ShouldReturn401_WhenNoApiKey()
+    {
+        // Act
+        var response = await _client.GetAsync("/api/users/me");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [AzuriteFact]
+    public async Task GetMe_ShouldReturn401_WhenInvalidApiKey()
+    {
+        // Arrange
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/users/me");
+        request.Headers.Add("X-API-Key", "invalid-api-key");
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [AzuriteFact]
+    public async Task GetMe_ShouldNotExposeApiKeyHash()
+    {
+        // Arrange
+        var request = new HttpRequestMessage(HttpMethod.Get, "/api/users/me");
+        request.Headers.Add("X-API-Key", AdminApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var content = await response.Content.ReadAsStringAsync();
+
+        // Should not contain apiKeyHash field
+        Assert.DoesNotContain("apiKeyHash", content.ToLower());
+    }
 }
 
 internal class UserManagementWebApplicationFactory : WebApplicationFactory<Program>

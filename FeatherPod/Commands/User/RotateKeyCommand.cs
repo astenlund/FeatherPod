@@ -20,15 +20,46 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
         var (httpClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
         if (httpClient == null) return 1;
 
-        var userId = settings.UserId.Trim();
+        // Get user ID - either from argument or from /api/me
+        var userId = settings.UserId?.Trim();
         if (string.IsNullOrWhiteSpace(userId))
         {
-            AnsiConsole.MarkupLine("[red]Error:[/] User ID cannot be empty");
-            return 1;
+            // Fetch current user ID from server
+            try
+            {
+                var meResponse = await httpClient.GetAsync("/api/users/me", cancellationToken);
+                if (!meResponse.IsSuccessStatusCode)
+                {
+                    AnsiConsole.MarkupLine($"[red]Error:[/] Failed to get current user: {meResponse.StatusCode}");
+
+                    return 1;
+                }
+
+                var meJson = await meResponse.Content.ReadAsStringAsync(cancellationToken);
+                var meData = JsonSerializer.Deserialize<JsonElement>(meJson);
+
+                if (!meData.TryGetProperty("id", out var idElement))
+                {
+                    AnsiConsole.MarkupLine("[red]Error:[/] Could not determine current user ID");
+
+                    return 1;
+                }
+
+                userId = idElement.GetString();
+
+                AnsiConsole.MarkupLine($"[grey]Rotating API key for current user:[/] [cyan]{Markup.Escape(userId ?? "")}[/]");
+                AnsiConsole.WriteLine();
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]Error:[/] Failed to get current user: {ex.Message}");
+
+                return 1;
+            }
         }
 
-        var confirm = await AnsiConsole.ConfirmAsync("Are you sure you want to regenerate the API key for user [cyan]" +
-                                                     "{Markup.Escape(userId)}[/]? The old key will stop working.", false, cancellationToken);
+        var confirm = await AnsiConsole.ConfirmAsync($"Are you sure you want to regenerate the API key for user [cyan]{Markup.Escape(userId ?? "")}[/]?" +
+                                                     " The old key will stop working.", false, cancellationToken);
         if (!confirm)
         {
             AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
@@ -38,7 +69,7 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
 
         try
         {
-            var response = await httpClient.PostAsync($"/api/users/{Uri.EscapeDataString(userId)}/key/regenerate", null, cancellationToken);
+            var response = await httpClient.PostAsync($"/api/users/{Uri.EscapeDataString(userId!)}/key/regenerate", null, cancellationToken);
 
             if (response.IsSuccessStatusCode)
             {
@@ -51,7 +82,23 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
                 if (responseData.TryGetProperty("apiKey", out var apiKeyElement))
                 {
                     var apiKey = apiKeyElement.GetString();
-                    AnsiConsole.MarkupLine($"[yellow bold]New API Key (save this now, it will NOT be shown again):[/] [cyan]{Markup.Escape(apiKey ?? "")}[/]");
+
+                    AnsiConsole.MarkupLine($"[yellow bold]New API Key:[/] [cyan]{Markup.Escape(apiKey ?? "")}[/]");
+                    AnsiConsole.WriteLine();
+
+                    // Prompt to save the new key
+                    var saveKey = await AnsiConsole.ConfirmAsync($"Save this key to preferences for {env}?", true, cancellationToken);
+                    if (saveKey && !string.IsNullOrEmpty(apiKey))
+                    {
+                        PreferencesHelpers.SaveApiKey(env, apiKey);
+                        var prefsPath = PreferencesHelpers.GetPreferencesPath();
+                        AnsiConsole.MarkupLine($"[green]✓[/] API key saved to [grey]{Markup.Escape(prefsPath)}[/]");
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLine("[yellow]Warning:[/] API key was NOT saved. Copy it now - it will NOT be shown again!");
+                    }
+
                     AnsiConsole.WriteLine();
                 }
 
@@ -59,7 +106,9 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
             }
 
             var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+
             AnsiConsole.MarkupLine($"[red]✗[/] Failed to regenerate API key: {response.StatusCode}");
+
             if (!string.IsNullOrEmpty(errorContent))
             {
                 AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");

@@ -18,6 +18,29 @@ public class UsersController : ControllerBase
         _logger = logger;
     }
 
+    [HttpGet("me")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public IActionResult GetCurrentUser()
+    {
+        var user = HttpContext.Items["User"] as User;
+        if (user == null)
+        {
+            return Unauthorized(new { error = "Not authenticated" });
+        }
+
+        return Ok(new
+        {
+            user.Id,
+            user.Name,
+            user.Email,
+            user.Role,
+            user.OwnedFeeds,
+            user.CreatedAt,
+            user.LastActive
+        });
+    }
+
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

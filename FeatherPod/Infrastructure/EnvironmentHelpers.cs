@@ -2,6 +2,8 @@ using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Spectre.Console;
 
+using static System.Net.HttpStatusCode;
+
 namespace FeatherPod.Infrastructure;
 
 internal static class EnvironmentHelpers
@@ -17,7 +19,10 @@ internal static class EnvironmentHelpers
             else
             {
                 environment = SelectEnvironment();
-                if (environment == null) return null;
+                if (environment == null)
+                {
+                    return null;
+                }
             }
         }
 
@@ -48,8 +53,7 @@ internal static class EnvironmentHelpers
 
     internal static IConfiguration BuildConfiguration(string environment)
     {
-        var builder = new ConfigurationBuilder()
-            .SetBasePath(AppContext.BaseDirectory);
+        var builder = new ConfigurationBuilder().SetBasePath(AppContext.BaseDirectory);
 
         // 1. Load embedded resources first (defaults)
         var assembly = Assembly.GetExecutingAssembly();
@@ -79,8 +83,7 @@ internal static class EnvironmentHelpers
     {
         var configuration = BuildConfiguration(environment);
 
-        var apiBaseUrl = configuration["Api:BaseUrl"]
-            ?? throw new InvalidOperationException("Api:BaseUrl not configured in appsettings.json");
+        var apiBaseUrl = configuration["Api:BaseUrl"] ?? throw new InvalidOperationException("Api:BaseUrl not configured in appsettings.json");
 
         // Get API key from preferences (with auto-migration from legacy .Local.json)
         var apiKey = PreferencesHelpers.GetApiKey(environment);
@@ -98,6 +101,7 @@ internal static class EnvironmentHelpers
             if (string.IsNullOrEmpty(apiKey))
             {
                 AnsiConsole.MarkupLine("[red]ERROR:[/] Failed to load API key after saving.");
+
                 return (null, null);
             }
         }
@@ -106,7 +110,7 @@ internal static class EnvironmentHelpers
 
         var httpClient = new HttpClient
         {
-            BaseAddress = new Uri(apiBaseUrl)
+            BaseAddress = new(apiBaseUrl)
         };
         httpClient.DefaultRequestHeaders.Add("X-API-Key", apiKey);
 
@@ -115,7 +119,8 @@ internal static class EnvironmentHelpers
             await AnsiConsole.Status()
                 .StartAsync("Testing API connection...", async _ =>
                 {
-                    var response = await httpClient.GetAsync("/api/feeds");
+                    // Use /api/users/me to verify both connectivity and authentication
+                    var response = await httpClient.GetAsync("/api/users/me");
                     response.EnsureSuccessStatusCode();
                 });
 
@@ -123,12 +128,22 @@ internal static class EnvironmentHelpers
             AnsiConsole.MarkupLine("[green]✓[/] Connected");
             AnsiConsole.WriteLine();
         }
+        catch (HttpRequestException ex) when (ex.StatusCode == Unauthorized)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[red]✗[/] Authentication failed: invalid API key.");
+            AnsiConsole.WriteLine();
+
+            return (null, null);
+        }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine("[red]✗[/] Connection failed");
-            AnsiConsole.MarkupLine($"[red]Error:[/] {ex.Message}");
             AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("Make sure the FeatherPod API is running and accessible.");
+            AnsiConsole.MarkupLine($"[red]✗[/] Connection failed: {ex.Message}");
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("Make sure the FeatherPod server is running and accessible.");
+            AnsiConsole.WriteLine();
+
             return (null, null);
         }
 
