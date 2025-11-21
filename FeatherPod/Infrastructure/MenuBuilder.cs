@@ -42,7 +42,8 @@ internal class MenuBuilder<T>
 
         var selected = 0;
         Console.CursorVisible = false;
-        int? optionsStartTop = null;
+        var isFirstRender = true;
+        var totalLines = _options.Count + 1; // blank line + options
 
         try
         {
@@ -52,46 +53,32 @@ internal class MenuBuilder<T>
 
             while (true)
             {
-                // Remember where the blank line starts (only on first render)
-                if (optionsStartTop == null)
+                if (!isFirstRender)
                 {
-                    optionsStartTop = Console.CursorTop;
-                    AnsiConsole.WriteLine(); // Initial blank line
+                    // Move cursor up to the start of the menu area using ANSI escape code
+                    // This works regardless of buffer position since we use relative movement
+                    Console.Write($"\x1b[{totalLines}A");
                 }
-                else
-                {
-                    // Clear from blank line through all options (hides flicker on first option)
-                    Console.SetCursorPosition(0, optionsStartTop.Value);
-                    for (var i = 0; i < _options.Count + 1; i++) // +1 for blank line
-                    {
-                        Console.Write(new string(' ', Console.WindowWidth));
-                        if (i < _options.Count)
-                        {
-                            Console.WriteLine();
-                        }
-                    }
-                    Console.SetCursorPosition(0, optionsStartTop.Value);
-                    AnsiConsole.WriteLine(); // Redraw blank line
-                }
+
+                // Clear line and render blank line
+                Console.Write("\x1b[2K"); // Clear entire line
+                Console.WriteLine();
 
                 // Render options
                 for (var i = 0; i < _options.Count; i++)
                 {
+                    Console.Write("\x1b[2K"); // Clear entire line
+
                     var option = _options[i];
                     var prefix = i == selected ? "[cyan]>[/] " : "  ";
 
                     var label = option.Formatter?.Invoke(i) ?? option.Label;
                     var formattedLabel = FormatLabelWithShortcut(label, option.Shortcut, i == selected);
 
-                    if (i == selected)
-                    {
-                        AnsiConsole.MarkupLine($"{prefix}{formattedLabel}");
-                    }
-                    else
-                    {
-                        AnsiConsole.MarkupLine($"{prefix}{formattedLabel}");
-                    }
+                    AnsiConsole.MarkupLine($"{prefix}{formattedLabel}");
                 }
+
+                isFirstRender = false;
 
                 var keyInfo = Console.ReadKey(true);
 
