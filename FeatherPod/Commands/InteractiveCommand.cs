@@ -1,10 +1,11 @@
+using System.Reflection;
+using System.Text.Json;
 using FeatherPod.Infrastructure;
 using FeatherPod.Shared.Models;
 using FeatherPod.Settings;
 using FeatherPod.Settings.Episode;
 using Spectre.Console;
 using Spectre.Console.Cli;
-using System.Text.Json;
 
 using EpisodeDeleteCommand = FeatherPod.Commands.Episode.DeleteCommand;
 using EpisodeListCommand = FeatherPod.Commands.Episode.ListCommand;
@@ -1076,15 +1077,53 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     }
                     break;
 
+                case MenuChoice.Version:
+                    // Show CLI version
+                    var versionAttr = Assembly.GetExecutingAssembly()
+                        .GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+                    var cliVersion = versionAttr?.InformationalVersion ?? "unknown";
+                    AnsiConsole.MarkupLine($"[cyan]CLI Version:[/] {cliVersion}");
+
+                    // Show server version if connected
+                    if (isConnected && httpClient != null)
+                    {
+                        try
+                        {
+                            var versionResponse = await httpClient.GetAsync("/api/version", cancellationToken);
+                            if (versionResponse.IsSuccessStatusCode)
+                            {
+                                var versionJson = await versionResponse.Content.ReadAsStringAsync(cancellationToken);
+                                var versionData = JsonSerializer.Deserialize<JsonElement>(versionJson);
+                                if (versionData.TryGetProperty("version", out var serverVer))
+                                {
+                                    AnsiConsole.MarkupLine($"[cyan]Server Version:[/] {serverVer.GetString()}");
+                                }
+                            }
+                        }
+                        catch
+                        {
+                            AnsiConsole.MarkupLine("[yellow]Could not fetch server version[/]");
+                        }
+                    }
+                    else
+                    {
+                        AnsiConsole.MarkupLine("[grey]Server version: (not connected)[/]");
+                    }
+
+                    WaitForKeyPress();
+                    break;
+
                 case MenuChoice.Preferences:
                     var preferencesChoice = new MenuBuilder<string?>()
-                        .WithTitle("Preferences:")
-                        .WithHint("(arrow keys or A/C/N/K/R, Esc to go back)")
+                        .WithTitle("Settings:")
+                        .WithHint("(arrow keys or highlighted letter, Esc to go back)")
                         .AddOption("A", "Auto-connect on startup", "autoconnect")
                         .AddOption("C", "Connect now", "connect")
                         .AddOption("N", "Audio normalization", "normalization")
                         .AddOption("K", "Update API key (local)", "apikey-local")
                         .AddOption("R", "Rotate API key (server)", "apikey-rotate")
+                        .AddOption("S", "Show all preferences", "show-all")
+                        .AddOption("G", "Generate config files", "generate")
                         .AllowCancel()
                         .Show();
 
@@ -1324,6 +1363,87 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 WaitForKeyPress();
                             }
                             break;
+
+                        case "show-all":
+                            var showApiKey = PreferencesHelpers.GetApiKey(env);
+                            var showFilePath = PreferencesHelpers.GetPreferencesPath();
+
+                            AnsiConsole.MarkupLine(string.IsNullOrEmpty(showApiKey)
+                                ? $"[yellow]API key ({env}):[/] (not configured)"
+                                : $"[cyan]API key ({env}):[/] {PreferencesHelpers.MaskApiKey(showApiKey)}");
+
+                            var showNormPref = PreferencesHelpers.GetNormalizationEnabled();
+                            var showNormEnabled = showNormPref ?? true;
+                            AnsiConsole.MarkupLine($"[cyan]Audio normalization:[/] {(showNormEnabled ? "enabled" : "disabled")}{(showNormPref.HasValue ? "" : " (default)")}");
+
+                            var showAutoConnectPref = PreferencesHelpers.GetAutoConnectEnabled();
+                            var showAutoConnectEnabled = showAutoConnectPref ?? true;
+                            AnsiConsole.MarkupLine($"[cyan]Auto-connect:[/] {(showAutoConnectEnabled ? "enabled" : "disabled")}{(showAutoConnectPref.HasValue ? "" : " (default)")}");
+
+                            AnsiConsole.WriteLine();
+                            AnsiConsole.MarkupLine($"[grey]Preferences: {Markup.Escape(showFilePath)}[/]");
+                            WaitForKeyPress();
+                            break;
+
+                        case "generate":
+                            var configFiles = new[] { "appsettings.json", "appsettings.Dev.json", "appsettings.Test.json", "appsettings.Prod.json" };
+
+                            var selectedFiles = AnsiConsole.Prompt(
+                                new MultiSelectionPrompt<string>()
+                                    .Title("Select configuration files to generate:")
+                                    .NotRequired()
+                                    .PageSize(10)
+                                    .InstructionsText("[grey](Press [blue]<space>[/] to toggle, [green]<enter>[/] to accept)[/]")
+                                    .AddChoices(configFiles));
+
+                            if (selectedFiles.Count == 0)
+                            {
+                                AnsiConsole.MarkupLine("[grey]No files selected.[/]");
+                                WaitForKeyPress();
+                                break;
+                            }
+
+                            var outputPath = Directory.GetCurrentDirectory();
+                            var genAssembly = Assembly.GetExecutingAssembly();
+                            var generatedCount = 0;
+
+                            foreach (var fileName in selectedFiles)
+                            {
+                                var resourceName = $"FeatherPod.{fileName}";
+                                var targetPath = Path.Combine(outputPath, fileName);
+
+                                if (File.Exists(targetPath))
+                                {
+                                    var overwrite = await AnsiConsole.ConfirmAsync($"[yellow]{fileName}[/] already exists. Overwrite?", defaultValue: false, cancellationToken: cancellationToken);
+                                    if (!overwrite)
+                                    {
+                                        AnsiConsole.MarkupLine($"[grey]Skipped {fileName}[/]");
+                                        continue;
+                                    }
+                                }
+
+                                await using var stream = genAssembly.GetManifestResourceStream(resourceName);
+                                if (stream == null)
+                                {
+                                    AnsiConsole.MarkupLine($"[red]Could not find embedded resource:[/] {resourceName}");
+                                    continue;
+                                }
+
+                                using var reader = new StreamReader(stream);
+                                var content = await reader.ReadToEndAsync(cancellationToken);
+                                await File.WriteAllTextAsync(targetPath, content, cancellationToken);
+
+                                AnsiConsole.MarkupLine($"[green]✓[/] Generated [cyan]{fileName}[/]");
+                                generatedCount++;
+                            }
+
+                            if (generatedCount > 0)
+                            {
+                                AnsiConsole.WriteLine();
+                                AnsiConsole.MarkupLine($"Generated {generatedCount} file(s) to [cyan]{outputPath}[/]");
+                            }
+                            WaitForKeyPress();
+                            break;
                     }
                     break;
 
@@ -1384,6 +1504,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             .AddOption("M", "Manage feeds", MenuChoice.ManageFeeds)
             .AddOption("F", "Switch feed", MenuChoice.SwitchFeed)
             .AddOption("E", "Environment", MenuChoice.SwitchEnvironment)
+            .AddOption("V", "Version", MenuChoice.Version)
             .AddOption("S", "Settings", MenuChoice.Preferences)
             .AddOption("Q", "Quit", MenuChoice.Quit)
             .AllowCancel(false) // Don't allow escape on main menu
@@ -1400,6 +1521,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         UserManagement,
         SwitchFeed,
         ManageFeeds,
+        Version,
         Preferences,
         SwitchEnvironment,
         Quit
