@@ -100,7 +100,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             }
             skipClear = false;
 
-            var choice = ShowMenu(currentFeed, isConnected);
+            var choice = ShowMenu(currentFeed, isConnected, currentUser);
 
             switch (choice)
             {
@@ -548,6 +548,333 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     }
 
                     WaitForKeyPress();
+                    break;
+
+                case MenuChoice.UserManagement:
+                    if (!isConnected || httpClient == null)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    var userChoice = new MenuBuilder<string?>()
+                        .WithTitle("User management:")
+                        .WithHint("(arrow keys or highlighted letter, Esc to go back)")
+                        .AddOption("L", "List users", "list")
+                        .AddOption("C", "Create user", "create")
+                        .AddOption("D", "Delete user", "delete")
+                        .AddOption("G", "Grant feed ownership", "grant")
+                        .AddOption("R", "Revoke feed ownership", "revoke")
+                        .AddOption("K", "Rotate API key", "rotate")
+                        .AllowCancel()
+                        .Show();
+
+                    if (userChoice == null)
+                        break;
+
+                    switch (userChoice)
+                    {
+                        case "list":
+                            try
+                            {
+                                var listResponse = await httpClient.GetAsync("/api/users", cancellationToken);
+                                if (listResponse.IsSuccessStatusCode)
+                                {
+                                    var listJson = await listResponse.Content.ReadAsStringAsync(cancellationToken);
+                                    var users = JsonSerializer.Deserialize<JsonElement>(listJson);
+
+                                    if (users.ValueKind == JsonValueKind.Array && users.GetArrayLength() == 0)
+                                    {
+                                        AnsiConsole.MarkupLine("[yellow]No users found.[/]");
+                                    }
+                                    else
+                                    {
+                                        var table = new Table();
+                                        table.Border(TableBorder.Rounded);
+                                        table.AddColumn("[cyan]User ID[/]");
+                                        table.AddColumn("[cyan]Name[/]");
+                                        table.AddColumn("[cyan]Role[/]");
+                                        table.AddColumn("[cyan]Owned Feeds[/]");
+
+                                        foreach (var user in users.EnumerateArray())
+                                        {
+                                            var id = user.GetProperty("id").GetString() ?? "";
+                                            var name = user.GetProperty("name").GetString() ?? "";
+                                            var role = user.GetProperty("role").GetString() ?? "";
+
+                                            var ownedFeeds = "-";
+                                            if (user.TryGetProperty("ownedFeeds", out var feedsEl) && feedsEl.ValueKind == JsonValueKind.Array)
+                                            {
+                                                var feeds = feedsEl.EnumerateArray().Select(f => f.GetString() ?? "").Where(s => !string.IsNullOrEmpty(s)).ToList();
+                                                ownedFeeds = feeds.Count > 0 ? string.Join(", ", feeds) : "-";
+                                            }
+
+                                            table.AddRow(
+                                                Markup.Escape(id),
+                                                Markup.Escape(name),
+                                                role == "Admin" ? "[green]Admin[/]" : "[cyan]FeedOwner[/]",
+                                                Markup.Escape(ownedFeeds)
+                                            );
+                                        }
+
+                                        AnsiConsole.Write(table);
+                                    }
+                                }
+                                else
+                                {
+                                    AnsiConsole.MarkupLine($"[red]✗[/] Failed to list users: {listResponse.StatusCode}");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                AnsiConsole.MarkupLine($"[red]✗[/] Error: {ex.Message}");
+                            }
+                            WaitForKeyPress();
+                            break;
+
+                        case "create":
+                            var newUserId = AnsiConsole.Prompt(new TextPrompt<string>("User [cyan]ID[/]:").AllowEmpty());
+                            if (string.IsNullOrWhiteSpace(newUserId))
+                            {
+                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                WaitForKeyPress();
+                                break;
+                            }
+
+                            var newName = AnsiConsole.Ask<string>("Display [cyan]name[/]:");
+                            var newEmail = AnsiConsole.Ask<string>("[cyan]Email[/]:");
+
+                            var newRole = new MenuBuilder<string?>()
+                                .WithTitle("Select role:")
+                                .AddOption("A", "Admin", "Admin")
+                                .AddOption("F", "FeedOwner", "FeedOwner")
+                                .AllowCancel()
+                                .Show();
+
+                            if (newRole == null)
+                            {
+                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                WaitForKeyPress();
+                                break;
+                            }
+
+                            var newOwnedFeeds = new List<string>();
+                            if (newRole == "FeedOwner")
+                            {
+                                var feedsInput = AnsiConsole.Ask("Feed IDs to own [grey](comma-separated, or Enter for none)[/]:", string.Empty);
+                                if (!string.IsNullOrWhiteSpace(feedsInput))
+                                {
+                                    newOwnedFeeds = feedsInput.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+                                }
+                            }
+
+                            try
+                            {
+                                var createBody = JsonSerializer.Serialize(new
+                                {
+                                    id = newUserId.Trim(),
+                                    name = newName.Trim(),
+                                    email = newEmail.Trim(),
+                                    role = newRole,
+                                    ownedFeeds = newOwnedFeeds
+                                });
+
+                                var createResponse = await httpClient.PostAsync("/api/users",
+                                    new StringContent(createBody, System.Text.Encoding.UTF8, "application/json"), cancellationToken);
+
+                                if (createResponse.IsSuccessStatusCode)
+                                {
+                                    var createJson = await createResponse.Content.ReadAsStringAsync(cancellationToken);
+                                    var createData = JsonSerializer.Deserialize<JsonElement>(createJson);
+
+                                    AnsiConsole.MarkupLine("[green]✓[/] User created successfully");
+                                    AnsiConsole.WriteLine();
+
+                                    if (createData.TryGetProperty("apiKey", out var apiKeyEl))
+                                    {
+                                        AnsiConsole.MarkupLine($"[yellow bold]API Key (save now, won't be shown again):[/]");
+                                        AnsiConsole.MarkupLine($"[cyan]{Markup.Escape(apiKeyEl.GetString() ?? "")}[/]");
+                                    }
+                                }
+                                else
+                                {
+                                    var errorContent = await createResponse.Content.ReadAsStringAsync(cancellationToken);
+                                    AnsiConsole.MarkupLine($"[red]✗[/] Failed to create user: {createResponse.StatusCode}");
+                                    if (!string.IsNullOrEmpty(errorContent))
+                                    {
+                                        AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                                    }
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                AnsiConsole.MarkupLine($"[red]✗[/] Error: {ex.Message}");
+                            }
+                            WaitForKeyPress();
+                            break;
+
+                        case "delete":
+                            var deleteUserId = AnsiConsole.Prompt(new TextPrompt<string>("User ID to delete:").AllowEmpty());
+                            if (string.IsNullOrWhiteSpace(deleteUserId))
+                            {
+                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                WaitForKeyPress();
+                                break;
+                            }
+
+                            var confirmDelete = new MenuBuilder<bool?>()
+                                .WithTitle($"Delete user [cyan]{Markup.Escape(deleteUserId)}[/]?")
+                                .WithHint("(Y/N)")
+                                .AddOption("Y", "Yes", true)
+                                .AddOption("N", "No", false)
+                                .AllowCancel(true, false)
+                                .Show();
+
+                            if (confirmDelete != true)
+                            {
+                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                WaitForKeyPress();
+                                break;
+                            }
+
+                            try
+                            {
+                                var deleteResponse = await httpClient.DeleteAsync($"/api/users/{Uri.EscapeDataString(deleteUserId.Trim())}", cancellationToken);
+                                AnsiConsole.MarkupLine(deleteResponse.IsSuccessStatusCode
+                                    ? $"[green]✓[/] User '{Markup.Escape(deleteUserId)}' deleted"
+                                    : $"[red]✗[/] Failed to delete user: {deleteResponse.StatusCode}");
+                            }
+                            catch (Exception ex)
+                            {
+                                AnsiConsole.MarkupLine($"[red]✗[/] Error: {ex.Message}");
+                            }
+                            WaitForKeyPress();
+                            break;
+
+                        case "grant":
+                            var grantUserId = AnsiConsole.Prompt(new TextPrompt<string>("User ID to grant ownership:").AllowEmpty());
+                            if (string.IsNullOrWhiteSpace(grantUserId))
+                            {
+                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                WaitForKeyPress();
+                                break;
+                            }
+
+                            var grantFeedId = AnsiConsole.Prompt(new TextPrompt<string>("Feed ID to grant:").AllowEmpty());
+                            if (string.IsNullOrWhiteSpace(grantFeedId))
+                            {
+                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                WaitForKeyPress();
+                                break;
+                            }
+
+                            try
+                            {
+                                var grantBody = JsonSerializer.Serialize(new { feedId = grantFeedId.Trim() });
+                                var grantResponse = await httpClient.PostAsync(
+                                    $"/api/users/{Uri.EscapeDataString(grantUserId.Trim())}/feeds",
+                                    new StringContent(grantBody, System.Text.Encoding.UTF8, "application/json"), cancellationToken);
+
+                                AnsiConsole.MarkupLine(grantResponse.IsSuccessStatusCode
+                                    ? $"[green]✓[/] Feed '{Markup.Escape(grantFeedId)}' granted to '{Markup.Escape(grantUserId)}'"
+                                    : $"[red]✗[/] Failed to grant: {grantResponse.StatusCode}");
+                            }
+                            catch (Exception ex)
+                            {
+                                AnsiConsole.MarkupLine($"[red]✗[/] Error: {ex.Message}");
+                            }
+                            WaitForKeyPress();
+                            break;
+
+                        case "revoke":
+                            var revokeUserId = AnsiConsole.Prompt(new TextPrompt<string>("User ID to revoke from:").AllowEmpty());
+                            if (string.IsNullOrWhiteSpace(revokeUserId))
+                            {
+                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                WaitForKeyPress();
+                                break;
+                            }
+
+                            var revokeFeedId = AnsiConsole.Prompt(new TextPrompt<string>("Feed ID to revoke:").AllowEmpty());
+                            if (string.IsNullOrWhiteSpace(revokeFeedId))
+                            {
+                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                WaitForKeyPress();
+                                break;
+                            }
+
+                            try
+                            {
+                                var revokeResponse = await httpClient.DeleteAsync(
+                                    $"/api/users/{Uri.EscapeDataString(revokeUserId.Trim())}/feeds/{Uri.EscapeDataString(revokeFeedId.Trim())}", cancellationToken);
+
+                                AnsiConsole.MarkupLine(revokeResponse.IsSuccessStatusCode
+                                    ? $"[green]✓[/] Feed '{Markup.Escape(revokeFeedId)}' revoked from '{Markup.Escape(revokeUserId)}'"
+                                    : $"[red]✗[/] Failed to revoke: {revokeResponse.StatusCode}");
+                            }
+                            catch (Exception ex)
+                            {
+                                AnsiConsole.MarkupLine($"[red]✗[/] Error: {ex.Message}");
+                            }
+                            WaitForKeyPress();
+                            break;
+
+                        case "rotate":
+                            var rotateUserId = AnsiConsole.Prompt(new TextPrompt<string>("User ID to rotate key for:").AllowEmpty());
+                            if (string.IsNullOrWhiteSpace(rotateUserId))
+                            {
+                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                WaitForKeyPress();
+                                break;
+                            }
+
+                            var confirmRotate = new MenuBuilder<bool?>()
+                                .WithTitle($"Rotate API key for [cyan]{Markup.Escape(rotateUserId)}[/]?")
+                                .WithHint("(Y/N)")
+                                .AddOption("Y", "Yes", true)
+                                .AddOption("N", "No", false)
+                                .AllowCancel(true, false)
+                                .Show();
+
+                            if (confirmRotate != true)
+                            {
+                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                WaitForKeyPress();
+                                break;
+                            }
+
+                            try
+                            {
+                                var rotateResponse = await httpClient.PostAsync(
+                                    $"/api/users/{Uri.EscapeDataString(rotateUserId.Trim())}/key/regenerate", null, cancellationToken);
+
+                                if (rotateResponse.IsSuccessStatusCode)
+                                {
+                                    var rotateJson = await rotateResponse.Content.ReadAsStringAsync(cancellationToken);
+                                    var rotateData = JsonSerializer.Deserialize<JsonElement>(rotateJson);
+
+                                    AnsiConsole.MarkupLine("[green]✓[/] API key rotated");
+                                    AnsiConsole.WriteLine();
+
+                                    if (rotateData.TryGetProperty("apiKey", out var newKeyEl))
+                                    {
+                                        AnsiConsole.MarkupLine($"[yellow bold]New API Key:[/]");
+                                        AnsiConsole.MarkupLine($"[cyan]{Markup.Escape(newKeyEl.GetString() ?? "")}[/]");
+                                    }
+                                }
+                                else
+                                {
+                                    AnsiConsole.MarkupLine($"[red]✗[/] Failed to rotate key: {rotateResponse.StatusCode}");
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                AnsiConsole.MarkupLine($"[red]✗[/] Error: {ex.Message}");
+                            }
+                            WaitForKeyPress();
+                            break;
+                    }
                     break;
 
                 case MenuChoice.Delete:
@@ -1025,7 +1352,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         AnsiConsole.WriteLine();
     }
 
-    private static MenuChoice ShowMenu(FeedConfig? currentFeed, bool isConnected)
+    private static MenuChoice ShowMenu(FeedConfig? currentFeed, bool isConnected, CurrentUserInfo? currentUser)
     {
         if (currentFeed != null)
         {
@@ -1038,14 +1365,22 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             AnsiConsole.WriteLine();
         }
 
-        return new MenuBuilder<MenuChoice>()
+        var menu = new MenuBuilder<MenuChoice>()
             .WithTitle("What would you like to do?")
             .WithHint("(arrow keys or highlighted letter)")
             .AddOption("L", "List episodes", MenuChoice.List)
             .AddOption("P", "Push episodes", MenuChoice.Push)
             .AddOption("D", "Delete episodes", MenuChoice.Delete)
             .AddOption("O", "Move/Copy episodes", MenuChoice.MoveCopy)
-            .AddOption("I", "Icon management", MenuChoice.Icon)
+            .AddOption("I", "Icon management", MenuChoice.Icon);
+
+        // Only show User Management for Admin users
+        if (currentUser?.Role == "Admin")
+        {
+            menu.AddOption("U", "User management", MenuChoice.UserManagement);
+        }
+
+        return menu
             .AddOption("M", "Manage feeds", MenuChoice.ManageFeeds)
             .AddOption("F", "Switch feed", MenuChoice.SwitchFeed)
             .AddOption("E", "Environment", MenuChoice.SwitchEnvironment)
@@ -1062,6 +1397,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         Delete,
         MoveCopy,
         Icon,
+        UserManagement,
         SwitchFeed,
         ManageFeeds,
         Preferences,
