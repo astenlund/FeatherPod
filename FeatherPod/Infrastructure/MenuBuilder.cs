@@ -51,23 +51,21 @@ internal class MenuBuilder<T>
             AnsiConsole.Markup($"[bold]{_title}[/] ");
             AnsiConsole.MarkupLine($"[grey]{_hint}[/]");
 
+            // Print blank line before options (reduces flicker on redraw)
+            Console.WriteLine();
+
             while (true)
             {
                 if (!isFirstRender)
                 {
-                    // Move cursor up to the start of the menu area using ANSI escape code
-                    // This works regardless of buffer position since we use relative movement
-                    Console.Write($"\x1b[{totalLines}A");
+                    // Move cursor up to the start of options using ANSI escape code
+                    Console.Write($"\x1b[{_options.Count}A");
                 }
-
-                // Clear line and render blank line
-                Console.Write("\x1b[2K"); // Clear entire line
-                Console.WriteLine();
 
                 // Render options
                 for (var i = 0; i < _options.Count; i++)
                 {
-                    Console.Write("\x1b[2K"); // Clear entire line
+                    Console.Write("\r"); // Return to start of line
 
                     var option = _options[i];
                     var prefix = i == selected ? "[cyan]>[/] " : "  ";
@@ -75,7 +73,9 @@ internal class MenuBuilder<T>
                     var label = option.Formatter?.Invoke(i) ?? option.Label;
                     var formattedLabel = FormatLabelWithShortcut(label, option.Shortcut, i == selected);
 
-                    AnsiConsole.MarkupLine($"{prefix}{formattedLabel}");
+                    AnsiConsole.Markup($"{prefix}{formattedLabel}");
+                    Console.Write("\x1b[K"); // Clear from cursor to end of line
+                    Console.WriteLine();
                 }
 
                 isFirstRender = false;
