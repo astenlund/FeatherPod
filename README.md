@@ -271,8 +271,9 @@ FeatherPod user grant
 FeatherPod user revoke
 
 # Configuration
-FeatherPod config show       # Show current API key (masked)
+FeatherPod config show       # Show current settings
 FeatherPod config set api-key <key>  # Set API key
+FeatherPod config set normalization true|false  # Enable/disable audio normalization
 FeatherPod config generate   # Generate appsettings files from defaults
 FeatherPod config generate --select  # Choose which files to generate
 
@@ -287,7 +288,11 @@ FeatherPod -e Test feed list
 FeatherPod
 ```
 
-API keys are stored in your user profile (`%APPDATA%\FeatherPod\preferences.json`). The CLI prompts for the API key on first use and saves it automatically. Existing API keys from `.Local.json` files are auto-migrated.
+**User preferences** are stored in `%APPDATA%\FeatherPod\preferences.json`:
+- API keys (per environment)
+- Audio normalization enabled/disabled (defaults to enabled)
+
+The CLI prompts for the API key on first use and saves it automatically.
 
 **Single-file distribution:** The CLI embeds default configuration as resources. Run `FeatherPod config generate` to create local config files for customization.
 

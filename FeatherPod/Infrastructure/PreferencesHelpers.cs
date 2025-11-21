@@ -4,7 +4,7 @@ using Spectre.Console;
 
 namespace FeatherPod.Infrastructure;
 
-internal static class ApiKeyHelpers
+internal static class PreferencesHelpers
 {
     /// <summary>
     /// Gets the path to the user preferences file in AppData.
@@ -13,14 +13,6 @@ internal static class ApiKeyHelpers
     {
         var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         return Path.Combine(appDataPath, "FeatherPod", "preferences.json");
-    }
-
-    /// <summary>
-    /// Gets the path to the legacy local settings file (for migration).
-    /// </summary>
-    internal static string GetLegacyLocalSettingsPath(string environment)
-    {
-        return Path.Combine(AppContext.BaseDirectory, $"appsettings.{environment}.Local.json");
     }
 
     /// <summary>
@@ -71,54 +63,27 @@ internal static class ApiKeyHelpers
     }
 
     /// <summary>
-    /// Gets the current API key from user preferences, with migration from legacy .Local.json files.
+    /// Gets the current API key from user preferences.
     /// </summary>
     internal static string? GetApiKey(string environment)
     {
-        // First check AppData preferences
         var preferencesPath = GetPreferencesPath();
-        if (File.Exists(preferencesPath))
+        if (!File.Exists(preferencesPath))
         {
-            try
-            {
-                var content = File.ReadAllText(preferencesPath);
-                var root = JsonNode.Parse(content);
-                var apiKey = root?["Environments"]?[environment]?["ApiKey"]?.GetValue<string>();
-                if (!string.IsNullOrEmpty(apiKey))
-                {
-                    return apiKey;
-                }
-            }
-            catch
-            {
-                // Fall through to legacy check
-            }
+            return null;
         }
 
-        // Check legacy .Local.json and migrate if found
-        var legacyPath = GetLegacyLocalSettingsPath(environment);
-        if (File.Exists(legacyPath))
+        try
         {
-            try
-            {
-                var content = File.ReadAllText(legacyPath);
-                var root = JsonNode.Parse(content);
-                var apiKey = root?["Api"]?["ApiKey"]?.GetValue<string>();
+            var content = File.ReadAllText(preferencesPath);
+            var root = JsonNode.Parse(content);
 
-                if (!string.IsNullOrEmpty(apiKey))
-                {
-                    // Auto-migrate to AppData
-                    SaveApiKey(environment, apiKey);
-                    return apiKey;
-                }
-            }
-            catch
-            {
-                // Ignore errors reading legacy file
-            }
+            return root?["Environments"]?[environment]?["ApiKey"]?.GetValue<string>();
         }
-
-        return null;
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>
@@ -162,5 +127,69 @@ internal static class ApiKeyHelpers
         return apiKey.Length <= 8
             ? new('*', apiKey.Length)
             : $"{apiKey[..4]}{"*".PadRight(apiKey.Length - 8, '*')}{apiKey[^4..]}";
+    }
+
+    /// <summary>
+    /// Gets the audio normalization preference from user preferences.
+    /// Returns null if not set (will use appsettings default).
+    /// </summary>
+    internal static bool? GetNormalizationEnabled()
+    {
+        var preferencesPath = GetPreferencesPath();
+        if (!File.Exists(preferencesPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var content = File.ReadAllText(preferencesPath);
+            var root = JsonNode.Parse(content);
+            var enabled = root?["AudioNormalization"]?["Enabled"];
+
+            return enabled?.GetValue<bool>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Sets the audio normalization preference in user preferences.
+    /// </summary>
+    internal static void SetNormalizationEnabled(bool enabled)
+    {
+        var filePath = GetPreferencesPath();
+        var directory = Path.GetDirectoryName(filePath)!;
+
+        if (!Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        JsonObject root;
+
+        if (File.Exists(filePath))
+        {
+            var existingContent = File.ReadAllText(filePath);
+            root = JsonNode.Parse(existingContent)?.AsObject() ?? new JsonObject();
+        }
+        else
+        {
+            root = new();
+        }
+
+        // Ensure AudioNormalization section exists
+        if (!root.ContainsKey("AudioNormalization"))
+        {
+            root["AudioNormalization"] = new JsonObject();
+        }
+
+        root["AudioNormalization"]!["Enabled"] = enabled;
+
+        // Write back with nice formatting
+        var options = new JsonSerializerOptions { WriteIndented = true };
+        File.WriteAllText(filePath, root.ToJsonString(options));
     }
 }

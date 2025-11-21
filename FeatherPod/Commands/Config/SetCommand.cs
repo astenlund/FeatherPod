@@ -13,6 +13,34 @@ internal sealed class SetCommand : Command<ConfigSetSettings>
         AnsiConsole.MarkupLine("[bold]FeatherPod Configuration[/]");
         AnsiConsole.WriteLine();
 
+        // Handle normalization setting (global, not per-environment)
+        if (settings.Key.Equals("normalization", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(settings.Value))
+            {
+                AnsiConsole.MarkupLine("[red]Value required.[/] Use: [cyan]true[/] or [cyan]false[/]");
+
+                return 1;
+            }
+
+            if (!bool.TryParse(settings.Value, out var enabled))
+            {
+                AnsiConsole.MarkupLine($"[red]Invalid value:[/] {Markup.Escape(settings.Value)}. Use: [cyan]true[/] or [cyan]false[/]");
+
+                return 1;
+            }
+
+            PreferencesHelpers.SetNormalizationEnabled(enabled);
+
+            var filePath = PreferencesHelpers.GetPreferencesPath();
+
+            AnsiConsole.MarkupLine($"[green]✓[/] Audio normalization {(enabled ? "enabled" : "disabled")}");
+            AnsiConsole.MarkupLine($"[grey]Saved to {filePath}[/]");
+
+            return 0;
+        }
+
+        // Handle api-key setting (per-environment)
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null)
         {
@@ -22,7 +50,7 @@ internal sealed class SetCommand : Command<ConfigSetSettings>
         if (!settings.Key.Equals("api-key", StringComparison.OrdinalIgnoreCase))
         {
             AnsiConsole.MarkupLine($"[red]Unknown configuration key:[/] {Markup.Escape(settings.Key)}");
-            AnsiConsole.MarkupLine("Available keys: [cyan]api-key[/]");
+            AnsiConsole.MarkupLine("Available keys: [cyan]api-key[/], [cyan]normalization[/]");
 
             return 1;
         }
@@ -34,11 +62,11 @@ internal sealed class SetCommand : Command<ConfigSetSettings>
             return 1;
         }
 
-        ApiKeyHelpers.SaveApiKey(env, settings.Value);
+        PreferencesHelpers.SaveApiKey(env, settings.Value);
 
-        var filePath = ApiKeyHelpers.GetPreferencesPath();
+        var prefsPath = PreferencesHelpers.GetPreferencesPath();
 
-        AnsiConsole.MarkupLine($"[green]✓[/] API key saved to [cyan]{filePath}[/]");
+        AnsiConsole.MarkupLine($"[green]✓[/] API key saved to [cyan]{prefsPath}[/]");
 
         return 0;
     }

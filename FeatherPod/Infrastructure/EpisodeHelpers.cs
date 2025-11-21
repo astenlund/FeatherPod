@@ -72,9 +72,13 @@ internal static class EpisodeHelpers
 
         try
         {
-            // Load audio normalization configuration
+            // Load audio normalization configuration from appsettings (for LUFS target, etc.)
             var normalizationConfig = new AudioNormalizationConfig();
             configuration.GetSection("AudioNormalization").Bind(normalizationConfig);
+
+            // Get normalization enabled from user preferences (defaults to true)
+            var userPref = PreferencesHelpers.GetNormalizationEnabled();
+            normalizationConfig.Enabled = userPref ?? true;
 
             // Check if normalization is enabled
             var fileToUpload = filePath;

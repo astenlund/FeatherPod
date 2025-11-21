@@ -60,10 +60,7 @@ internal static class EnvironmentHelpers
         builder.AddJsonFile("appsettings.json", optional: true);
         builder.AddJsonFile($"appsettings.{environment}.json", optional: true);
 
-        // 3. .Local.json for backwards compatibility
-        builder.AddJsonFile($"appsettings.{environment}.Local.json", optional: true);
-
-        // 4. Environment variables override all
+        // 3. Environment variables override all
         builder.AddEnvironmentVariables();
 
         return builder.Build();
@@ -86,18 +83,18 @@ internal static class EnvironmentHelpers
             ?? throw new InvalidOperationException("Api:BaseUrl not configured in appsettings.json");
 
         // Get API key from preferences (with auto-migration from legacy .Local.json)
-        var apiKey = ApiKeyHelpers.GetApiKey(environment);
+        var apiKey = PreferencesHelpers.GetApiKey(environment);
 
         if (string.IsNullOrEmpty(apiKey))
         {
             // Prompt user to enter API key
-            if (!ApiKeyHelpers.PromptAndSaveApiKey(environment))
+            if (!PreferencesHelpers.PromptAndSaveApiKey(environment))
             {
                 return (null, null);
             }
 
             // Get the newly saved API key
-            apiKey = ApiKeyHelpers.GetApiKey(environment);
+            apiKey = PreferencesHelpers.GetApiKey(environment);
             if (string.IsNullOrEmpty(apiKey))
             {
                 AnsiConsole.MarkupLine("[red]ERROR:[/] Failed to load API key after saving.");
