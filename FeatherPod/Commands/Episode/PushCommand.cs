@@ -17,8 +17,10 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
 
-        var (httpClient, configuration) = await EnvironmentHelpers.SetupHttpClientAsync(env);
-        if (httpClient == null || configuration == null) return 1;
+        var (httpClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+        if (httpClient == null) return 1;
+
+        var configuration = EnvironmentHelpers.BuildConfiguration(env);
 
         // Select feed (use -f flag if provided, otherwise prompt user to select)
         FeedConfig? feed;

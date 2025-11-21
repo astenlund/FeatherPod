@@ -29,16 +29,18 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         if (env == null) return 1;
 
         HttpClient? httpClient = null;
+        CurrentUserInfo? currentUser = null;
 
         var isConnected = false;
         var autoConnect = PreferencesHelpers.GetAutoConnectEnabled() ?? true;
 
         if (autoConnect)
         {
-            var (client, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+            var (client, userInfo) = await EnvironmentHelpers.SetupHttpClientAsync(env);
             if (client != null)
             {
                 httpClient = client;
+                currentUser = userInfo;
                 isConnected = true;
             }
             else
@@ -281,10 +283,11 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                         if (autoConnect)
                         {
-                            var (newClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+                            var (newClient, userInfo) = await EnvironmentHelpers.SetupHttpClientAsync(env);
                             if (newClient != null)
                             {
                                 httpClient = newClient;
+                                currentUser = userInfo;
                                 isConnected = true;
                                 // Select feed for new environment
                                 currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
@@ -292,6 +295,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             else
                             {
                                 httpClient = null;
+                                currentUser = null;
                                 isConnected = false;
                                 currentFeed = null;
                             }
@@ -299,6 +303,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         else
                         {
                             httpClient = null;
+                            currentUser = null;
                             isConnected = false;
                             currentFeed = null;
                             var configuration = EnvironmentHelpers.BuildConfiguration(env);
@@ -352,10 +357,11 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                         // Clear screen and show connection progress like at startup
                                         ShowHeader(env);
 
-                                        var (newClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+                                        var (newClient, userInfo) = await EnvironmentHelpers.SetupHttpClientAsync(env);
                                         if (newClient != null)
                                         {
                                             httpClient = newClient;
+                                            currentUser = userInfo;
                                             isConnected = true;
                                             currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
                                         }
@@ -376,10 +382,11 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 // Clear screen and show connection progress like at startup
                                 ShowHeader(env);
 
-                                var (newClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+                                var (newClient, userInfo) = await EnvironmentHelpers.SetupHttpClientAsync(env);
                                 if (newClient != null)
                                 {
                                     httpClient = newClient;
+                                    currentUser = userInfo;
                                     isConnected = true;
                                     currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
                                 }
@@ -426,15 +433,17 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 if (await AnsiConsole.ConfirmAsync("Reconnect with new API key?", true, cancellationToken))
                                 {
                                     ShowHeader(env);
-                                    var (newClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+                                    var (newClient, userInfo) = await EnvironmentHelpers.SetupHttpClientAsync(env);
                                     if (newClient != null)
                                     {
                                         httpClient = newClient;
+                                        currentUser = userInfo;
                                         isConnected = true;
                                         currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
                                     }
                                     else
                                     {
+                                        currentUser = null;
                                         isConnected = false;
                                         currentFeed = null;
                                     }
@@ -513,15 +522,17 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                                             // Reconnect with new key
                                             ShowHeader(env);
-                                            var (newClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+                                            var (newClient, userInfo) = await EnvironmentHelpers.SetupHttpClientAsync(env);
                                             if (newClient != null)
                                             {
                                                 httpClient = newClient;
+                                                currentUser = userInfo;
                                                 isConnected = true;
                                                 currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
                                             }
                                             else
                                             {
+                                                currentUser = null;
                                                 isConnected = false;
                                                 currentFeed = null;
                                             }
@@ -533,6 +544,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                             AnsiConsole.MarkupLine("[yellow]You will need to manually update your API key to reconnect.[/]");
                                             isConnected = false;
                                             httpClient = null;
+                                            currentUser = null;
                                             currentFeed = null;
                                             WaitForKeyPress();
                                         }
