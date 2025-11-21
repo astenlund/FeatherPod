@@ -351,6 +351,7 @@ internal static class FeedHelpers
         {
             AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
             AnsiConsole.WriteLine();
+
             return (false, null);
         }
 
@@ -362,16 +363,15 @@ internal static class FeedHelpers
             {
                 AnsiConsole.MarkupLine($"[green]✓[/] Deleted feed: [cyan]{Markup.Escape(selectedFeed.Id)}[/]");
                 AnsiConsole.WriteLine();
+
                 return (true, selectedFeed.Id);
             }
-            else
+
+            var errorContent = await response.Content.ReadAsStringAsync();
+            AnsiConsole.MarkupLine($"[red]Failed to delete feed:[/] {response.StatusCode}");
+            if (!string.IsNullOrEmpty(errorContent))
             {
-                var errorContent = await response.Content.ReadAsStringAsync();
-                AnsiConsole.MarkupLine($"[red]Failed to delete feed:[/] {response.StatusCode}");
-                if (!string.IsNullOrEmpty(errorContent))
-                {
-                    AnsiConsole.MarkupLine($"[red]Error:[/] {errorContent}");
-                }
+                AnsiConsole.MarkupLine($"[red]Error:[/] {errorContent}");
             }
         }
         catch (HttpRequestException ex)
@@ -402,25 +402,25 @@ internal static class FeedHelpers
             {
                 case "create":
                     var newFeed = await CreateFeedAsync(httpClient);
-                    return new FeedManagementResult { CreatedFeed = newFeed };
+                    return new() { CreatedFeed = newFeed };
                 case "rename":
                     var (wasRenamed, oldId, renamedFeed) = await RenameFeedAsync(httpClient);
                     if (wasRenamed)
                     {
-                        return new FeedManagementResult { RenamedFeed = renamedFeed, OldFeedId = oldId };
+                        return new() { RenamedFeed = renamedFeed, OldFeedId = oldId };
                     }
                     break;
                 case "delete":
                     var (wasDeleted, deletedFeedId) = await DeleteFeedAsync(httpClient);
                     if (wasDeleted)
                     {
-                        return new FeedManagementResult { DeletedFeedId = deletedFeedId };
+                        return new() { DeletedFeedId = deletedFeedId };
                     }
                     break;
             }
         }
 
-        return new FeedManagementResult(); // User cancelled (pressed Esc)
+        return new(); // User cancelled (pressed Esc)
     }
 
     internal record FeedManagementResult

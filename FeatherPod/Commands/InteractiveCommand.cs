@@ -74,7 +74,6 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     if (currentFeed == null)
                     {
                         AnsiConsole.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
-                        AnsiConsole.WriteLine();
                         WaitForKeyPress();
                     }
                     else
@@ -104,7 +103,6 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     {
                         currentFeed = result.CreatedFeed;
                         AnsiConsole.MarkupLine($"Switched to feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
-                        AnsiConsole.WriteLine();
                         WaitForKeyPress();
                     }
                     // Handle renamed feed
@@ -115,7 +113,6 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         {
                             currentFeed = result.RenamedFeed;
                             AnsiConsole.MarkupLine($"Switched to renamed feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
-                            AnsiConsole.WriteLine();
                         }
                         WaitForKeyPress();
                     }

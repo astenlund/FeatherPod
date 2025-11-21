@@ -30,7 +30,6 @@ internal static class EpisodeHelpers
             if (episodes.Count == 0)
             {
                 AnsiConsole.MarkupLine("[yellow]No episodes found.[/]");
-                AnsiConsole.WriteLine();
                 return;
             }
 
@@ -117,7 +116,6 @@ internal static class EpisodeHelpers
             if (episodes.Count == 0)
             {
                 AnsiConsole.MarkupLine("[yellow]No episodes to delete.[/]");
-                AnsiConsole.WriteLine();
                 return false;
             }
 
