@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\FeatherPod.Shared\FeatherPod.Shared.csproj" />
@@ -15,18 +15,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="appsettings.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="appsettings.Dev.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="appsettings.Test.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="appsettings.Prod.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <!-- Embed appsettings as resources for single-file distribution -->
+    <EmbeddedResource Include="appsettings.json" />
+    <EmbeddedResource Include="appsettings.Dev.json" />
+    <EmbeddedResource Include="appsettings.Test.json" />
+    <EmbeddedResource Include="appsettings.Prod.json" />
+    <!-- .Local.json files are user-created overrides, copy if present -->
     <None Update="appsettings.*.Local.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

@@ -20,12 +20,12 @@ internal sealed class ShowCommand : Command<ConfigShowSettings>
         }
 
         var apiKey = ApiKeyHelpers.GetApiKey(env);
-        var filePath = ApiKeyHelpers.GetLocalSettingsPath(env);
+        var filePath = ApiKeyHelpers.GetPreferencesPath();
 
         if (string.IsNullOrEmpty(apiKey))
         {
             AnsiConsole.MarkupLine($"[yellow]API Key:[/] (not configured)");
-            AnsiConsole.MarkupLine($"[grey]File: {filePath}[/]");
+            AnsiConsole.MarkupLine($"[grey]Preferences: {filePath}[/]");
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine($"Run [cyan]FeatherPod config set api-key <your-key>[/] to configure.");
         }
@@ -33,7 +33,7 @@ internal sealed class ShowCommand : Command<ConfigShowSettings>
         {
             AnsiConsole.MarkupLine($"[cyan]API Key:[/] {ApiKeyHelpers.MaskApiKey(apiKey)}");
             AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine($"[grey]File: {filePath}[/]");
+            AnsiConsole.MarkupLine($"[grey]Preferences: {filePath}[/]");
         }
 
         AnsiConsole.WriteLine();

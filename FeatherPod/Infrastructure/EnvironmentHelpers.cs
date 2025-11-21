@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Spectre.Console;
 
@@ -45,20 +46,47 @@ internal static class EnvironmentHelpers
             .Show();
     }
 
+    internal static IConfiguration BuildConfiguration(string environment)
+    {
+        var builder = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory);
+
+        // 1. Load embedded resources first (defaults)
+        var assembly = Assembly.GetExecutingAssembly();
+        AddEmbeddedJsonConfig(builder, assembly, "FeatherPod.appsettings.json");
+        AddEmbeddedJsonConfig(builder, assembly, $"FeatherPod.appsettings.{environment}.json");
+
+        // 2. Physical files override embedded (optional)
+        builder.AddJsonFile("appsettings.json", optional: true);
+        builder.AddJsonFile($"appsettings.{environment}.json", optional: true);
+
+        // 3. .Local.json for backwards compatibility
+        builder.AddJsonFile($"appsettings.{environment}.Local.json", optional: true);
+
+        // 4. Environment variables override all
+        builder.AddEnvironmentVariables();
+
+        return builder.Build();
+    }
+
+    private static void AddEmbeddedJsonConfig(IConfigurationBuilder builder, Assembly assembly, string resourceName)
+    {
+        var stream = assembly.GetManifestResourceStream(resourceName);
+        if (stream != null)
+        {
+            builder.AddJsonStream(stream);
+        }
+    }
+
     internal static async Task<(HttpClient?, IConfiguration?)> SetupHttpClientAsync(string environment)
     {
-        var configuration = new ConfigurationBuilder()
-            .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.json", optional: false)
-            .AddJsonFile($"appsettings.{environment}.json", optional: true)
-            .AddJsonFile($"appsettings.{environment}.Local.json", optional: true)
-            .AddEnvironmentVariables()
-            .Build();
+        var configuration = BuildConfiguration(environment);
 
         var apiBaseUrl = configuration["Api:BaseUrl"]
             ?? throw new InvalidOperationException("Api:BaseUrl not configured in appsettings.json");
 
-        var apiKey = configuration["Api:ApiKey"];
+        // Get API key from preferences (with auto-migration from legacy .Local.json)
+        var apiKey = ApiKeyHelpers.GetApiKey(environment);
 
         if (string.IsNullOrEmpty(apiKey))
         {
@@ -68,16 +96,8 @@ internal static class EnvironmentHelpers
                 return (null, null);
             }
 
-            // Reload configuration to get the new API key
-            configuration = new ConfigurationBuilder()
-                .SetBasePath(AppContext.BaseDirectory)
-                .AddJsonFile("appsettings.json", optional: false)
-                .AddJsonFile($"appsettings.{environment}.json", optional: true)
-                .AddJsonFile($"appsettings.{environment}.Local.json", optional: true)
-                .AddEnvironmentVariables()
-                .Build();
-
-            apiKey = configuration["Api:ApiKey"];
+            // Get the newly saved API key
+            apiKey = ApiKeyHelpers.GetApiKey(environment);
             if (string.IsNullOrEmpty(apiKey))
             {
                 AnsiConsole.MarkupLine("[red]ERROR:[/] Failed to load API key after saving.");
