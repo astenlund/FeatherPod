@@ -6,6 +6,7 @@ using Spectre.Console.Cli;
 
 using ConfigCommands = FeatherPod.Commands.Config;
 using FeedCommands = FeatherPod.Commands.Feed;
+using PreferencesCommands = FeatherPod.Commands.Preferences;
 using UserCommands = FeatherPod.Commands.User;
 
 namespace FeatherPod;
@@ -130,23 +131,73 @@ internal class Program
 
             config.AddBranch("config", cfg =>
             {
-                cfg.SetDescription("CLI configuration commands");
-
-                cfg.AddCommand<ConfigCommands.SetCommand>("set")
-                    .WithDescription("Set a configuration value")
-                    .WithExample("config", "set", "api-key", "<your-api-key>")
-                    .WithExample("config", "set", "api-key", "<your-api-key>", "-e", "Test");
-
-                cfg.AddCommand<ConfigCommands.ShowCommand>("show")
-                    .WithDescription("Show current configuration")
-                    .WithExample("config", "show")
-                    .WithExample("config", "show", "-e", "Test");
+                cfg.SetDescription("Configuration file commands");
 
                 cfg.AddCommand<ConfigCommands.GenerateCommand>("generate")
                     .WithDescription("Generate configuration files from defaults")
                     .WithExample("config", "generate")
                     .WithExample("config", "generate", "--select");
             });
+
+            config.AddBranch("preferences", prefs =>
+            {
+                prefs.SetDescription("User preferences commands");
+
+                prefs.AddCommand<PreferencesCommands.ShowCommand>("show")
+                    .WithDescription("Show all preferences")
+                    .WithExample("preferences", "show")
+                    .WithExample("preferences", "show", "-e", "Test");
+
+                prefs.AddBranch("api-key", apiKey =>
+                {
+                    apiKey.SetDescription("API key preferences");
+
+                    apiKey.AddCommand<PreferencesCommands.ApiKey.ShowCommand>("show")
+                        .WithDescription("Show current API key")
+                        .WithExample("preferences", "api-key", "show")
+                        .WithExample("preferences", "api-key", "show", "-e", "Test");
+
+                    apiKey.AddCommand<PreferencesCommands.ApiKey.SetCommand>("set")
+                        .WithDescription("Set API key")
+                        .WithExample("preferences", "api-key", "set", "<key>")
+                        .WithExample("preferences", "api-key", "set", "<key>", "-e", "Test");
+                });
+
+                prefs.AddBranch("normalization", norm =>
+                {
+                    norm.SetDescription("Audio normalization preferences");
+
+                    norm.AddCommand<PreferencesCommands.Normalization.ShowCommand>("show")
+                        .WithDescription("Show normalization setting")
+                        .WithExample("preferences", "normalization", "show");
+
+                    norm.AddCommand<PreferencesCommands.Normalization.EnableCommand>("enable")
+                        .WithDescription("Enable audio normalization")
+                        .WithExample("preferences", "normalization", "enable");
+
+                    norm.AddCommand<PreferencesCommands.Normalization.DisableCommand>("disable")
+                        .WithDescription("Disable audio normalization")
+                        .WithExample("preferences", "normalization", "disable");
+                });
+
+                prefs.AddBranch("auto-connect", autoConnect =>
+                {
+                    autoConnect.SetDescription("Auto-connect preferences");
+
+                    autoConnect.AddCommand<PreferencesCommands.AutoConnect.ShowCommand>("show")
+                        .WithDescription("Show auto-connect setting")
+                        .WithExample("preferences", "auto-connect", "show");
+
+                    autoConnect.AddCommand<PreferencesCommands.AutoConnect.EnableCommand>("enable")
+                        .WithDescription("Enable auto-connect on startup")
+                        .WithExample("preferences", "auto-connect", "enable");
+
+                    autoConnect.AddCommand<PreferencesCommands.AutoConnect.DisableCommand>("disable")
+                        .WithDescription("Disable auto-connect on startup")
+                        .WithExample("preferences", "auto-connect", "disable");
+                });
+            })
+            .WithAlias("prefs");
 
             // Version command
             config.AddCommand<VersionCommand>("version")

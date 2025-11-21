@@ -270,11 +270,17 @@ FeatherPod user rotate-key
 FeatherPod user grant
 FeatherPod user revoke
 
-# Configuration
-FeatherPod config show       # Show current settings
-FeatherPod config set api-key <key>  # Set API key
-FeatherPod config set normalization true|false  # Enable/disable audio normalization
-FeatherPod config set auto-connect true|false  # Enable/disable auto-connect on startup
+# Preferences
+FeatherPod preferences show                      # Show all preferences
+FeatherPod preferences api-key show              # Show current API key
+FeatherPod preferences api-key set <key>         # Set API key
+FeatherPod preferences normalization enable      # Enable audio normalization
+FeatherPod preferences normalization disable     # Disable audio normalization
+FeatherPod preferences auto-connect enable       # Enable auto-connect on startup
+FeatherPod preferences auto-connect disable      # Disable auto-connect on startup
+FeatherPod prefs ...                             # Alias for preferences
+
+# Configuration files
 FeatherPod config generate   # Generate appsettings files from defaults
 FeatherPod config generate --select  # Choose which files to generate
 
@@ -294,7 +300,7 @@ FeatherPod
 - Audio normalization enabled/disabled (defaults to enabled)
 - Auto-connect on startup enabled/disabled (defaults to enabled)
 
-The CLI prompts for the API key on first use and saves it automatically. If auto-connect is disabled, interactive mode starts in disconnected mode and you can connect manually via Settings.
+The CLI prompts for the API key on first use and saves it automatically. If auto-connect is disabled, interactive mode starts in disconnected mode and you can connect manually via Preferences.
 
 **Single-file distribution:** The CLI embeds default configuration as resources. Run `FeatherPod config generate` to create local config files for customization.
 

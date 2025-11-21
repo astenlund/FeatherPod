@@ -3,7 +3,6 @@ using FeatherPod.Shared.Models;
 using FeatherPod.Settings;
 using Spectre.Console;
 using Spectre.Console.Cli;
-
 using System.Text.Json;
 
 using EpisodeDeleteCommand = FeatherPod.Commands.Episode.DeleteCommand;
@@ -45,7 +44,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             else
             {
                 // Connection failed, continue in disconnected mode
-                AnsiConsole.MarkupLine("[yellow]Continuing in disconnected mode. Use Settings to configure API key or change auto-connect.[/]");
+                AnsiConsole.MarkupLine("[yellow]Continuing in disconnected mode. Use Preferences to configure API key or change auto-connect.[/]");
                 AnsiConsole.WriteLine();
             }
         }
@@ -56,7 +55,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             var apiBaseUrl = configuration["Api:BaseUrl"] ?? "unknown";
             AnsiConsole.MarkupLine($"API: [cyan]{apiBaseUrl}/api[/]");
             AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("[yellow]Auto-connect disabled. Use Settings to connect manually.[/]");
+            AnsiConsole.MarkupLine("[yellow]Auto-connect disabled. Use Preferences to connect manually.[/]");
             AnsiConsole.WriteLine();
         }
 
@@ -105,7 +104,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.List:
                     if (!isConnected || httpClient == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Preferences to connect.[/]");
                     }
                     else if (currentFeed == null)
                     {
@@ -122,7 +121,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.Delete:
                     if (!isConnected || httpClient == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Preferences to connect.[/]");
                         WaitForKeyPress();
                     }
                     else if (currentFeed == null)
@@ -158,7 +157,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.SwitchFeed:
                     if (!isConnected || httpClient == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Preferences to connect.[/]");
                         WaitForKeyPress();
                     }
                     else
@@ -175,7 +174,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.ManageFeeds:
                     if (!isConnected || httpClient == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Preferences to connect.[/]");
                         WaitForKeyPress();
                         break;
                     }
@@ -306,7 +305,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             var apiBaseUrl = configuration["Api:BaseUrl"] ?? "unknown";
                             AnsiConsole.MarkupLine($"API: [cyan]{apiBaseUrl}/api[/]");
                             AnsiConsole.WriteLine();
-                            AnsiConsole.MarkupLine("[yellow]Auto-connect disabled. Use Settings to connect manually.[/]");
+                            AnsiConsole.MarkupLine("[yellow]Auto-connect disabled. Use Preferences to connect manually.[/]");
                             AnsiConsole.WriteLine();
                         }
 
@@ -315,9 +314,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     }
                     break;
 
-                case MenuChoice.Settings:
-                    var settingsChoice = new MenuBuilder<string?>()
-                        .WithTitle("Settings:")
+                case MenuChoice.Preferences:
+                    var preferencesChoice = new MenuBuilder<string?>()
+                        .WithTitle("Preferences:")
                         .WithHint("(arrow keys or A/C/N/K/R, Esc to go back)")
                         .AddOption("A", "Auto-connect on startup", "autoconnect")
                         .AddOption("C", "Connect now", "connect")
@@ -327,7 +326,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         .AllowCancel()
                         .Show();
 
-                    switch (settingsChoice)
+                    switch (preferencesChoice)
                     {
                         case "autoconnect":
                             var currentAutoConnect = PreferencesHelpers.GetAutoConnectEnabled() ?? true;
@@ -605,7 +604,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             .AddOption("M", "Manage feeds", MenuChoice.ManageFeeds)
             .AddOption("F", "Switch feed", MenuChoice.SwitchFeed)
             .AddOption("E", "Environment", MenuChoice.SwitchEnvironment)
-            .AddOption("S", "Settings", MenuChoice.Settings)
+            .AddOption("P", "Preferences", MenuChoice.Preferences)
             .AddOption("Q", "Quit", MenuChoice.Quit)
             .AllowCancel(false) // Don't allow escape on main menu
             .Show();
@@ -617,7 +616,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         Delete,
         SwitchFeed,
         ManageFeeds,
-        Settings,
+        Preferences,
         SwitchEnvironment,
         Quit
     }
