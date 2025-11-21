@@ -192,4 +192,68 @@ internal static class PreferencesHelpers
         var options = new JsonSerializerOptions { WriteIndented = true };
         File.WriteAllText(filePath, root.ToJsonString(options));
     }
+
+    /// <summary>
+    /// Gets the auto-connect preference from user preferences.
+    /// Returns null if not set (defaults to true - auto-connect enabled).
+    /// </summary>
+    internal static bool? GetAutoConnectEnabled()
+    {
+        var preferencesPath = GetPreferencesPath();
+        if (!File.Exists(preferencesPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var content = File.ReadAllText(preferencesPath);
+            var root = JsonNode.Parse(content);
+            var enabled = root?["AutoConnect"]?["Enabled"];
+
+            return enabled?.GetValue<bool>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Sets the auto-connect preference in user preferences.
+    /// </summary>
+    internal static void SetAutoConnectEnabled(bool enabled)
+    {
+        var filePath = GetPreferencesPath();
+        var directory = Path.GetDirectoryName(filePath)!;
+
+        if (!Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        JsonObject root;
+
+        if (File.Exists(filePath))
+        {
+            var existingContent = File.ReadAllText(filePath);
+            root = JsonNode.Parse(existingContent)?.AsObject() ?? new JsonObject();
+        }
+        else
+        {
+            root = new();
+        }
+
+        // Ensure AutoConnect section exists
+        if (!root.ContainsKey("AutoConnect"))
+        {
+            root["AutoConnect"] = new JsonObject();
+        }
+
+        root["AutoConnect"]!["Enabled"] = enabled;
+
+        // Write back with nice formatting
+        var options = new JsonSerializerOptions { WriteIndented = true };
+        File.WriteAllText(filePath, root.ToJsonString(options));
+    }
 }

@@ -23,19 +23,19 @@ internal sealed class ShowCommand : Command<ConfigShowSettings>
         var filePath = PreferencesHelpers.GetPreferencesPath();
 
         // Show API key status
-        if (string.IsNullOrEmpty(apiKey))
-        {
-            AnsiConsole.MarkupLine($"[yellow]API Key:[/] (not configured)");
-        }
-        else
-        {
-            AnsiConsole.MarkupLine($"[cyan]API Key:[/] {PreferencesHelpers.MaskApiKey(apiKey)}");
-        }
+        AnsiConsole.MarkupLine(string.IsNullOrEmpty(apiKey)
+            ? $"[yellow]API Key:[/] (not configured)"
+            : $"[cyan]API Key:[/] {PreferencesHelpers.MaskApiKey(apiKey)}");
 
         // Show normalization preference (defaults to enabled)
         var normPref = PreferencesHelpers.GetNormalizationEnabled();
         var normEnabled = normPref ?? true;
         AnsiConsole.MarkupLine($"[cyan]Normalization:[/] {(normEnabled ? "enabled" : "disabled")}{(normPref.HasValue ? "" : " (default)")}");
+
+        // Show auto-connect preference (defaults to enabled)
+        var autoConnectPref = PreferencesHelpers.GetAutoConnectEnabled();
+        var autoConnectEnabled = autoConnectPref ?? true;
+        AnsiConsole.MarkupLine($"[cyan]Auto-connect:[/] {(autoConnectEnabled ? "enabled" : "disabled")}{(autoConnectPref.HasValue ? "" : " (default)")}");
 
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine($"[grey]Preferences: {filePath}[/]");

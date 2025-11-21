@@ -27,15 +27,47 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment, useDefault: true);
         if (env == null) return 1;
 
-        var (httpClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
-        if (httpClient == null) return 1;
+        HttpClient? httpClient = null;
 
-        // Select initial feed
-        var currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
-        if (currentFeed == null)
+        var isConnected = false;
+        var autoConnect = PreferencesHelpers.GetAutoConnectEnabled() ?? true;
+
+        if (autoConnect)
         {
-            AnsiConsole.MarkupLine("[yellow]No feeds available. Create one using 'M: Manage Feeds'.[/]");
+            var (client, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+            if (client != null)
+            {
+                httpClient = client;
+                isConnected = true;
+            }
+            else
+            {
+                // Connection failed, continue in disconnected mode
+                AnsiConsole.MarkupLine("[yellow]Continuing in disconnected mode. Use Settings to configure API key or change auto-connect.[/]");
+                AnsiConsole.WriteLine();
+            }
+        }
+        else
+        {
+            // Auto-connect disabled
+            var configuration = EnvironmentHelpers.BuildConfiguration(env);
+            var apiBaseUrl = configuration["Api:BaseUrl"] ?? "unknown";
+            AnsiConsole.MarkupLine($"API: [cyan]{apiBaseUrl}/api[/]");
             AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[yellow]Auto-connect disabled. Use Settings to connect manually.[/]");
+            AnsiConsole.WriteLine();
+        }
+
+        // Select initial feed (only if connected)
+        FeedConfig? currentFeed = null;
+        if (isConnected && httpClient != null)
+        {
+            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+            if (currentFeed == null)
+            {
+                AnsiConsole.MarkupLine("[yellow]No feeds available. Create one using 'M: Manage Feeds'.[/]");
+                AnsiConsole.WriteLine();
+            }
         }
 
         // Skip clear on first iteration (header already shown from setup)
@@ -47,25 +79,33 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             if (!skipClear)
             {
                 // Clear screen and redraw header
-                Console.Write("\e[2J\e[H");
+                ShowHeader(env);
+                if (httpClient != null)
+                {
+                    AnsiConsole.MarkupLine($"API: [cyan]{httpClient.BaseAddress}[/]");
+                }
+                else
+                {
+                    var configuration = EnvironmentHelpers.BuildConfiguration(env);
+                    var apiBaseUrl = configuration["Api:BaseUrl"] ?? "unknown";
+                    AnsiConsole.MarkupLine($"API: [cyan]{apiBaseUrl}[/]");
+                }
                 AnsiConsole.WriteLine();
-                AnsiConsole.MarkupLine("[bold]FeatherPod Episode Manager[/]");
-                AnsiConsole.WriteLine();
-                AnsiConsole.MarkupLine($"Environment: [cyan]{env}[/]");
-                AnsiConsole.WriteLine();
-                AnsiConsole.MarkupLine($"API: [cyan]{httpClient.BaseAddress}[/]");
-                AnsiConsole.WriteLine();
-                AnsiConsole.MarkupLine("[green]✓[/] Connected");
+                AnsiConsole.MarkupLine(isConnected ? "[green]✓[/] Connected" : "[red]✗[/] Disconnected");
                 AnsiConsole.WriteLine();
             }
             skipClear = false;
 
-            var choice = ShowMenu(currentFeed);
+            var choice = ShowMenu(currentFeed, isConnected);
 
             switch (choice)
             {
                 case MenuChoice.List:
-                    if (currentFeed == null)
+                    if (!isConnected || httpClient == null)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                    }
+                    else if (currentFeed == null)
                     {
                         AnsiConsole.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
                         AnsiConsole.WriteLine();
@@ -78,7 +118,12 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     break;
 
                 case MenuChoice.Delete:
-                    if (currentFeed == null)
+                    if (!isConnected || httpClient == null)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        WaitForKeyPress();
+                    }
+                    else if (currentFeed == null)
                     {
                         AnsiConsole.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
                         WaitForKeyPress();
@@ -109,15 +154,30 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     break;
 
                 case MenuChoice.SwitchFeed:
-                    var newFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
-                    if (newFeed != null)
+                    if (!isConnected || httpClient == null)
                     {
-                        currentFeed = newFeed;
+                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        WaitForKeyPress();
+                    }
+                    else
+                    {
+                        var newFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+                        if (newFeed != null)
+                        {
+                            currentFeed = newFeed;
+                        }
                     }
                     // No pause - feed title shows in menu header
                     break;
 
                 case MenuChoice.ManageFeeds:
+                    if (!isConnected || httpClient == null)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
                     var manageChoice = new MenuBuilder<string?>()
                         .WithTitle("Manage Feeds:")
                         .WithHint("(arrow keys or C/U/R/D, Esc to go back)")
@@ -213,19 +273,39 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     if (newEnv != null && newEnv != env)
                     {
                         env = newEnv;
+                        autoConnect = PreferencesHelpers.GetAutoConnectEnabled() ?? true;
 
                         // Clear screen and show connection progress
-                        Console.Write("\e[2J\e[H");
-                        AnsiConsole.WriteLine();
-                        AnsiConsole.MarkupLine("[bold]FeatherPod Episode Manager[/]");
-                        AnsiConsole.WriteLine();
+                        ShowHeader(env);
 
-                        var (newClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
-                        if (newClient != null)
+                        if (autoConnect)
                         {
-                            httpClient = newClient;
-                            // Select feed for new environment
-                            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                            var (newClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+                            if (newClient != null)
+                            {
+                                httpClient = newClient;
+                                isConnected = true;
+                                // Select feed for new environment
+                                currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                            }
+                            else
+                            {
+                                httpClient = null;
+                                isConnected = false;
+                                currentFeed = null;
+                            }
+                        }
+                        else
+                        {
+                            httpClient = null;
+                            isConnected = false;
+                            currentFeed = null;
+                            var configuration = EnvironmentHelpers.BuildConfiguration(env);
+                            var apiBaseUrl = configuration["Api:BaseUrl"] ?? "unknown";
+                            AnsiConsole.MarkupLine($"API: [cyan]{apiBaseUrl}/api[/]");
+                            AnsiConsole.WriteLine();
+                            AnsiConsole.MarkupLine("[yellow]Auto-connect disabled. Use Settings to connect manually.[/]");
+                            AnsiConsole.WriteLine();
                         }
 
                         // Skip clear on next iteration (header already shown)
@@ -236,28 +316,91 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.Settings:
                     var settingsChoice = new MenuBuilder<string?>()
                         .WithTitle("Settings:")
-                        .WithHint("(arrow keys or N, Esc to go back)")
+                        .WithHint("(arrow keys or A/C/N, Esc to go back)")
+                        .AddOption("A", "Auto-connect on startup", "autoconnect")
+                        .AddOption("C", "Connect now", "connect")
                         .AddOption("N", "Audio normalization", "normalization")
                         .AllowCancel()
                         .Show();
 
-                    if (settingsChoice == "normalization")
+                    switch (settingsChoice)
                     {
-                        var currentNorm = PreferencesHelpers.GetNormalizationEnabled() ?? true;
-                        var normChoice = new MenuBuilder<bool?>()
-                            .WithTitle($"Audio normalization is currently {(currentNorm ? "enabled" : "disabled")}:")
-                            .WithHint("(arrow keys or E/D, Esc to cancel)")
-                            .AddOption("E", "Enable normalization", true)
-                            .AddOption("D", "Disable normalization", false)
-                            .AllowCancel()
-                            .Show();
+                        case "autoconnect":
+                            var currentAutoConnect = PreferencesHelpers.GetAutoConnectEnabled() ?? true;
+                            var autoConnectChoice = new MenuBuilder<bool?>()
+                                .WithTitle($"Auto-connect on startup is currently {(currentAutoConnect ? "enabled" : "disabled")}:")
+                                .WithHint("(arrow keys or E/D, Esc to cancel)")
+                                .AddOption("E", "Enable auto-connect", true)
+                                .AddOption("D", "Disable auto-connect", false)
+                                .AllowCancel()
+                                .Show();
 
-                        if (normChoice.HasValue)
-                        {
-                            PreferencesHelpers.SetNormalizationEnabled(normChoice.Value);
-                            AnsiConsole.MarkupLine($"[green]✓[/] Audio normalization {(normChoice.Value ? "enabled" : "disabled")}");
-                            WaitForKeyPress();
-                        }
+                            if (autoConnectChoice.HasValue)
+                            {
+                                PreferencesHelpers.SetAutoConnectEnabled(autoConnectChoice.Value);
+                                AnsiConsole.MarkupLine($"[green]✓[/] Auto-connect on startup {(autoConnectChoice.Value ? "enabled" : "disabled")}");
+
+                                // If enabling and not connected, offer to connect now
+                                if (autoConnectChoice.Value && !isConnected)
+                                {
+                                    AnsiConsole.WriteLine();
+                                    if (await AnsiConsole.ConfirmAsync("Connect now?", defaultValue: true, cancellationToken: cancellationToken))
+                                    {
+                                        // Clear screen and show connection progress like at startup
+                                        ShowHeader(env);
+
+                                        var (newClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+                                        if (newClient != null)
+                                        {
+                                            httpClient = newClient;
+                                            isConnected = true;
+                                            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                                        }
+                                        skipClear = true;
+                                    }
+                                }
+                            }
+                            break;
+
+                        case "connect":
+                            if (isConnected)
+                            {
+                                AnsiConsole.MarkupLine("[green]✓[/] Already connected.");
+                                WaitForKeyPress();
+                            }
+                            else
+                            {
+                                // Clear screen and show connection progress like at startup
+                                ShowHeader(env);
+
+                                var (newClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+                                if (newClient != null)
+                                {
+                                    httpClient = newClient;
+                                    isConnected = true;
+                                    currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                                }
+                                skipClear = true;
+                            }
+                            break;
+
+                        case "normalization":
+                            var currentNorm = PreferencesHelpers.GetNormalizationEnabled() ?? true;
+                            var normChoice = new MenuBuilder<bool?>()
+                                .WithTitle($"Audio normalization is currently {(currentNorm ? "enabled" : "disabled")}:")
+                                .WithHint("(arrow keys or E/D, Esc to cancel)")
+                                .AddOption("E", "Enable normalization", true)
+                                .AddOption("D", "Disable normalization", false)
+                                .AllowCancel()
+                                .Show();
+
+                            if (normChoice.HasValue)
+                            {
+                                PreferencesHelpers.SetNormalizationEnabled(normChoice.Value);
+                                AnsiConsole.MarkupLine($"[green]✓[/] Audio normalization {(normChoice.Value ? "enabled" : "disabled")}");
+                                WaitForKeyPress();
+                            }
+                            break;
                     }
                     break;
 
@@ -276,11 +419,26 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         Console.ReadKey(true);
     }
 
-    private static MenuChoice ShowMenu(FeedConfig? currentFeed)
+    private static void ShowHeader(string env)
+    {
+        Console.Write("\e[2J\e[H");
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine("[bold]FeatherPod Episode Manager[/]");
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine($"Environment: [cyan]{env}[/]");
+        AnsiConsole.WriteLine();
+    }
+
+    private static MenuChoice ShowMenu(FeedConfig? currentFeed, bool isConnected)
     {
         if (currentFeed != null)
         {
             AnsiConsole.MarkupLine($"Feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
+            AnsiConsole.WriteLine();
+        }
+        else if (!isConnected)
+        {
+            AnsiConsole.MarkupLine("[grey]No feed selected (not connected)[/]");
             AnsiConsole.WriteLine();
         }
 
