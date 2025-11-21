@@ -1,6 +1,7 @@
 using FeatherPod.Infrastructure;
 using FeatherPod.Shared.Models;
 using FeatherPod.Settings;
+using FeatherPod.Settings.Episode;
 using Spectre.Console;
 using Spectre.Console.Cli;
 using System.Text.Json;
@@ -106,7 +107,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.List:
                     if (!isConnected || httpClient == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Preferences to connect.[/]");
+                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
                     }
                     else if (currentFeed == null)
                     {
@@ -120,10 +121,347 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     WaitForKeyPress();
                     break;
 
+                case MenuChoice.Push:
+                    if (!isConnected || httpClient == null)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    // Select feed if none selected
+                    var pushFeed = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+                    if (pushFeed == null)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]No feeds available. Create one using 'M: Manage Feeds'.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    // Prompt for file path(s)
+                    var filePattern = AnsiConsole.Prompt(
+                        new TextPrompt<string>("Enter file path(s) [grey](supports wildcards like *.mp3, comma-separated)[/]:")
+                            .AllowEmpty());
+
+                    if (string.IsNullOrWhiteSpace(filePattern))
+                    {
+                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    // Expand file patterns
+                    var filesToUpload = EpisodeHelpers.ExpandFilePatterns(filePattern);
+                    if (filesToUpload.Count == 0)
+                    {
+                        AnsiConsole.MarkupLine($"[red]Error:[/] No files found matching pattern: {Markup.Escape(filePattern)}");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    AnsiConsole.MarkupLine($"Found [cyan]{filesToUpload.Count}[/] file(s)");
+                    AnsiConsole.WriteLine();
+
+                    // Confirm files
+                    var fileListDisplay = filesToUpload.Count <= 5
+                        ? string.Join(", ", filesToUpload.Select(f => $"[cyan]{Markup.Escape(Path.GetFileName(f))}[/]"))
+                        : $"[cyan]{filesToUpload.Count}[/] files";
+
+                    var confirmUpload = new MenuBuilder<bool?>()
+                        .WithTitle($"Upload {fileListDisplay} to feed [cyan]{Markup.Escape(pushFeed.Title)}[/]?")
+                        .WithHint("(Y/N, Esc to cancel)")
+                        .AddOption("Y", "Yes", true)
+                        .AddOption("N", "No", false)
+                        .AllowCancel(true, false)
+                        .Show();
+
+                    if (confirmUpload != true)
+                    {
+                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    AnsiConsole.WriteLine();
+
+                    // For single file, offer optional metadata prompts
+                    string? pushTitle = null;
+                    string? pushDescription = null;
+                    string? pushSummary = null;
+
+                    if (filesToUpload.Count == 1)
+                    {
+                        pushTitle = AnsiConsole.Prompt(
+                            new TextPrompt<string>("Title [grey](Enter to use filename)[/]:")
+                                .AllowEmpty());
+
+                        pushDescription = AnsiConsole.Prompt(
+                            new TextPrompt<string>("Description [grey](optional)[/]:")
+                                .AllowEmpty());
+
+                        if (!string.IsNullOrEmpty(pushDescription))
+                        {
+                            pushSummary = AnsiConsole.Prompt(
+                                new TextPrompt<string>("Summary [grey](optional, defaults to description)[/]:")
+                                    .AllowEmpty());
+                        }
+
+                        AnsiConsole.WriteLine();
+                    }
+
+                    // Prompt for date source
+                    var dateSource = new MenuBuilder<bool?>()
+                        .WithTitle("Published date source:")
+                        .WithHint("(C/F, Esc to cancel)")
+                        .AddOption("C", "Current date/time", false)
+                        .AddOption("F", "Extract from file metadata", true)
+                        .AllowCancel()
+                        .Show();
+
+                    if (dateSource == null)
+                    {
+                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    AnsiConsole.WriteLine();
+
+                    // Prompt for normalization (default to user preference)
+                    var currentNormPref = PreferencesHelpers.GetNormalizationEnabled() ?? true;
+                    var normalizeChoice = new MenuBuilder<bool?>()
+                        .WithTitle($"Normalize audio to -16 LUFS? [grey](current preference: {(currentNormPref ? "enabled" : "disabled")})[/]")
+                        .WithHint("(Y/N, Enter for default)")
+                        .AddOption("Y", "Yes - Normalize", true)
+                        .AddOption("N", "No - Keep original", false)
+                        .AllowCancel(true, currentNormPref)
+                        .Show();
+
+                    if (normalizeChoice == null)
+                    {
+                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    AnsiConsole.WriteLine();
+
+                    // Temporarily set normalization preference for upload
+                    var originalNormPref = PreferencesHelpers.GetNormalizationEnabled();
+                    PreferencesHelpers.SetNormalizationEnabled(normalizeChoice.Value);
+
+                    try
+                    {
+                        var configuration = EnvironmentHelpers.BuildConfiguration(env);
+                        var uploadSettings = new PushSettings
+                        {
+                            Files = filePattern,
+                            Title = string.IsNullOrWhiteSpace(pushTitle) ? null : pushTitle.Trim(),
+                            Description = string.IsNullOrWhiteSpace(pushDescription) ? null : pushDescription.Trim(),
+                            Summary = string.IsNullOrWhiteSpace(pushSummary) ? null : pushSummary.Trim(),
+                            ExtractDateFromFile = dateSource
+                        };
+
+                        var successCount = 0;
+                        var failureCount = 0;
+
+                        foreach (var file in filesToUpload)
+                        {
+                            var success = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, pushFeed, file, uploadSettings);
+                            if (success)
+                                successCount++;
+                            else
+                                failureCount++;
+
+                            AnsiConsole.WriteLine();
+                        }
+
+                        // Summary
+                        if (successCount > 0)
+                        {
+                            AnsiConsole.MarkupLine($"[green]✓[/] Successfully uploaded: {successCount}");
+                        }
+                        if (failureCount > 0)
+                        {
+                            AnsiConsole.MarkupLine($"[red]✗[/] Failed: {failureCount}");
+                        }
+                    }
+                    finally
+                    {
+                        // Restore original normalization preference
+                        if (originalNormPref.HasValue)
+                            PreferencesHelpers.SetNormalizationEnabled(originalNormPref.Value);
+                    }
+
+                    WaitForKeyPress();
+                    break;
+
+                case MenuChoice.MoveCopy:
+                    if (!isConnected || httpClient == null)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    var moveCopyChoice = new MenuBuilder<string?>()
+                        .WithTitle("Move/Copy episodes:")
+                        .WithHint("(M/C, Esc to go back)")
+                        .AddOption("M", "Move episodes", "move")
+                        .AddOption("C", "Copy episodes", "copy")
+                        .AllowCancel()
+                        .Show();
+
+                    if (moveCopyChoice == null)
+                        break;
+
+                    var isMove = moveCopyChoice == "move";
+                    var actionVerb = isMove ? "Move" : "Copy";
+                    var actionPast = isMove ? "Moved" : "Copied";
+
+                    // Select source feed
+                    var sourceFeed = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, contextMessage: "Select source feed:");
+                    if (sourceFeed == null)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]No feeds available.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    // Get episodes from source
+                    var sourceEpisodes = await EpisodeHelpers.GetEpisodesAsync(httpClient, sourceFeed.Id);
+                    if (sourceEpisodes == null || sourceEpisodes.Count == 0)
+                    {
+                        AnsiConsole.MarkupLine($"[yellow]Feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]' has no episodes.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    // Select episodes (multi-select)
+                    var episodesToProcess = EpisodeHelpers.SelectEpisodesMulti(sourceEpisodes);
+                    if (episodesToProcess.Count == 0)
+                    {
+                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    AnsiConsole.WriteLine();
+
+                    // Get target feeds (exclude source for move)
+                    var allFeeds = await FeedHelpers.GetFeedsAsync(httpClient);
+                    var availableTargets = isMove
+                        ? allFeeds.Where(f => f.Id != sourceFeed.Id).ToList()
+                        : allFeeds;
+
+                    if (availableTargets.Count == 0)
+                    {
+                        AnsiConsole.MarkupLine("[red]Error:[/] No target feeds available.");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    // Select target feed
+                    var targetMenu = new MenuBuilder<FeedConfig?>()
+                        .WithTitle("Select target feed:")
+                        .AllowCancel();
+
+                    foreach (var feed in availableTargets)
+                    {
+                        targetMenu.AddOption(null, Markup.Escape(feed.Title), feed);
+                    }
+
+                    var targetFeed = targetMenu.Show();
+                    if (targetFeed == null)
+                    {
+                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    // Validate for copy: can't copy to same feed
+                    if (!isMove && sourceFeed.Id == targetFeed.Id)
+                    {
+                        AnsiConsole.MarkupLine("[red]Error:[/] Cannot copy episodes within the same feed.");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    AnsiConsole.WriteLine();
+
+                    // Confirmation
+                    var epWord = episodesToProcess.Count == 1 ? "episode" : "episodes";
+                    var confirmAction = new MenuBuilder<bool?>()
+                        .WithTitle($"{actionVerb} [cyan]{episodesToProcess.Count}[/] {epWord} from '[cyan]{Markup.Escape(sourceFeed.Title)}[/]' to '[cyan]{Markup.Escape(targetFeed.Title)}[/]'?")
+                        .WithHint("(Y/N, Esc to cancel)")
+                        .AddOption("Y", "Yes", true)
+                        .AddOption("N", "No", false)
+                        .AllowCancel(true, false)
+                        .Show();
+
+                    if (confirmAction != true)
+                    {
+                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    AnsiConsole.WriteLine();
+
+                    // Process episodes with progress bar
+                    var mcSuccessCount = 0;
+                    var mcFailureCount = 0;
+
+                    await AnsiConsole.Progress()
+                        .Columns(
+                            new TaskDescriptionColumn(),
+                            new ProgressBarColumn(),
+                            new PercentageColumn(),
+                            new SpinnerColumn())
+                        .StartAsync(async ctx =>
+                        {
+                            var task = ctx.AddTask($"{actionVerb}ing {episodesToProcess.Count} {epWord}", maxValue: episodesToProcess.Count);
+
+                            foreach (var episode in episodesToProcess)
+                            {
+                                bool success;
+                                if (isMove)
+                                {
+                                    success = await EpisodeHelpers.MoveEpisodeAsync(httpClient, sourceFeed.Id, episode.Id, targetFeed.Id);
+                                }
+                                else
+                                {
+                                    success = await EpisodeHelpers.CopyEpisodeAsync(httpClient, sourceFeed.Id, episode.Id, targetFeed.Id);
+                                }
+
+                                if (success)
+                                    mcSuccessCount++;
+                                else
+                                    mcFailureCount++;
+
+                                task.Increment(1);
+                            }
+                        });
+
+                    AnsiConsole.WriteLine();
+
+                    // Summary
+                    if (mcSuccessCount > 0)
+                    {
+                        AnsiConsole.MarkupLine($"[green]✓[/] {actionPast} {mcSuccessCount} of {episodesToProcess.Count} episode(s) successfully");
+                    }
+                    if (mcFailureCount > 0)
+                    {
+                        AnsiConsole.MarkupLine($"[red]✗[/] Failed to {actionVerb.ToLower()} {mcFailureCount} episode(s)");
+                    }
+
+                    WaitForKeyPress();
+                    break;
+
                 case MenuChoice.Delete:
                     if (!isConnected || httpClient == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Preferences to connect.[/]");
+                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
                         WaitForKeyPress();
                     }
                     else if (currentFeed == null)
@@ -612,11 +950,13 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             .WithTitle("What would you like to do?")
             .WithHint("(arrow keys or highlighted letter)")
             .AddOption("L", "List episodes", MenuChoice.List)
-            .AddOption("D", "Delete episode", MenuChoice.Delete)
+            .AddOption("P", "Push episodes", MenuChoice.Push)
+            .AddOption("D", "Delete episodes", MenuChoice.Delete)
+            .AddOption("O", "Move/Copy episodes", MenuChoice.MoveCopy)
             .AddOption("M", "Manage feeds", MenuChoice.ManageFeeds)
             .AddOption("F", "Switch feed", MenuChoice.SwitchFeed)
             .AddOption("E", "Environment", MenuChoice.SwitchEnvironment)
-            .AddOption("P", "Preferences", MenuChoice.Preferences)
+            .AddOption("S", "Settings", MenuChoice.Preferences)
             .AddOption("Q", "Quit", MenuChoice.Quit)
             .AllowCancel(false) // Don't allow escape on main menu
             .Show();
@@ -625,7 +965,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
     private enum MenuChoice
     {
         List,
+        Push,
         Delete,
+        MoveCopy,
         SwitchFeed,
         ManageFeeds,
         Preferences,
