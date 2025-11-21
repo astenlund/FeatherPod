@@ -10,6 +10,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, InteractiveSettings settings, CancellationToken cancellationToken)
     {
+        // Clear screen before any output
+        Console.Write("\e[2J\e[H");
+
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("[bold]FeatherPod Episode Manager[/]");
         AnsiConsole.WriteLine();
@@ -28,9 +31,28 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             AnsiConsole.WriteLine();
         }
 
+        // Skip clear on first iteration (header already shown from setup)
+        var skipClear = true;
+
         // Main menu loop
         while (true)
         {
+            if (!skipClear)
+            {
+                // Clear screen and redraw header
+                Console.Write("\e[2J\e[H");
+                AnsiConsole.WriteLine();
+                AnsiConsole.MarkupLine("[bold]FeatherPod Episode Manager[/]");
+                AnsiConsole.WriteLine();
+                AnsiConsole.MarkupLine($"Environment: [cyan]{env}[/]");
+                AnsiConsole.WriteLine();
+                AnsiConsole.MarkupLine($"API: [cyan]{httpClient.BaseAddress}[/]");
+                AnsiConsole.WriteLine();
+                AnsiConsole.MarkupLine("[green]✓[/] Connected");
+                AnsiConsole.WriteLine();
+            }
+            skipClear = false;
+
             var choice = ShowMenu(currentFeed);
 
             switch (choice)
@@ -45,6 +67,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     {
                         await EpisodeHelpers.ListEpisodesAsync(httpClient, currentFeed);
                     }
+                    WaitForKeyPress();
                     break;
 
                 case MenuChoice.Delete:
@@ -52,10 +75,15 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     {
                         AnsiConsole.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
                         AnsiConsole.WriteLine();
+                        WaitForKeyPress();
                     }
                     else
                     {
-                        await EpisodeHelpers.DeleteEpisodeAsync(httpClient, currentFeed);
+                        var deleted = await EpisodeHelpers.DeleteEpisodeInteractiveAsync(httpClient, currentFeed);
+                        if (deleted.HasValue) // Not cancelled
+                        {
+                            WaitForKeyPress();
+                        }
                     }
                     break;
 
@@ -64,14 +92,8 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     if (newFeed != null)
                     {
                         currentFeed = newFeed;
-                        AnsiConsole.MarkupLine($"Switched to feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
-                        AnsiConsole.WriteLine();
                     }
-                    else
-                    {
-                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
-                        AnsiConsole.WriteLine();
-                    }
+                    // No pause - feed title shows in menu header
                     break;
 
                 case MenuChoice.ManageFeeds:
@@ -83,6 +105,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         currentFeed = result.CreatedFeed;
                         AnsiConsole.MarkupLine($"Switched to feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
                         AnsiConsole.WriteLine();
+                        WaitForKeyPress();
                     }
                     // Handle renamed feed
                     else if (result.RenamedFeed != null)
@@ -94,6 +117,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             AnsiConsole.MarkupLine($"Switched to renamed feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
                             AnsiConsole.WriteLine();
                         }
+                        WaitForKeyPress();
                     }
                     // Handle deleted feed
                     else if (result.DeletedFeedId != null)
@@ -103,6 +127,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         {
                             currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, contextMessage: "Previous feed was deleted.");
                         }
+                        WaitForKeyPress();
                     }
                     else
                     {
@@ -121,10 +146,11 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     if (newEnv != null && newEnv != env)
                     {
                         env = newEnv;
-                        AnsiConsole.Clear();
-                        AnsiConsole.MarkupLine("[bold]FeatherPod Episode Manager[/]");
+
+                        // Clear screen and show connection progress
+                        Console.Write("\e[2J\e[H");
                         AnsiConsole.WriteLine();
-                        AnsiConsole.MarkupLine($"Environment: [cyan]{env}[/]");
+                        AnsiConsole.MarkupLine("[bold]FeatherPod Episode Manager[/]");
                         AnsiConsole.WriteLine();
 
                         var (newClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
@@ -134,17 +160,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             // Select feed for new environment
                             currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
                         }
-                    }
-                    else if (newEnv != null)
-                    {
-                        // Same environment selected - show same output for consistency
-                        AnsiConsole.MarkupLine($"Environment: [cyan]{env}[/]");
-                    }
-                    else
-                    {
-                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
-                        AnsiConsole.WriteLine();
 
+                        // Skip clear on next iteration (header already shown)
+                        skipClear = true;
                     }
                     break;
 
@@ -156,14 +174,23 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         }
     }
 
+    private static void WaitForKeyPress()
+    {
+        AnsiConsole.WriteLine();
+        AnsiConsole.Markup("[grey]Press any key to continue...[/]");
+        Console.ReadKey(true);
+    }
+
     private static MenuChoice ShowMenu(FeedConfig? currentFeed)
     {
-        var title = currentFeed != null
-            ? $"Feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]\n\nWhat would you like to do?"
-            : "What would you like to do?";
+        if (currentFeed != null)
+        {
+            AnsiConsole.MarkupLine($"Feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
+            AnsiConsole.WriteLine();
+        }
 
         return new MenuBuilder<MenuChoice>()
-            .WithTitle(title)
+            .WithTitle("What would you like to do?")
             .WithHint("(arrow keys or highlighted letter)")
             .AddOption("L", "List episodes", MenuChoice.List)
             .AddOption("D", "Delete episode", MenuChoice.Delete)
