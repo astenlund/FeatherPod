@@ -882,12 +882,10 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     if (!isConnected || httpClient == null)
                     {
                         AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
-                        WaitForKeyPress();
                     }
                     else if (currentFeed == null)
                     {
                         AnsiConsole.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
-                        WaitForKeyPress();
                     }
                     else
                     {
@@ -895,23 +893,90 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         if (episodes == null || episodes.Count == 0)
                         {
                             AnsiConsole.MarkupLine("[yellow]No episodes to delete.[/]");
-                            WaitForKeyPress();
                         }
                         else
                         {
                             var selected = EpisodeHelpers.SelectEpisodesMulti(episodes);
-                            if (selected.Count == 1)
+                            if (selected.Count == 0)
+                            {
+                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                            }
+                            else if (selected.Count == 1)
                             {
                                 await EpisodeDeleteCommand.DeleteEpisodeAsync(httpClient, currentFeed.Id, selected[0], cancellationToken: cancellationToken);
-                                WaitForKeyPress();
                             }
-                            else if (selected.Count > 1)
+                            else
                             {
-                                AnsiConsole.MarkupLine("[yellow]Multiple episodes selected. Delete one at a time in interactive mode.[/]");
-                                WaitForKeyPress();
+                                // Batch delete with confirmation
+                                AnsiConsole.WriteLine();
+                                var confirmBatch = new MenuBuilder<bool?>()
+                                    .WithTitle($"Delete [cyan]{selected.Count}[/] episodes from [cyan]{Markup.Escape(currentFeed.Title)}[/]?")
+                                    .WithHint("(Y/N, Esc to cancel)")
+                                    .AddOption("Y", "Yes", true)
+                                    .AddOption("N", "No", false)
+                                    .AllowCancel(true, false)
+                                    .Show();
+
+                                if (confirmBatch != true)
+                                {
+                                    AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                }
+                                else
+                                {
+                                    AnsiConsole.WriteLine();
+
+                                    var delSuccessCount = 0;
+                                    var delFailureCount = 0;
+
+                                    await AnsiConsole.Progress()
+                                        .Columns(
+                                            new TaskDescriptionColumn(),
+                                            new ProgressBarColumn(),
+                                            new PercentageColumn(),
+                                            new SpinnerColumn())
+                                        .StartAsync(async ctx =>
+                                        {
+                                            var task = ctx.AddTask($"Deleting {selected.Count} episodes", maxValue: selected.Count);
+
+                                            foreach (var episode in selected)
+                                            {
+                                                try
+                                                {
+                                                    var deleteResponse = await httpClient.DeleteAsync(
+                                                        $"/api/feeds/{Uri.EscapeDataString(currentFeed.Id)}/episodes/{Uri.EscapeDataString(episode.Id)}", cancellationToken);
+
+                                                    if (deleteResponse.IsSuccessStatusCode)
+                                                        delSuccessCount++;
+                                                    else
+                                                        delFailureCount++;
+                                                }
+                                                catch
+                                                {
+                                                    delFailureCount++;
+                                                }
+
+                                                task.Increment(1);
+                                            }
+                                        });
+
+                                    AnsiConsole.WriteLine();
+
+                                    if (delSuccessCount > 0)
+                                    {
+                                        AnsiConsole.MarkupLine($"[green]✓[/] Deleted {delSuccessCount} of {selected.Count} episode(s)");
+                                    }
+
+                                    if (delFailureCount > 0)
+                                    {
+                                        AnsiConsole.MarkupLine($"[red]✗[/] Failed to delete {delFailureCount} episode(s)");
+                                    }
+                                }
                             }
                         }
                     }
+
+                    WaitForKeyPress();
+
                     break;
 
                 case MenuChoice.SwitchFeed:
