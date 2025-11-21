@@ -1,10 +1,13 @@
 using System.Reflection;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Spectre.Console;
 
 using static System.Net.HttpStatusCode;
 
 namespace FeatherPod.Infrastructure;
+
+internal record CurrentUserInfo(string Id, string Role, List<string> OwnedFeeds);
 
 internal static class EnvironmentHelpers
 {
@@ -79,7 +82,7 @@ internal static class EnvironmentHelpers
         }
     }
 
-    internal static async Task<(HttpClient?, IConfiguration?)> SetupHttpClientAsync(string environment)
+    internal static async Task<(HttpClient?, CurrentUserInfo?)> SetupHttpClientAsync(string environment)
     {
         var configuration = BuildConfiguration(environment);
 
@@ -114,6 +117,8 @@ internal static class EnvironmentHelpers
         };
         httpClient.DefaultRequestHeaders.Add("X-API-Key", apiKey);
 
+        CurrentUserInfo? userInfo = null;
+
         try
         {
             await AnsiConsole.Status()
@@ -122,6 +127,24 @@ internal static class EnvironmentHelpers
                     // Use /api/users/me to verify both connectivity and authentication
                     var response = await httpClient.GetAsync("/api/users/me");
                     response.EnsureSuccessStatusCode();
+
+                    // Parse user info from response
+                    var json = await response.Content.ReadAsStringAsync();
+                    var userData = JsonSerializer.Deserialize<JsonElement>(json);
+
+                    var id = userData.GetProperty("id").GetString() ?? "";
+                    var role = userData.GetProperty("role").GetString() ?? "FeedOwner";
+                    var ownedFeeds = new List<string>();
+
+                    if (userData.TryGetProperty("ownedFeeds", out var feedsElement) && feedsElement.ValueKind == JsonValueKind.Array)
+                    {
+                        ownedFeeds = feedsElement.EnumerateArray()
+                            .Select(e => e.GetString() ?? "")
+                            .Where(s => !string.IsNullOrEmpty(s))
+                            .ToList();
+                    }
+
+                    userInfo = new(id, role, ownedFeeds);
                 });
 
             AnsiConsole.WriteLine();
@@ -147,6 +170,6 @@ internal static class EnvironmentHelpers
             return (null, null);
         }
 
-        return (httpClient, configuration);
+        return (httpClient, userInfo);
     }
 }

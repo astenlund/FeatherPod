@@ -2,6 +2,7 @@ using FeatherPod.Infrastructure;
 using FeatherPod.Settings.Episode;
 using Spectre.Console;
 using Spectre.Console.Cli;
+
 using EpisodeModel = FeatherPod.Shared.Models.Episode;
 using FeedConfig = FeatherPod.Shared.Models.FeedConfig;
 
@@ -18,8 +19,8 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
 
-        var (httpClient, configuration) = await EnvironmentHelpers.SetupHttpClientAsync(env);
-        if (httpClient == null || configuration == null) return 1;
+        var (httpClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+        if (httpClient == null) return 1;
 
         // Determine source feed
         FeedConfig? sourceFeed;
