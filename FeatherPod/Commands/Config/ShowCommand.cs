@@ -19,23 +19,26 @@ internal sealed class ShowCommand : Command<ConfigShowSettings>
             return 1;
         }
 
-        var apiKey = ApiKeyHelpers.GetApiKey(env);
-        var filePath = ApiKeyHelpers.GetPreferencesPath();
+        var apiKey = PreferencesHelpers.GetApiKey(env);
+        var filePath = PreferencesHelpers.GetPreferencesPath();
 
+        // Show API key status
         if (string.IsNullOrEmpty(apiKey))
         {
             AnsiConsole.MarkupLine($"[yellow]API Key:[/] (not configured)");
-            AnsiConsole.MarkupLine($"[grey]Preferences: {filePath}[/]");
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine($"Run [cyan]FeatherPod config set api-key <your-key>[/] to configure.");
         }
         else
         {
-            AnsiConsole.MarkupLine($"[cyan]API Key:[/] {ApiKeyHelpers.MaskApiKey(apiKey)}");
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine($"[grey]Preferences: {filePath}[/]");
+            AnsiConsole.MarkupLine($"[cyan]API Key:[/] {PreferencesHelpers.MaskApiKey(apiKey)}");
         }
 
+        // Show normalization preference (defaults to enabled)
+        var normPref = PreferencesHelpers.GetNormalizationEnabled();
+        var normEnabled = normPref ?? true;
+        AnsiConsole.MarkupLine($"[cyan]Normalization:[/] {(normEnabled ? "enabled" : "disabled")}{(normPref.HasValue ? "" : " (default)")}");
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine($"[grey]Preferences: {filePath}[/]");
         AnsiConsole.WriteLine();
 
         return 0;

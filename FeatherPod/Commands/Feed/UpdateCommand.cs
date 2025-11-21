@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FeatherPod.Infrastructure;
 using FeatherPod.Settings.Feed;
+using FeatherPod.Shared.Models;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -8,6 +9,145 @@ namespace FeatherPod.Commands.Feed;
 
 internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
 {
+    /// <summary>
+    /// Core update operation with interactive prompts - can be called from CLI or InteractiveCommand.
+    /// </summary>
+    public static async Task<FeedOperationResult> UpdateFeedInteractiveAsync(
+        HttpClient httpClient,
+        FeedConfig currentFeed,
+        CancellationToken cancellationToken = default)
+    {
+        AnsiConsole.MarkupLine($"Editing feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
+        AnsiConsole.WriteLine();
+
+        // Let user select which fields to edit
+        var fieldOptions = new List<string>
+        {
+            $"Title: {currentFeed.Title}",
+            $"Author: {currentFeed.Author}",
+            $"Description: {currentFeed.Description ?? "(empty)"}",
+            $"Summary: {currentFeed.Summary ?? "(empty)"}",
+            $"Email: {currentFeed.Email ?? "(empty)"}",
+            $"Language: {currentFeed.Language}",
+            $"Category: {currentFeed.Category ?? "(empty)"}"
+        };
+
+        var selectedFields = AnsiConsole.Prompt(
+            new MultiSelectionPrompt<string>()
+                .Title("Select fields to edit:")
+                .PageSize(10)
+                .InstructionsText("[grey]([blue]Space[/] to toggle, [green]Enter[/] to confirm)[/]")
+                .AddChoices(fieldOptions));
+
+        if (selectedFields.Count == 0)
+        {
+            AnsiConsole.MarkupLine("[grey]No fields selected.[/]");
+
+            return new() { Success = true, FeedId = currentFeed.Id };
+        }
+
+        AnsiConsole.WriteLine();
+
+        var updateFields = new Dictionary<string, object>();
+
+        // Prompt only for selected fields
+        if (selectedFields.Any(f => f.StartsWith("Title:")))
+        {
+            var newTitle = AnsiConsole.Ask("Title:", currentFeed.Title);
+            if (newTitle != currentFeed.Title)
+                updateFields["title"] = newTitle.Trim();
+        }
+
+        if (selectedFields.Any(f => f.StartsWith("Author:")))
+        {
+            var newAuthor = AnsiConsole.Ask("Author:", currentFeed.Author);
+            if (newAuthor != currentFeed.Author)
+                updateFields["author"] = newAuthor.Trim();
+        }
+
+        if (selectedFields.Any(f => f.StartsWith("Description:")))
+        {
+            var newDescription = AnsiConsole.Ask("Description:", currentFeed.Description ?? "");
+            if (newDescription != (currentFeed.Description ?? ""))
+                updateFields["description"] = string.IsNullOrEmpty(newDescription) ? null! : newDescription.Trim();
+        }
+
+        if (selectedFields.Any(f => f.StartsWith("Summary:")))
+        {
+            var newSummary = AnsiConsole.Ask("Summary:", currentFeed.Summary ?? "");
+            if (newSummary != (currentFeed.Summary ?? ""))
+                updateFields["summary"] = string.IsNullOrEmpty(newSummary) ? null! : newSummary.Trim();
+        }
+
+        if (selectedFields.Any(f => f.StartsWith("Email:")))
+        {
+            var newEmail = AnsiConsole.Ask("Email:", currentFeed.Email ?? "");
+            if (newEmail != (currentFeed.Email ?? ""))
+                updateFields["email"] = string.IsNullOrEmpty(newEmail) ? null! : newEmail.Trim();
+        }
+
+        if (selectedFields.Any(f => f.StartsWith("Language:")))
+        {
+            var newLanguage = AnsiConsole.Ask("Language:", currentFeed.Language);
+            if (newLanguage != currentFeed.Language)
+                updateFields["language"] = newLanguage.Trim();
+        }
+
+        if (selectedFields.Any(f => f.StartsWith("Category:")))
+        {
+            var newCategory = AnsiConsole.Ask("Category:", currentFeed.Category ?? "");
+            if (newCategory != (currentFeed.Category ?? ""))
+                updateFields["category"] = string.IsNullOrEmpty(newCategory) ? null! : newCategory.Trim();
+        }
+
+        if (updateFields.Count == 0)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[grey]No changes made.[/]");
+
+            return new() { Success = true, FeedId = currentFeed.Id };
+        }
+
+        try
+        {
+            var json = JsonSerializer.Serialize(updateFields);
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+            var response = await httpClient.PutAsync($"/api/feeds/{currentFeed.Id}", content, cancellationToken);
+
+            if (response.IsSuccessStatusCode)
+            {
+                AnsiConsole.MarkupLine($"[green]✓[/] Updated feed: [cyan]{Markup.Escape(currentFeed.Id)}[/]");
+                AnsiConsole.WriteLine();
+
+                // Show updated fields
+                foreach (var field in updateFields)
+                {
+                    AnsiConsole.MarkupLine($"  {field.Key}: [cyan]{Markup.Escape(field.Value?.ToString() ?? "")}[/]");
+                }
+
+                return new() { Success = true, FeedId = currentFeed.Id };
+            }
+
+            var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            AnsiConsole.MarkupLine($"[red]✗[/] Failed to update feed: {response.StatusCode}");
+
+            if (!string.IsNullOrEmpty(errorContent))
+            {
+                AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+            }
+
+            return new() { Success = false, ErrorMessage = errorContent };
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]✗[/] Error updating feed: {ex.Message}");
+
+            return new() { Success = false, ErrorMessage = ex.Message };
+        }
+    }
+
     public override async Task<int> ExecuteAsync(CommandContext context, UpdateSettings settings, CancellationToken cancellationToken)
     {
         AnsiConsole.WriteLine();
@@ -59,10 +199,17 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
         if (settings.Category != null)
             updateFields["category"] = settings.Category.Trim();
 
+        // Interactive mode if no fields specified
         if (updateFields.Count == 0)
         {
-            AnsiConsole.MarkupLine("[yellow]No fields to update.[/] Use options like --title, --author, --description to specify fields.");
-            return 1;
+            var result = await UpdateFeedInteractiveAsync(httpClient, currentFeed, cancellationToken);
+
+            if (result.Success)
+            {
+                AnsiConsole.WriteLine();
+            }
+
+            return result.Success ? 0 : 1;
         }
 
         try

@@ -6,6 +6,7 @@ using Spectre.Console.Cli;
 
 using EpisodeDeleteCommand = FeatherPod.Commands.Episode.DeleteCommand;
 using EpisodeListCommand = FeatherPod.Commands.Episode.ListCommand;
+using FeedUpdateCommand = FeatherPod.Commands.Feed.UpdateCommand;
 using FeedCreateCommand = FeatherPod.Commands.Feed.CreateCommand;
 using FeedDeleteCommand = FeatherPod.Commands.Feed.DeleteCommand;
 using FeedRenameCommand = FeatherPod.Commands.Feed.RenameCommand;
@@ -119,9 +120,10 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.ManageFeeds:
                     var manageChoice = new MenuBuilder<string?>()
                         .WithTitle("Manage Feeds:")
-                        .WithHint("(arrow keys or C/R/D, Esc to go back)")
+                        .WithHint("(arrow keys or C/U/R/D, Esc to go back)")
                         .AddOption("C", "Create new feed", "create")
-                        .AddOption("R", "Rename feed", "rename")
+                        .AddOption("U", "Update feed metadata", "update")
+                        .AddOption("R", "Rename feed ID", "rename")
                         .AddOption("D", "Delete feed", "delete")
                         .AllowCancel()
                         .Show();
@@ -158,6 +160,20 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 AnsiConsole.MarkupLine($"Switched to feed: [cyan]{Markup.Escape(currentFeed!.Title)}[/]");
                             }
                             WaitForKeyPress();
+                            break;
+
+                        case "update":
+                            var feedToUpdate = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+                            if (feedToUpdate != null)
+                            {
+                                await FeedUpdateCommand.UpdateFeedInteractiveAsync(httpClient, feedToUpdate, cancellationToken);
+                                // Refresh current feed if it was updated
+                                if (currentFeed?.Id == feedToUpdate.Id)
+                                {
+                                    currentFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, feedToUpdate.Id);
+                                }
+                                WaitForKeyPress();
+                            }
                             break;
 
                         case "rename":
@@ -217,6 +233,34 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     }
                     break;
 
+                case MenuChoice.Settings:
+                    var settingsChoice = new MenuBuilder<string?>()
+                        .WithTitle("Settings:")
+                        .WithHint("(arrow keys or N, Esc to go back)")
+                        .AddOption("N", "Audio normalization", "normalization")
+                        .AllowCancel()
+                        .Show();
+
+                    if (settingsChoice == "normalization")
+                    {
+                        var currentNorm = PreferencesHelpers.GetNormalizationEnabled() ?? true;
+                        var normChoice = new MenuBuilder<bool?>()
+                            .WithTitle($"Audio normalization is currently {(currentNorm ? "enabled" : "disabled")}:")
+                            .WithHint("(arrow keys or E/D, Esc to cancel)")
+                            .AddOption("E", "Enable normalization", true)
+                            .AddOption("D", "Disable normalization", false)
+                            .AllowCancel()
+                            .Show();
+
+                        if (normChoice.HasValue)
+                        {
+                            PreferencesHelpers.SetNormalizationEnabled(normChoice.Value);
+                            AnsiConsole.MarkupLine($"[green]✓[/] Audio normalization {(normChoice.Value ? "enabled" : "disabled")}");
+                            WaitForKeyPress();
+                        }
+                    }
+                    break;
+
                 case MenuChoice.Quit:
                     AnsiConsole.MarkupLine("[grey]Bye.[/]");
                     AnsiConsole.WriteLine();
@@ -245,9 +289,10 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             .WithHint("(arrow keys or highlighted letter)")
             .AddOption("L", "List episodes", MenuChoice.List)
             .AddOption("D", "Delete episode", MenuChoice.Delete)
-            .AddOption("F", "Switch feed", MenuChoice.SwitchFeed)
             .AddOption("M", "Manage feeds", MenuChoice.ManageFeeds)
-            .AddOption("E", "Switch environment", MenuChoice.SwitchEnvironment)
+            .AddOption("F", "Switch feed", MenuChoice.SwitchFeed)
+            .AddOption("E", "Environment", MenuChoice.SwitchEnvironment)
+            .AddOption("S", "Settings", MenuChoice.Settings)
             .AddOption("Q", "Quit", MenuChoice.Quit)
             .AllowCancel(false) // Don't allow escape on main menu
             .Show();
@@ -259,6 +304,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         Delete,
         SwitchFeed,
         ManageFeeds,
+        Settings,
         SwitchEnvironment,
         Quit
     }
