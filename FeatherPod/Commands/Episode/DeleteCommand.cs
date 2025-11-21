@@ -8,6 +8,72 @@ namespace FeatherPod.Commands.Episode;
 
 internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 {
+    /// <summary>
+    /// Core delete operation - can be called from CLI or InteractiveCommand.
+    /// </summary>
+    public static async Task<EpisodeOperationResult> DeleteEpisodeAsync(
+        HttpClient httpClient,
+        string feedId,
+        EpisodeModel episode,
+        bool skipConfirmation = false,
+        CancellationToken cancellationToken = default)
+    {
+        // Confirm deletion unless skipped
+        if (!skipConfirmation)
+        {
+            var confirmed = new MenuBuilder<bool?>()
+                .WithTitle($"[red]Delete[/] {Markup.Escape(episode.Title)}?")
+                .WithHint("(arrow keys or Y/N, Esc to cancel)")
+                .AddOption("Y", "Yes", true)
+                .AddOption("N", "No", false)
+                .AllowCancel(true, false)
+                .Show();
+
+            if (confirmed != true)
+            {
+                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+
+                return new() { Success = false };
+            }
+        }
+
+        try
+        {
+            var response = await httpClient.DeleteAsync($"/api/feeds/{feedId}/episodes/{episode.Id}", cancellationToken);
+
+            if (response.IsSuccessStatusCode)
+            {
+                AnsiConsole.MarkupLine($"[green]✓[/] Deleted: {Markup.Escape(episode.Title)}");
+
+                return new() { Success = true, EpisodeId = episode.Id };
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                AnsiConsole.MarkupLine("[yellow]Episode not found (may have already been deleted).[/]");
+
+                return new() { Success = false, ErrorMessage = "Episode not found" };
+            }
+
+            var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            AnsiConsole.MarkupLine($"[red]✗[/] Failed to delete episode: {response.StatusCode}");
+
+            if (!string.IsNullOrEmpty(errorContent))
+            {
+                AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+            }
+
+            return new() { Success = false, ErrorMessage = errorContent };
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]✗[/] Error deleting episode: {ex.Message}");
+
+            return new() { Success = false, ErrorMessage = ex.Message };
+        }
+    }
+
     public override async Task<int> ExecuteAsync(CommandContext context, DeleteSettings settings, CancellationToken cancellationToken)
     {
         AnsiConsole.WriteLine();
@@ -82,59 +148,13 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
             episodeToDelete = selected[0];
         }
 
-        // Confirm deletion unless --force
-        if (!settings.Force)
+        var result = await DeleteEpisodeAsync(httpClient, feed.Id, episodeToDelete, settings.Force, cancellationToken);
+
+        if (result.Success)
         {
-            var confirmed = new MenuBuilder<bool?>()
-                .WithTitle($"[red]Delete[/] {Markup.Escape(episodeToDelete.Title)}?")
-                .WithHint("(arrow keys or Y/N, Esc to cancel)")
-                .AddOption("Y", "Yes", true)
-                .AddOption("N", "No", false)
-                .AllowCancel(true, false)
-                .Show();
-
-            if (confirmed != true)
-            {
-                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
-
-                return 1;
-            }
+            AnsiConsole.WriteLine();
         }
 
-        try
-        {
-            var response = await httpClient.DeleteAsync($"/api/feeds/{feed.Id}/episodes/{episodeToDelete.Id}", cancellationToken);
-
-            if (response.IsSuccessStatusCode)
-            {
-                AnsiConsole.MarkupLine($"[green]✓[/] Deleted: {Markup.Escape(episodeToDelete.Title)}");
-                AnsiConsole.WriteLine();
-
-                return 0;
-            }
-
-            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-            {
-                AnsiConsole.MarkupLine("[yellow]Episode not found (may have already been deleted).[/]");
-
-                return 1;
-            }
-
-            var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed to delete episode: {response.StatusCode}");
-
-            if (!string.IsNullOrEmpty(errorContent))
-            {
-                AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
-            }
-
-            return 1;
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error deleting episode: {ex.Message}");
-            return 1;
-        }
+        return result.Success ? 0 : 1;
     }
 }
