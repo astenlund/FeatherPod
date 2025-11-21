@@ -63,7 +63,6 @@ internal static class EpisodeHelpers
             AnsiConsole.Write(table);
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine($"[grey]Total: {episodes.Count} episodes[/]");
-            AnsiConsole.WriteLine();
         }
         catch (HttpRequestException ex)
         {
@@ -73,15 +72,13 @@ internal static class EpisodeHelpers
 
     private static bool ConfirmDelete(Episode episode)
     {
-        var result = new MenuBuilder<bool?>()
+        return new MenuBuilder<bool?>()
             .WithTitle($"[red]Delete[/] {Markup.Escape(episode.Title)}?")
             .WithHint("(arrow keys or Y/N, Esc to cancel)")
             .AddOption("Y", "Yes", true)
             .AddOption("N", "No", false)
             .AllowCancel(true, false)
-            .Show();
-
-        return result ?? false;
+            .Show() ?? false;
     }
 
     private static int SelectEpisode(List<Episode> episodes)
@@ -104,7 +101,10 @@ internal static class EpisodeHelpers
         return menu.Show() ?? -1;
     }
 
-    internal static async Task DeleteEpisodeAsync(HttpClient httpClient, FeedConfig feed)
+    /// <summary>
+    /// Interactive episode deletion. Returns true if deleted, false if error, null if cancelled.
+    /// </summary>
+    internal static async Task<bool?> DeleteEpisodeInteractiveAsync(HttpClient httpClient, FeedConfig feed)
     {
         try
         {
@@ -118,7 +118,7 @@ internal static class EpisodeHelpers
             {
                 AnsiConsole.MarkupLine("[yellow]No episodes to delete.[/]");
                 AnsiConsole.WriteLine();
-                return;
+                return false;
             }
 
             // Use custom selector with Escape support
@@ -126,9 +126,7 @@ internal static class EpisodeHelpers
 
             if (selectedIndex == -1)
             {
-                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
-                AnsiConsole.WriteLine();
-                return;
+                return null; // Cancelled
             }
 
             var episodeToDelete = episodes[selectedIndex];
@@ -137,8 +135,7 @@ internal static class EpisodeHelpers
             var confirmed = ConfirmDelete(episodeToDelete);
             if (!confirmed)
             {
-                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
-                return;
+                return null; // Cancelled
             }
 
             var deleteResponse = await httpClient.DeleteAsync($"/api/feeds/{feed.Id}/episodes/{episodeToDelete.Id}");
@@ -146,28 +143,33 @@ internal static class EpisodeHelpers
             if (deleteResponse.IsSuccessStatusCode)
             {
                 AnsiConsole.MarkupLine($"[green]✓[/] Deleted: {Markup.Escape(episodeToDelete.Title)}");
+                return true;
             }
             else if (deleteResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 AnsiConsole.MarkupLine("[yellow]Episode not found (may have already been deleted).[/]");
+                return false;
             }
             else if (deleteResponse.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
                 AnsiConsole.MarkupLine("[red]Unauthorized:[/] Check your API key configuration.");
+                return false;
             }
             else
             {
-                AnsiConsole.MarkupLine($"[red]Failed to delete episode:[/] {deleteResponse.StatusCode}");
                 var errorContent = await deleteResponse.Content.ReadAsStringAsync();
+                AnsiConsole.MarkupLine($"[red]Failed to delete episode:[/] {deleteResponse.StatusCode}");
                 if (!string.IsNullOrEmpty(errorContent))
                 {
                     AnsiConsole.MarkupLine($"[red]Error:[/] {errorContent}");
                 }
+                return false;
             }
         }
         catch (HttpRequestException ex)
         {
             AnsiConsole.MarkupLine($"[red]Error deleting episode:[/] {ex.Message}");
+            return false;
         }
     }
 

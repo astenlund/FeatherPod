@@ -43,7 +43,6 @@ internal class MenuBuilder<T>
         var selected = 0;
         Console.CursorVisible = false;
         var isFirstRender = true;
-        var totalLines = _options.Count + 1; // blank line + options
 
         try
         {
@@ -59,7 +58,7 @@ internal class MenuBuilder<T>
                 if (!isFirstRender)
                 {
                     // Move cursor up to the start of options using ANSI escape code
-                    Console.Write($"\x1b[{_options.Count}A");
+                    Console.Write($"\e[{_options.Count}A");
                 }
 
                 // Render options
@@ -74,7 +73,7 @@ internal class MenuBuilder<T>
                     var formattedLabel = FormatLabelWithShortcut(label, option.Shortcut, i == selected);
 
                     AnsiConsole.Markup($"{prefix}{formattedLabel}");
-                    Console.Write("\x1b[K"); // Clear from cursor to end of line
+                    Console.Write("\e[K"); // Clear from cursor to end of line
                     Console.WriteLine();
                 }
 
