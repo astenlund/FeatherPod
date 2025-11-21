@@ -139,10 +139,16 @@ public class ApiKeyAuthMiddleware
             return true;
         }
 
-        // User management endpoints are admin-only
+        // User management endpoints are admin-only, except /api/users/me
         if (path.StartsWith("/api/users"))
         {
-            return false; // FeedOwner cannot access user management
+            // Allow any authenticated user to access /api/users/me
+            if (path.Equals("/api/users/me", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return false; // FeedOwner cannot access other user management endpoints
         }
 
         // Feed-specific endpoints - check feed ownership

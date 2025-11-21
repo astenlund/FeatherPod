@@ -4,6 +4,8 @@ using FeatherPod.Settings;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using System.Text.Json;
+
 using EpisodeDeleteCommand = FeatherPod.Commands.Episode.DeleteCommand;
 using EpisodeListCommand = FeatherPod.Commands.Episode.ListCommand;
 using FeedUpdateCommand = FeatherPod.Commands.Feed.UpdateCommand;
@@ -316,10 +318,12 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.Settings:
                     var settingsChoice = new MenuBuilder<string?>()
                         .WithTitle("Settings:")
-                        .WithHint("(arrow keys or A/C/N, Esc to go back)")
+                        .WithHint("(arrow keys or A/C/N/K/R, Esc to go back)")
                         .AddOption("A", "Auto-connect on startup", "autoconnect")
                         .AddOption("C", "Connect now", "connect")
                         .AddOption("N", "Audio normalization", "normalization")
+                        .AddOption("K", "Update API key (local)", "apikey-local")
+                        .AddOption("R", "Rotate API key (server)", "apikey-rotate")
                         .AllowCancel()
                         .Show();
 
@@ -398,6 +402,157 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             {
                                 PreferencesHelpers.SetNormalizationEnabled(normChoice.Value);
                                 AnsiConsole.MarkupLine($"[green]✓[/] Audio normalization {(normChoice.Value ? "enabled" : "disabled")}");
+                                WaitForKeyPress();
+                            }
+                            break;
+
+                        case "apikey-local":
+                            var currentKey = PreferencesHelpers.GetApiKey(env);
+
+                            AnsiConsole.MarkupLine(!string.IsNullOrEmpty(currentKey)
+                                ? $"Current API key: [cyan]{PreferencesHelpers.MaskApiKey(currentKey)}[/]"
+                                : "[yellow]No API key currently configured.[/]");
+
+                            AnsiConsole.WriteLine();
+
+                            var newApiKey = AnsiConsole.Prompt(new TextPrompt<string>("Enter new API key (or press Enter to cancel):").AllowEmpty());
+
+                            if (!string.IsNullOrWhiteSpace(newApiKey))
+                            {
+                                PreferencesHelpers.SaveApiKey(env, newApiKey.Trim());
+                                AnsiConsole.MarkupLine($"[green]✓[/] API key saved for {env}");
+
+                                // Offer to reconnect with new key
+                                AnsiConsole.WriteLine();
+                                if (await AnsiConsole.ConfirmAsync("Reconnect with new API key?", true, cancellationToken))
+                                {
+                                    ShowHeader(env);
+                                    var (newClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+                                    if (newClient != null)
+                                    {
+                                        httpClient = newClient;
+                                        isConnected = true;
+                                        currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                                    }
+                                    else
+                                    {
+                                        isConnected = false;
+                                        currentFeed = null;
+                                    }
+                                    skipClear = true;
+                                }
+                                else
+                                {
+                                    WaitForKeyPress();
+                                }
+                            }
+                            break;
+
+                        case "apikey-rotate":
+                            if (!isConnected || httpClient == null)
+                            {
+                                AnsiConsole.MarkupLine("[yellow]Not connected. Connect first to rotate your API key on the server.[/]");
+                                WaitForKeyPress();
+                                break;
+                            }
+
+                            // Get current user ID from /api/me
+                            try
+                            {
+                                var meResponse = await httpClient.GetAsync("/api/users/me", cancellationToken);
+                                if (!meResponse.IsSuccessStatusCode)
+                                {
+                                    AnsiConsole.MarkupLine($"[red]Error:[/] Failed to get current user: {meResponse.StatusCode}");
+                                    WaitForKeyPress();
+                                    break;
+                                }
+
+                                var meJson = await meResponse.Content.ReadAsStringAsync(cancellationToken);
+                                var meData = JsonSerializer.Deserialize<JsonElement>(meJson);
+
+                                if (!meData.TryGetProperty("id", out var idElement))
+                                {
+                                    AnsiConsole.MarkupLine("[red]Error:[/] Could not determine current user ID");
+                                    WaitForKeyPress();
+                                    break;
+                                }
+
+                                var userId = idElement.GetString();
+                                AnsiConsole.MarkupLine($"Current user: [cyan]{Markup.Escape(userId ?? "")}[/]");
+                                AnsiConsole.WriteLine();
+
+                                var confirmRotate = await AnsiConsole.ConfirmAsync("Are you sure you want to rotate your API key? The current key will stop working.", false, cancellationToken);
+                                if (!confirmRotate)
+                                {
+                                    AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                    WaitForKeyPress();
+                                    break;
+                                }
+
+                                var rotateResponse = await httpClient.PostAsync($"/api/users/{Uri.EscapeDataString(userId!)}/key/regenerate", null, cancellationToken);
+
+                                if (rotateResponse.IsSuccessStatusCode)
+                                {
+                                    var rotateJson = await rotateResponse.Content.ReadAsStringAsync(cancellationToken);
+                                    var rotateData = JsonSerializer.Deserialize<JsonElement>(rotateJson);
+
+                                    AnsiConsole.MarkupLine("[green]✓[/] API key rotated successfully");
+                                    AnsiConsole.WriteLine();
+
+                                    if (rotateData.TryGetProperty("apiKey", out var apiKeyElement))
+                                    {
+                                        var rotatedKey = apiKeyElement.GetString();
+                                        AnsiConsole.MarkupLine($"[yellow bold]New API Key:[/] [cyan]{Markup.Escape(rotatedKey ?? "")}[/]");
+                                        AnsiConsole.WriteLine();
+
+                                        // Save and reconnect
+                                        var saveRotatedKey = await AnsiConsole.ConfirmAsync($"Save this key and reconnect?", true, cancellationToken);
+                                        if (saveRotatedKey && !string.IsNullOrEmpty(rotatedKey))
+                                        {
+                                            PreferencesHelpers.SaveApiKey(env, rotatedKey);
+                                            AnsiConsole.MarkupLine($"[green]✓[/] API key saved for {env}");
+
+                                            // Reconnect with new key
+                                            ShowHeader(env);
+                                            var (newClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+                                            if (newClient != null)
+                                            {
+                                                httpClient = newClient;
+                                                isConnected = true;
+                                                currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                                            }
+                                            else
+                                            {
+                                                isConnected = false;
+                                                currentFeed = null;
+                                            }
+                                            skipClear = true;
+                                        }
+                                        else
+                                        {
+                                            AnsiConsole.MarkupLine("[yellow]Warning:[/] API key was NOT saved. Copy it now - it will NOT be shown again!");
+                                            AnsiConsole.MarkupLine("[yellow]You will need to manually update your API key to reconnect.[/]");
+                                            isConnected = false;
+                                            httpClient = null;
+                                            currentFeed = null;
+                                            WaitForKeyPress();
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    var errorContent = await rotateResponse.Content.ReadAsStringAsync(cancellationToken);
+                                    AnsiConsole.MarkupLine($"[red]✗[/] Failed to rotate API key: {rotateResponse.StatusCode}");
+                                    if (!string.IsNullOrEmpty(errorContent))
+                                    {
+                                        AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                                    }
+                                    WaitForKeyPress();
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                AnsiConsole.MarkupLine($"[red]✗[/] Error rotating API key: {ex.Message}");
                                 WaitForKeyPress();
                             }
                             break;

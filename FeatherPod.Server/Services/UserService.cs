@@ -352,14 +352,7 @@ public sealed class UserService : IUserService, IDisposable
 
     private static string GenerateApiKey()
     {
-        // Generate 32 bytes of cryptographically secure random data
-        var bytes = RandomNumberGenerator.GetBytes(32);
-
-        // Convert to Base64url (URL-safe, no padding)
-        return Convert.ToBase64String(bytes)
-            .TrimEnd('=')
-            .Replace('+', '-')
-            .Replace('/', '_');
+        return Guid.NewGuid().ToString("D").ToLowerInvariant();
     }
 
     private static string HashApiKey(string apiKey)
