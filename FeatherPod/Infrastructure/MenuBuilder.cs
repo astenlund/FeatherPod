@@ -1,5 +1,7 @@
 using Spectre.Console;
 
+using static System.StringComparison;
+
 namespace FeatherPod.Infrastructure;
 
 internal class MenuBuilder<T>
@@ -13,18 +15,21 @@ internal class MenuBuilder<T>
     public MenuBuilder<T> WithTitle(string title)
     {
         _title = title;
+
         return this;
     }
 
     public MenuBuilder<T> WithHint(string hint)
     {
         _hint = hint;
+
         return this;
     }
 
     public MenuBuilder<T> AddOption(string? shortcut, string label, T value, Func<int, string>? formatter = null)
     {
-        _options.Add(new MenuOption<T>(shortcut, label, value, formatter));
+        _options.Add(new(shortcut, label, value, formatter));
+
         return this;
     }
 
@@ -32,16 +37,21 @@ internal class MenuBuilder<T>
     {
         _allowCancel = allow;
         _cancelValue = cancelValue;
+
         return this;
     }
 
     public T? Show()
     {
         if (_options.Count == 0)
+        {
             throw new InvalidOperationException("Menu must have at least one option");
+        }
 
         var selected = 0;
+
         Console.CursorVisible = false;
+
         var isFirstRender = true;
 
         try
@@ -84,10 +94,11 @@ internal class MenuBuilder<T>
                 // Check for shortcut keys first
                 foreach (var option in _options)
                 {
-                    if (!string.IsNullOrEmpty(option.Shortcut) && keyInfo.Key.ToString().Equals(option.Shortcut, StringComparison.OrdinalIgnoreCase))
+                    if (!string.IsNullOrEmpty(option.Shortcut) && keyInfo.Key.ToString().Equals(option.Shortcut, OrdinalIgnoreCase))
                     {
                         Console.CursorVisible = true;
                         AnsiConsole.WriteLine();
+
                         return option.Value;
                     }
                 }
@@ -153,7 +164,7 @@ internal class MenuBuilder<T>
 
         // Find the shortcut character in plain text labels
         var shortcutChar = shortcut[0];
-        var index = label.IndexOf(shortcutChar, StringComparison.OrdinalIgnoreCase);
+        var index = label.IndexOf(shortcutChar, OrdinalIgnoreCase);
 
         if (index == -1)
         {
@@ -162,9 +173,9 @@ internal class MenuBuilder<T>
         }
 
         // Split label and highlight the shortcut character
-        var before = label.Substring(0, index);
+        var before = label[..index];
         var shortcutLetter = label.Substring(index, 1);
-        var after = label.Substring(index + 1);
+        var after = label[(index + 1)..];
 
         // For plain text labels, grey text with cyan shortcut letter
         return $"[grey]{before}[/][cyan]{shortcutLetter}[/][grey]{after}[/]";

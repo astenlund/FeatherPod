@@ -9,6 +9,61 @@ namespace FeatherPod.Commands.Feed;
 
 internal sealed class CreateCommand : AsyncCommand<CreateSettings>
 {
+    /// <summary>
+    /// Core create operation - can be called from CLI or InteractiveCommand.
+    /// </summary>
+    public static async Task<FeedOperationResult> CreateFeedAsync(
+        HttpClient httpClient,
+        FeedConfig feedConfig,
+        string? iconPath = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(feedConfig);
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+            var response = await httpClient.PostAsync("/api/feeds", content, cancellationToken);
+
+            if (response.IsSuccessStatusCode)
+            {
+                AnsiConsole.MarkupLine($"[green]✓[/] Created feed: [cyan]{Markup.Escape(feedConfig.Id)}[/]");
+
+                // Upload icon if provided
+                if (!string.IsNullOrEmpty(iconPath))
+                {
+                    if (!File.Exists(iconPath))
+                    {
+                        AnsiConsole.MarkupLine($"[red]✗[/] Icon file not found: {Markup.Escape(iconPath)}");
+                    }
+                    else
+                    {
+                        await FeedHelpers.UploadIconAsync(httpClient, feedConfig.Id, iconPath);
+                    }
+                }
+
+                return new() { Success = true, FeedId = feedConfig.Id, Feed = feedConfig };
+            }
+
+            var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            AnsiConsole.MarkupLine($"[red]✗[/] Failed to create feed: {response.StatusCode}");
+
+            if (!string.IsNullOrEmpty(errorContent))
+            {
+                AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+            }
+
+            return new() { Success = false, ErrorMessage = errorContent };
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]✗[/] Error creating feed: {ex.Message}");
+
+            return new() { Success = false, ErrorMessage = ex.Message };
+        }
+    }
+
     public override async Task<int> ExecuteAsync(CommandContext context, CreateSettings settings, CancellationToken cancellationToken)
     {
         AnsiConsole.WriteLine();
@@ -59,49 +114,14 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
             Category = string.IsNullOrEmpty(category) ? null : category.Trim()
         };
 
-        try
+        var iconPath = settings.IconPath?.Trim().Trim('"', '\'');
+        var result = await CreateFeedAsync(httpClient, feedConfig, iconPath, cancellationToken);
+
+        if (result.Success)
         {
-            var json = JsonSerializer.Serialize(feedConfig);
-            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
-
-            var response = await httpClient.PostAsync("/api/feeds", content, cancellationToken);
-
-            if (response.IsSuccessStatusCode)
-            {
-                AnsiConsole.MarkupLine($"[green]✓[/] Created feed: [cyan]{Markup.Escape(feedConfig.Id)}[/]");
-
-                // Upload icon if provided
-                var iconPath = settings.IconPath?.Trim().Trim('"', '\'');
-                if (!string.IsNullOrEmpty(iconPath))
-                {
-                    if (!File.Exists(iconPath))
-                    {
-                        AnsiConsole.MarkupLine($"[yellow]⚠[/] Icon file not found: {Markup.Escape(iconPath)}");
-                    }
-                    else
-                    {
-                        await FeedHelpers.UploadIconAsync(httpClient, feedConfig.Id, iconPath);
-                    }
-                }
-
-                AnsiConsole.WriteLine();
-                return 0;
-            }
-            else
-            {
-                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                AnsiConsole.MarkupLine($"[red]✗[/] Failed to create feed: {response.StatusCode}");
-                if (!string.IsNullOrEmpty(errorContent))
-                {
-                    AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
-                }
-                return 1;
-            }
+            AnsiConsole.WriteLine();
         }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error creating feed: {ex.Message}");
-            return 1;
-        }
+
+        return result.Success ? 0 : 1;
     }
 }

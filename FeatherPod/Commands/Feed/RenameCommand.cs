@@ -7,6 +7,45 @@ namespace FeatherPod.Commands.Feed;
 
 internal sealed class RenameCommand : AsyncCommand<RenameSettings>
 {
+    /// <summary>
+    /// Core rename operation - can be called from CLI or InteractiveCommand.
+    /// </summary>
+    public static async Task<FeedOperationResult> RenameFeedAsync(
+        HttpClient httpClient,
+        string oldId,
+        string newId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await httpClient.PostAsync($"/api/feeds/{oldId}/rename?newId={Uri.EscapeDataString(newId)}", null, cancellationToken);
+
+            if (response.IsSuccessStatusCode)
+            {
+                AnsiConsole.MarkupLine($"[green]✓[/] Renamed feed from [cyan]{Markup.Escape(oldId)}[/] to [cyan]{Markup.Escape(newId)}[/]");
+
+                return new() { Success = true, FeedId = newId, OldFeedId = oldId };
+            }
+
+            var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            AnsiConsole.MarkupLine($"[red]✗[/] Failed to rename feed: {response.StatusCode}");
+
+            if (!string.IsNullOrEmpty(errorContent))
+            {
+                AnsiConsole.MarkupLine($"[red]✗[/] Error: {Markup.Escape(errorContent)}");
+            }
+
+            return new() { Success = false, ErrorMessage = errorContent };
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]✗[/] Error renaming feed: {ex.Message}");
+
+            return new() { Success = false, ErrorMessage = ex.Message };
+        }
+    }
+
     public override async Task<int> ExecuteAsync(CommandContext context, RenameSettings settings, CancellationToken cancellationToken)
     {
         AnsiConsole.WriteLine();
@@ -47,31 +86,13 @@ internal sealed class RenameCommand : AsyncCommand<RenameSettings>
             newId = AnsiConsole.Ask<string>("New feed [cyan]ID[/]:");
         }
 
-        try
-        {
-            var response = await httpClient.PostAsync($"/api/feeds/{feedId}/rename?newId={Uri.EscapeDataString(newId)}", null, cancellationToken);
+        var result = await RenameFeedAsync(httpClient, feedId, newId, cancellationToken);
 
-            if (response.IsSuccessStatusCode)
-            {
-                AnsiConsole.MarkupLine($"[green]✓[/] Renamed feed from [cyan]{Markup.Escape(feedId)}[/] to [cyan]{Markup.Escape(newId)}[/]");
-                AnsiConsole.WriteLine();
-                return 0;
-            }
-            else
-            {
-                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                AnsiConsole.MarkupLine($"[red]✗[/] Failed to rename feed: {response.StatusCode}");
-                if (!string.IsNullOrEmpty(errorContent))
-                {
-                    AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
-                }
-                return 1;
-            }
-        }
-        catch (Exception ex)
+        if (result.Success)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error renaming feed: {ex.Message}");
-            return 1;
+            AnsiConsole.WriteLine();
         }
+
+        return result.Success ? 0 : 1;
     }
 }

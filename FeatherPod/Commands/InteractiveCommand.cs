@@ -4,6 +4,12 @@ using FeatherPod.Settings;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using EpisodeDeleteCommand = FeatherPod.Commands.Episode.DeleteCommand;
+using EpisodeListCommand = FeatherPod.Commands.Episode.ListCommand;
+using FeedCreateCommand = FeatherPod.Commands.Feed.CreateCommand;
+using FeedDeleteCommand = FeatherPod.Commands.Feed.DeleteCommand;
+using FeedRenameCommand = FeatherPod.Commands.Feed.RenameCommand;
+
 namespace FeatherPod.Commands;
 
 internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
@@ -65,7 +71,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     }
                     else
                     {
-                        await EpisodeHelpers.ListEpisodesAsync(httpClient, currentFeed);
+                        await EpisodeListCommand.ListEpisodesAsync(httpClient, currentFeed);
                     }
                     WaitForKeyPress();
                     break;
@@ -78,10 +84,25 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     }
                     else
                     {
-                        var deleted = await EpisodeHelpers.DeleteEpisodeInteractiveAsync(httpClient, currentFeed);
-                        if (deleted.HasValue) // Not cancelled
+                        var episodes = await EpisodeHelpers.GetEpisodesAsync(httpClient, currentFeed.Id);
+                        if (episodes == null || episodes.Count == 0)
                         {
+                            AnsiConsole.MarkupLine("[yellow]No episodes to delete.[/]");
                             WaitForKeyPress();
+                        }
+                        else
+                        {
+                            var selected = EpisodeHelpers.SelectEpisodesMulti(episodes);
+                            if (selected.Count == 1)
+                            {
+                                await EpisodeDeleteCommand.DeleteEpisodeAsync(httpClient, currentFeed.Id, selected[0], cancellationToken: cancellationToken);
+                                WaitForKeyPress();
+                            }
+                            else if (selected.Count > 1)
+                            {
+                                AnsiConsole.MarkupLine("[yellow]Multiple episodes selected. Delete one at a time in interactive mode.[/]");
+                                WaitForKeyPress();
+                            }
                         }
                     }
                     break;
@@ -96,45 +117,78 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     break;
 
                 case MenuChoice.ManageFeeds:
-                    var result = await FeedHelpers.ManageFeedsAsync(httpClient);
+                    var manageChoice = new MenuBuilder<string?>()
+                        .WithTitle("Manage Feeds:")
+                        .WithHint("(arrow keys or C/R/D, Esc to go back)")
+                        .AddOption("C", "Create new feed", "create")
+                        .AddOption("R", "Rename feed", "rename")
+                        .AddOption("D", "Delete feed", "delete")
+                        .AllowCancel()
+                        .Show();
 
-                    // Handle created feed
-                    if (result.CreatedFeed != null)
+                    switch (manageChoice)
                     {
-                        currentFeed = result.CreatedFeed;
-                        AnsiConsole.MarkupLine($"Switched to feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
-                        WaitForKeyPress();
-                    }
-                    // Handle renamed feed
-                    else if (result.RenamedFeed != null)
-                    {
-                        // If we were on the renamed feed, follow it
-                        if (currentFeed?.Id == result.OldFeedId)
-                        {
-                            currentFeed = result.RenamedFeed;
-                            AnsiConsole.MarkupLine($"Switched to renamed feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
-                        }
-                        WaitForKeyPress();
-                    }
-                    // Handle deleted feed
-                    else if (result.DeletedFeedId != null)
-                    {
-                        // If we were on the deleted feed, clear it and prompt for a new one
-                        if (currentFeed?.Id == result.DeletedFeedId)
-                        {
-                            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, contextMessage: "Previous feed was deleted.");
-                        }
-                        WaitForKeyPress();
-                    }
-                    else
-                    {
-                        // User cancelled or error - refresh current feed
-                        if (currentFeed != null)
-                        {
-                            var feeds = await FeedHelpers.GetFeedsAsync(httpClient);
-                            currentFeed = feeds.FirstOrDefault(f => f.Id == currentFeed.Id);
-                        }
-                        currentFeed ??= await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                        case "create":
+                            // Prompt for feed details
+                            var id = AnsiConsole.Ask<string>("Feed [cyan]ID[/] (URL-friendly slug):");
+                            var title = AnsiConsole.Ask<string>("Feed [cyan]title[/]:");
+                            var author = AnsiConsole.Ask<string>("Feed [cyan]author[/]:");
+                            var description = AnsiConsole.Ask("Description (optional):", string.Empty);
+                            var summary = AnsiConsole.Ask("Summary (optional, defaults to description):", string.Empty);
+                            var email = AnsiConsole.Ask("Email (optional):", string.Empty);
+                            var language = AnsiConsole.Ask("Language:", "en");
+                            var category = AnsiConsole.Ask("Category (optional):", string.Empty);
+
+                            var feedConfig = new FeedConfig
+                            {
+                                Id = id.Trim(),
+                                Title = title.Trim(),
+                                Description = string.IsNullOrEmpty(description) ? null : description.Trim(),
+                                Summary = string.IsNullOrEmpty(summary) ? null : summary.Trim(),
+                                Author = author.Trim(),
+                                Email = string.IsNullOrEmpty(email) ? null : email.Trim(),
+                                Language = language.Trim(),
+                                Category = string.IsNullOrEmpty(category) ? null : category.Trim()
+                            };
+
+                            var createResult = await FeedCreateCommand.CreateFeedAsync(httpClient, feedConfig, cancellationToken: cancellationToken);
+                            if (createResult.Success)
+                            {
+                                currentFeed = createResult.Feed;
+                                AnsiConsole.MarkupLine($"Switched to feed: [cyan]{Markup.Escape(currentFeed!.Title)}[/]");
+                            }
+                            WaitForKeyPress();
+                            break;
+
+                        case "rename":
+                            var feedToRename = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+                            if (feedToRename != null)
+                            {
+                                var newId = AnsiConsole.Ask<string>("New feed [cyan]ID[/]:");
+                                var renameResult = await FeedRenameCommand.RenameFeedAsync(httpClient, feedToRename.Id, newId.Trim(), cancellationToken);
+                                if (renameResult.Success && currentFeed?.Id == renameResult.OldFeedId)
+                                {
+                                    // Follow the rename
+                                    currentFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, renameResult.FeedId!);
+                                    AnsiConsole.MarkupLine($"Switched to renamed feed: [cyan]{Markup.Escape(currentFeed?.Title ?? renameResult.FeedId!)}[/]");
+                                }
+                                WaitForKeyPress();
+                            }
+                            break;
+
+                        case "delete":
+                            var feedToDelete = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+                            if (feedToDelete != null)
+                            {
+                                var deleteResult = await FeedDeleteCommand.DeleteFeedAsync(httpClient, feedToDelete.Id, cancellationToken: cancellationToken);
+                                if (deleteResult.Success && currentFeed?.Id == deleteResult.FeedId)
+                                {
+                                    // Current feed was deleted, select a new one
+                                    currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, contextMessage: "Previous feed was deleted.");
+                                }
+                                WaitForKeyPress();
+                            }
+                            break;
                     }
                     break;
 

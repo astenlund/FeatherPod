@@ -7,6 +7,64 @@ namespace FeatherPod.Commands.Feed;
 
 internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 {
+    /// <summary>
+    /// Core delete operation - can be called from CLI or InteractiveCommand.
+    /// </summary>
+    public static async Task<FeedOperationResult> DeleteFeedAsync(
+        HttpClient httpClient,
+        string feedId,
+        bool skipConfirmation = false,
+        CancellationToken cancellationToken = default)
+    {
+        // Confirm deletion unless skipped
+        if (!skipConfirmation)
+        {
+            var confirmed = new MenuBuilder<bool?>()
+                .WithTitle($"[red]Delete feed[/] [cyan]{Markup.Escape(feedId)}[/] and all its episodes?")
+                .WithHint("(arrow keys or Y/N, Esc to cancel)")
+                .AddOption("Y", "Yes", true)
+                .AddOption("N", "No", false)
+                .AllowCancel(true, false)
+                .Show();
+
+            if (confirmed != true)
+            {
+                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+
+                return new() { Success = false };
+            }
+        }
+
+        try
+        {
+            var response = await httpClient.DeleteAsync($"/api/feeds/{feedId}", cancellationToken);
+
+            if (response.IsSuccessStatusCode)
+            {
+                AnsiConsole.MarkupLine($"[green]✓[/] Deleted feed: [cyan]{Markup.Escape(feedId)}[/]");
+
+                return new() { Success = true, FeedId = feedId };
+            }
+
+            var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
+
+            AnsiConsole.MarkupLine($"[red]✗[/] Failed to delete feed: {response.StatusCode}");
+
+            if (!string.IsNullOrEmpty(errorContent))
+            {
+                AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+            }
+
+            return new() { Success = false, ErrorMessage = errorContent };
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]✗[/] Error deleting feed: {ex.Message}");
+
+            return new() { Success = false, ErrorMessage = ex.Message };
+        }
+    }
+
     public override async Task<int> ExecuteAsync(CommandContext context, DeleteSettings settings, CancellationToken cancellationToken)
     {
         AnsiConsole.WriteLine();
@@ -40,49 +98,13 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
             return 1;
         }
 
-        // Confirm deletion unless --force is used
-        if (!settings.Force)
-        {
-            var confirmed = new MenuBuilder<bool?>()
-                .WithTitle($"[red]Delete feed[/] [cyan]{Markup.Escape(feedId)}[/] and all its episodes?")
-                .WithHint("(arrow keys or Y/N, Esc to cancel)")
-                .AddOption("Y", "Yes", true)
-                .AddOption("N", "No", false)
-                .AllowCancel(true, false)
-                .Show();
+        var result = await DeleteFeedAsync(httpClient, feedId, settings.Force, cancellationToken);
 
-            if (confirmed != true)
-            {
-                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
-                return 1;
-            }
+        if (result.Success)
+        {
+            AnsiConsole.WriteLine();
         }
 
-        try
-        {
-            var response = await httpClient.DeleteAsync($"/api/feeds/{feedId}", cancellationToken);
-
-            if (response.IsSuccessStatusCode)
-            {
-                AnsiConsole.MarkupLine($"[green]✓[/] Deleted feed: [cyan]{Markup.Escape(feedId)}[/]");
-                AnsiConsole.WriteLine();
-                return 0;
-            }
-            else
-            {
-                var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                AnsiConsole.MarkupLine($"[red]✗[/] Failed to delete feed: {response.StatusCode}");
-                if (!string.IsNullOrEmpty(errorContent))
-                {
-                    AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
-                }
-                return 1;
-            }
-        }
-        catch (Exception ex)
-        {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error deleting feed: {ex.Message}");
-            return 1;
-        }
+        return result.Success ? 0 : 1;
     }
 }
