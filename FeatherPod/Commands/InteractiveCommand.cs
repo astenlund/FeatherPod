@@ -458,6 +458,98 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     WaitForKeyPress();
                     break;
 
+                case MenuChoice.Icon:
+                    if (!isConnected || httpClient == null)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    var iconChoice = new MenuBuilder<string?>()
+                        .WithTitle("Icon management:")
+                        .WithHint("(S/R, Esc to go back)")
+                        .AddOption("S", "Set icon", "set")
+                        .AddOption("R", "Remove icon", "remove")
+                        .AllowCancel()
+                        .Show();
+
+                    if (iconChoice == null)
+                        break;
+
+                    // Select feed for icon operation
+                    var iconFeed = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+                    if (iconFeed == null)
+                    {
+                        AnsiConsole.MarkupLine("[yellow]No feeds available.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    if (iconChoice == "set")
+                    {
+                        // Prompt for icon path
+                        var iconPath = AnsiConsole.Prompt(
+                            new TextPrompt<string>("Enter icon file path [grey](PNG or JPEG)[/]:")
+                                .AllowEmpty());
+
+                        if (string.IsNullOrWhiteSpace(iconPath))
+                        {
+                            AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                            WaitForKeyPress();
+                            break;
+                        }
+
+                        // Clean up path
+                        iconPath = iconPath.Trim().Trim('"', '\'');
+
+                        // Validate file exists
+                        if (!File.Exists(iconPath))
+                        {
+                            AnsiConsole.MarkupLine($"[red]Error:[/] File not found: {Markup.Escape(iconPath)}");
+                            WaitForKeyPress();
+                            break;
+                        }
+
+                        // Validate extension
+                        var ext = Path.GetExtension(iconPath).ToLowerInvariant();
+                        if (ext != ".png" && ext != ".jpg" && ext != ".jpeg")
+                        {
+                            AnsiConsole.MarkupLine("[red]Error:[/] Icon must be a PNG or JPEG file");
+                            WaitForKeyPress();
+                            break;
+                        }
+
+                        // Upload icon
+                        await FeedHelpers.UploadIconAsync(httpClient, iconFeed.Id, iconPath);
+                    }
+                    else // remove
+                    {
+                        // Confirm removal
+                        var confirmRemove = new MenuBuilder<bool?>()
+                            .WithTitle($"Remove icon from feed [cyan]{Markup.Escape(iconFeed.Title)}[/]?")
+                            .WithHint("(Y/N, Esc to cancel)")
+                            .AddOption("Y", "Yes", true)
+                            .AddOption("N", "No", false)
+                            .AllowCancel(true, false)
+                            .Show();
+
+                        if (confirmRemove != true)
+                        {
+                            AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                            WaitForKeyPress();
+                            break;
+                        }
+
+                        AnsiConsole.WriteLine();
+
+                        // Delete icon
+                        await FeedHelpers.DeleteIconAsync(httpClient, iconFeed.Id);
+                    }
+
+                    WaitForKeyPress();
+                    break;
+
                 case MenuChoice.Delete:
                     if (!isConnected || httpClient == null)
                     {
@@ -953,6 +1045,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             .AddOption("P", "Push episodes", MenuChoice.Push)
             .AddOption("D", "Delete episodes", MenuChoice.Delete)
             .AddOption("O", "Move/Copy episodes", MenuChoice.MoveCopy)
+            .AddOption("I", "Icon management", MenuChoice.Icon)
             .AddOption("M", "Manage feeds", MenuChoice.ManageFeeds)
             .AddOption("F", "Switch feed", MenuChoice.SwitchFeed)
             .AddOption("E", "Environment", MenuChoice.SwitchEnvironment)
@@ -968,6 +1061,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         Push,
         Delete,
         MoveCopy,
+        Icon,
         SwitchFeed,
         ManageFeeds,
         Preferences,
