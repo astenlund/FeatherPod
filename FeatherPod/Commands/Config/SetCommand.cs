@@ -36,9 +36,9 @@ internal sealed class SetCommand : Command<ConfigSetSettings>
 
         ApiKeyHelpers.SaveApiKey(env, settings.Value);
 
-        var filePath = ApiKeyHelpers.GetLocalSettingsPath(env);
+        var filePath = ApiKeyHelpers.GetPreferencesPath();
 
-        AnsiConsole.MarkupLine($"[green]✓[/] API key saved to [cyan]{Path.GetFileName(filePath)}[/]");
+        AnsiConsole.MarkupLine($"[green]✓[/] API key saved to [cyan]{filePath}[/]");
 
         return 0;
     }

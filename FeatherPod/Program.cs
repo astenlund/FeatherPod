@@ -141,6 +141,11 @@ internal class Program
                     .WithDescription("Show current configuration")
                     .WithExample("config", "show")
                     .WithExample("config", "show", "-e", "Test");
+
+                cfg.AddCommand<ConfigCommands.GenerateCommand>("generate")
+                    .WithDescription("Generate configuration files from defaults")
+                    .WithExample("config", "generate")
+                    .WithExample("config", "generate", "--select");
             });
 
             // Version command

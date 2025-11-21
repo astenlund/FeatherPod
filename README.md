@@ -273,6 +273,8 @@ FeatherPod user revoke
 # Configuration
 FeatherPod config show       # Show current API key (masked)
 FeatherPod config set api-key <key>  # Set API key
+FeatherPod config generate   # Generate appsettings files from defaults
+FeatherPod config generate --select  # Choose which files to generate
 
 # Version info
 FeatherPod version           # Shows CLI and server versions
@@ -285,7 +287,9 @@ FeatherPod -e Test feed list
 FeatherPod
 ```
 
-API keys are stored in `appsettings.{Environment}.Local.json` (gitignored). The CLI prompts for the API key on first use and saves it automatically.
+API keys are stored in your user profile (`%APPDATA%\FeatherPod\preferences.json`). The CLI prompts for the API key on first use and saves it automatically. Existing API keys from `.Local.json` files are auto-migrated.
+
+**Single-file distribution:** The CLI embeds default configuration as resources. Run `FeatherPod config generate` to create local config files for customization.
 
 ## Development
 

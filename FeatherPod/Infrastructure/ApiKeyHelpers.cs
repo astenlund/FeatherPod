@@ -7,20 +7,36 @@ namespace FeatherPod.Infrastructure;
 internal static class ApiKeyHelpers
 {
     /// <summary>
-    /// Gets the path to the local settings file for the specified environment.
+    /// Gets the path to the user preferences file in AppData.
     /// </summary>
-    internal static string GetLocalSettingsPath(string environment)
+    internal static string GetPreferencesPath()
+    {
+        var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        return Path.Combine(appDataPath, "FeatherPod", "preferences.json");
+    }
+
+    /// <summary>
+    /// Gets the path to the legacy local settings file (for migration).
+    /// </summary>
+    internal static string GetLegacyLocalSettingsPath(string environment)
     {
         return Path.Combine(AppContext.BaseDirectory, $"appsettings.{environment}.Local.json");
     }
 
     /// <summary>
-    /// Saves the API key to the local settings file for the specified environment.
+    /// Saves the API key to the user preferences file in AppData.
     /// Creates the file if it doesn't exist, preserves other settings if it does.
     /// </summary>
     internal static void SaveApiKey(string environment, string apiKey)
     {
-        var filePath = GetLocalSettingsPath(environment);
+        var filePath = GetPreferencesPath();
+        var directory = Path.GetDirectoryName(filePath)!;
+
+        if (!Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
         JsonObject root;
 
         if (File.Exists(filePath))
@@ -33,14 +49,21 @@ internal static class ApiKeyHelpers
             root = new();
         }
 
-        // Ensure Api section exists
-        if (!root.ContainsKey("Api"))
+        // Ensure Environments section exists
+        if (!root.ContainsKey("Environments"))
         {
-            root["Api"] = new JsonObject();
+            root["Environments"] = new JsonObject();
+        }
+
+        // Ensure environment section exists
+        var environments = root["Environments"]!.AsObject();
+        if (!environments.ContainsKey(environment))
+        {
+            environments[environment] = new JsonObject();
         }
 
         // Set the API key
-        root["Api"]!["ApiKey"] = apiKey;
+        environments[environment]!["ApiKey"] = apiKey;
 
         // Write back with nice formatting
         var options = new JsonSerializerOptions { WriteIndented = true };
@@ -48,28 +71,54 @@ internal static class ApiKeyHelpers
     }
 
     /// <summary>
-    /// Gets the current API key from the local settings file, or null if not configured.
+    /// Gets the current API key from user preferences, with migration from legacy .Local.json files.
     /// </summary>
     internal static string? GetApiKey(string environment)
     {
-        var filePath = GetLocalSettingsPath(environment);
-
-        if (!File.Exists(filePath))
+        // First check AppData preferences
+        var preferencesPath = GetPreferencesPath();
+        if (File.Exists(preferencesPath))
         {
-            return null;
+            try
+            {
+                var content = File.ReadAllText(preferencesPath);
+                var root = JsonNode.Parse(content);
+                var apiKey = root?["Environments"]?[environment]?["ApiKey"]?.GetValue<string>();
+                if (!string.IsNullOrEmpty(apiKey))
+                {
+                    return apiKey;
+                }
+            }
+            catch
+            {
+                // Fall through to legacy check
+            }
         }
 
-        try
+        // Check legacy .Local.json and migrate if found
+        var legacyPath = GetLegacyLocalSettingsPath(environment);
+        if (File.Exists(legacyPath))
         {
-            var content = File.ReadAllText(filePath);
-            var root = JsonNode.Parse(content);
+            try
+            {
+                var content = File.ReadAllText(legacyPath);
+                var root = JsonNode.Parse(content);
+                var apiKey = root?["Api"]?["ApiKey"]?.GetValue<string>();
 
-            return root?["Api"]?["ApiKey"]?.GetValue<string>();
+                if (!string.IsNullOrEmpty(apiKey))
+                {
+                    // Auto-migrate to AppData
+                    SaveApiKey(environment, apiKey);
+                    return apiKey;
+                }
+            }
+            catch
+            {
+                // Ignore errors reading legacy file
+            }
         }
-        catch
-        {
-            return null;
-        }
+
+        return null;
     }
 
     /// <summary>
@@ -92,9 +141,9 @@ internal static class ApiKeyHelpers
 
         SaveApiKey(environment, apiKey);
 
-        var filePath = GetLocalSettingsPath(environment);
+        var filePath = GetPreferencesPath();
 
-        AnsiConsole.MarkupLine($"[green]✓[/] API key saved to [cyan]{Path.GetFileName(filePath)}[/]");
+        AnsiConsole.MarkupLine($"[green]✓[/] API key saved to [cyan]{filePath}[/]");
         AnsiConsole.WriteLine();
 
         return true;
