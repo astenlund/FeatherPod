@@ -37,8 +37,11 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
         var email = settings.Email;
         if (string.IsNullOrWhiteSpace(email))
         {
-            email = AnsiConsole.Ask<string>("User's [cyan]email address[/]:");
+            email = AnsiConsole.Prompt(
+                new TextPrompt<string>("User's [cyan]email address[/] (optional):")
+                    .AllowEmpty());
         }
+        if (string.IsNullOrWhiteSpace(email)) email = null;
 
         var role = settings.Role;
         if (string.IsNullOrWhiteSpace(role))

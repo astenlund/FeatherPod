@@ -16,9 +16,9 @@ public record User
     required public string Name { get; init; }
 
     /// <summary>
-    /// Email address for the user.
+    /// Email address for the user (optional).
     /// </summary>
-    required public string Email { get; init; }
+    public string? Email { get; init; }
 
     /// <summary>
     /// SHA256 hash of the user's API key. Never store plaintext keys.

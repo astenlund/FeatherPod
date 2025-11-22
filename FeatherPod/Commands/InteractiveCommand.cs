@@ -20,86 +20,33 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, InteractiveSettings settings, CancellationToken cancellationToken)
     {
-        // Clear screen before any output
-        Console.Write("\e[2J\e[H");
-
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Episode Manager[/]");
-        AnsiConsole.WriteLine();
-
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment, useDefault: true);
         if (env == null) return 1;
 
-        HttpClient? httpClient = null;
-        CurrentUserInfo? currentUser = null;
-
-        var isConnected = false;
         var autoConnect = PreferencesHelpers.GetAutoConnectEnabled() ?? true;
+        var apiUrl = EnvironmentHelpers.BuildConfiguration(env)["Api:BaseUrl"]?.TrimEnd('/') + "/api";
 
-        if (autoConnect)
-        {
-            var (client, userInfo) = await EnvironmentHelpers.SetupHttpClientAsync(env);
-            if (client != null)
-            {
-                httpClient = client;
-                currentUser = userInfo;
-                isConnected = true;
-            }
-            else
-            {
-                // Connection failed, continue in disconnected mode
-                AnsiConsole.MarkupLine("[yellow]Continuing in disconnected mode. Use Preferences to configure API key or change auto-connect.[/]");
-                AnsiConsole.WriteLine();
-            }
-        }
-        else
-        {
-            // Auto-connect disabled
-            var configuration = EnvironmentHelpers.BuildConfiguration(env);
-            var apiBaseUrl = configuration["Api:BaseUrl"] ?? "unknown";
-            AnsiConsole.MarkupLine($"API: [cyan]{apiBaseUrl}/api[/]");
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("[yellow]Auto-connect disabled. Use Preferences to connect manually.[/]");
-            AnsiConsole.WriteLine();
-        }
+        // Show header and optionally connect
+        var (httpClient, currentUser, isConnected, serverVersion) = await ShowHeader(
+            env, apiUrl, currentFeed: null, shouldConnect: autoConnect);
 
-        // Select initial feed (only if connected)
+        // Select initial feed (only if connected, suppress "no feeds" message since header shows status)
         FeedConfig? currentFeed = null;
         if (isConnected && httpClient != null)
         {
-            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
-            if (currentFeed == null)
-            {
-                AnsiConsole.MarkupLine("[yellow]No feeds available. Create one using 'M: Manage Feeds'.[/]");
-                AnsiConsole.WriteLine();
-            }
+            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, currentUser: currentUser, showNoFeedsMessage: false);
         }
 
-        // Skip clear on first iteration (header already shown from setup)
-        var skipClear = true;
-
         // Main menu loop
+        var firstIteration = true;
         while (true)
         {
-            if (!skipClear)
+            // Redraw header (skip on first iteration since it was just displayed)
+            if (!firstIteration)
             {
-                // Clear screen and redraw header
-                ShowHeader(env);
-                if (httpClient != null)
-                {
-                    AnsiConsole.MarkupLine($"API: [cyan]{httpClient.BaseAddress}[/]");
-                }
-                else
-                {
-                    var configuration = EnvironmentHelpers.BuildConfiguration(env);
-                    var apiBaseUrl = configuration["Api:BaseUrl"] ?? "unknown";
-                    AnsiConsole.MarkupLine($"API: [cyan]{apiBaseUrl}[/]");
-                }
-                AnsiConsole.WriteLine();
-                AnsiConsole.MarkupLine(isConnected ? "[green]✓[/] Connected" : "[red]✗[/] Disconnected");
-                AnsiConsole.WriteLine();
+                await ShowHeader(env, apiUrl, currentFeed, shouldConnect: false, currentlyConnected: isConnected, existingServerVersion: serverVersion);
             }
-            skipClear = false;
+            firstIteration = false;
 
             var choice = ShowMenu(currentFeed, isConnected, currentUser);
 
@@ -131,17 +78,16 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     }
 
                     // Select feed if none selected
-                    var pushFeed = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+                    var pushFeed = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
                     if (pushFeed == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]No feeds available. Create one using 'M: Manage Feeds'.[/]");
                         WaitForKeyPress();
                         break;
                     }
 
                     // Prompt for file path(s)
                     var filePattern = AnsiConsole.Prompt(
-                        new TextPrompt<string>("Enter file path(s) [grey](supports wildcards like *.mp3, comma-separated)[/]:")
+                        new TextPrompt<string>("Enter file path(s):")
                             .AllowEmpty());
 
                     if (string.IsNullOrWhiteSpace(filePattern))
@@ -291,7 +237,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     {
                         // Restore original normalization preference
                         if (originalNormPref.HasValue)
+                        {
                             PreferencesHelpers.SetNormalizationEnabled(originalNormPref.Value);
+                        }
                     }
 
                     WaitForKeyPress();
@@ -321,10 +269,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     var actionPast = isMove ? "Moved" : "Copied";
 
                     // Select source feed
-                    var sourceFeed = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, contextMessage: "Select source feed:");
+                    var sourceFeed = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, contextMessage: "Select source feed:", currentUser: currentUser);
                     if (sourceFeed == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]No feeds available.[/]");
                         WaitForKeyPress();
                         break;
                     }
@@ -479,10 +426,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         break;
 
                     // Select feed for icon operation
-                    var iconFeed = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+                    var iconFeed = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
                     if (iconFeed == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]No feeds available.[/]");
                         WaitForKeyPress();
                         break;
                     }
@@ -644,7 +590,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             }
 
                             var newName = AnsiConsole.Ask<string>("Display [cyan]name[/]:");
-                            var newEmail = AnsiConsole.Ask<string>("[cyan]Email[/]:");
+                            var newEmail = AnsiConsole.Prompt(
+                                new TextPrompt<string>("[cyan]Email[/] (optional):")
+                                    .AllowEmpty());
 
                             var newRole = new MenuBuilder<string?>()
                                 .WithTitle("Select role:")
@@ -676,7 +624,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 {
                                     id = newUserId.Trim(),
                                     name = newName.Trim(),
-                                    email = newEmail.Trim(),
+                                    email = string.IsNullOrWhiteSpace(newEmail) ? null : newEmail.Trim(),
                                     role = newRole,
                                     ownedFeeds = newOwnedFeeds
                                 });
@@ -886,6 +834,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     else if (currentFeed == null)
                     {
                         AnsiConsole.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
+                        AnsiConsole.WriteLine();
                     }
                     else
                     {
@@ -987,13 +936,18 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     }
                     else
                     {
-                        var newFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+                        var newFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
                         if (newFeed != null)
                         {
                             currentFeed = newFeed;
+                            // No pause - feed title shows in menu header
+                        }
+                        else
+                        {
+                            // No feeds available message was shown
+                            WaitForKeyPress();
                         }
                     }
-                    // No pause - feed title shows in menu header
                     break;
 
                 case MenuChoice.ManageFeeds:
@@ -1049,7 +1003,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             break;
 
                         case "update":
-                            var feedToUpdate = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+                            var feedToUpdate = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
                             if (feedToUpdate != null)
                             {
                                 await FeedUpdateCommand.UpdateFeedInteractiveAsync(httpClient, feedToUpdate, cancellationToken);
@@ -1063,7 +1017,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             break;
 
                         case "rename":
-                            var feedToRename = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+                            var feedToRename = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
                             if (feedToRename != null)
                             {
                                 var newId = AnsiConsole.Ask<string>("New feed [cyan]ID[/]:");
@@ -1079,14 +1033,14 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             break;
 
                         case "delete":
-                            var feedToDelete = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+                            var feedToDelete = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
                             if (feedToDelete != null)
                             {
                                 var deleteResult = await FeedDeleteCommand.DeleteFeedAsync(httpClient, feedToDelete.Id, cancellationToken: cancellationToken);
                                 if (deleteResult.Success && currentFeed?.Id == deleteResult.FeedId)
                                 {
                                     // Current feed was deleted, select a new one
-                                    currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, contextMessage: "Previous feed was deleted.");
+                                    currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, contextMessage: "Previous feed was deleted.", currentUser: currentUser);
                                 }
                                 WaitForKeyPress();
                             }
@@ -1100,82 +1054,23 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     {
                         env = newEnv;
                         autoConnect = PreferencesHelpers.GetAutoConnectEnabled() ?? true;
+                        apiUrl = EnvironmentHelpers.BuildConfiguration(env)["Api:BaseUrl"]?.TrimEnd('/') + "/api";
 
-                        // Clear screen and show connection progress
-                        ShowHeader(env);
+                        // Reset and reconnect for new environment
+                        currentFeed = null;
+                        (httpClient, currentUser, isConnected, serverVersion) = await ShowHeader(
+                            env, apiUrl, currentFeed, shouldConnect: autoConnect);
 
-                        if (autoConnect)
+                        if (isConnected && httpClient != null)
                         {
-                            var (newClient, userInfo) = await EnvironmentHelpers.SetupHttpClientAsync(env);
-                            if (newClient != null)
-                            {
-                                httpClient = newClient;
-                                currentUser = userInfo;
-                                isConnected = true;
-                                // Select feed for new environment
-                                currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
-                            }
-                            else
-                            {
-                                httpClient = null;
-                                currentUser = null;
-                                isConnected = false;
-                                currentFeed = null;
-                            }
+                            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, currentUser: currentUser);
                         }
-                        else
+                        else if (!autoConnect)
                         {
-                            httpClient = null;
-                            currentUser = null;
-                            isConnected = false;
-                            currentFeed = null;
-                            var configuration = EnvironmentHelpers.BuildConfiguration(env);
-                            var apiBaseUrl = configuration["Api:BaseUrl"] ?? "unknown";
-                            AnsiConsole.MarkupLine($"API: [cyan]{apiBaseUrl}/api[/]");
-                            AnsiConsole.WriteLine();
-                            AnsiConsole.MarkupLine("[yellow]Auto-connect disabled. Use Preferences to connect manually.[/]");
-                            AnsiConsole.WriteLine();
-                        }
-
-                        // Skip clear on next iteration (header already shown)
-                        skipClear = true;
-                    }
-                    break;
-
-                case MenuChoice.Version:
-                    // Show CLI version
-                    var versionAttr = Assembly.GetExecutingAssembly()
-                        .GetCustomAttribute<AssemblyInformationalVersionAttribute>();
-                    var cliVersion = versionAttr?.InformationalVersion ?? "unknown";
-                    AnsiConsole.MarkupLine($"[cyan]CLI Version:[/] {cliVersion}");
-
-                    // Show server version if connected
-                    if (isConnected && httpClient != null)
-                    {
-                        try
-                        {
-                            var versionResponse = await httpClient.GetAsync("/api/version", cancellationToken);
-                            if (versionResponse.IsSuccessStatusCode)
-                            {
-                                var versionJson = await versionResponse.Content.ReadAsStringAsync(cancellationToken);
-                                var versionData = JsonSerializer.Deserialize<JsonElement>(versionJson);
-                                if (versionData.TryGetProperty("version", out var serverVer))
-                                {
-                                    AnsiConsole.MarkupLine($"[cyan]Server Version:[/] {serverVer.GetString()}");
-                                }
-                            }
-                        }
-                        catch
-                        {
-                            AnsiConsole.MarkupLine("[yellow]Could not fetch server version[/]");
+                            AnsiConsole.MarkupLine("[yellow]Auto-connect disabled. Use Settings to connect manually.[/]");
+                            WaitForKeyPress();
                         }
                     }
-                    else
-                    {
-                        AnsiConsole.MarkupLine("[grey]Server version: (not connected)[/]");
-                    }
-
-                    WaitForKeyPress();
                     break;
 
                 case MenuChoice.Preferences:
@@ -1215,18 +1110,13 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                     AnsiConsole.WriteLine();
                                     if (await AnsiConsole.ConfirmAsync("Connect now?", defaultValue: true, cancellationToken: cancellationToken))
                                     {
-                                        // Clear screen and show connection progress like at startup
-                                        ShowHeader(env);
+                                        (httpClient, currentUser, isConnected, serverVersion) = await ShowHeader(
+                                            env, apiUrl, currentFeed, shouldConnect: true);
 
-                                        var (newClient, userInfo) = await EnvironmentHelpers.SetupHttpClientAsync(env);
-                                        if (newClient != null)
+                                        if (isConnected && httpClient != null)
                                         {
-                                            httpClient = newClient;
-                                            currentUser = userInfo;
-                                            isConnected = true;
-                                            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                                            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, currentUser: currentUser);
                                         }
-                                        skipClear = true;
                                     }
                                 }
                             }
@@ -1240,18 +1130,13 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             }
                             else
                             {
-                                // Clear screen and show connection progress like at startup
-                                ShowHeader(env);
+                                (httpClient, currentUser, isConnected, serverVersion) = await ShowHeader(
+                                    env, apiUrl, currentFeed, shouldConnect: true);
 
-                                var (newClient, userInfo) = await EnvironmentHelpers.SetupHttpClientAsync(env);
-                                if (newClient != null)
+                                if (isConnected && httpClient != null)
                                 {
-                                    httpClient = newClient;
-                                    currentUser = userInfo;
-                                    isConnected = true;
-                                    currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                                    currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, currentUser: currentUser);
                                 }
-                                skipClear = true;
                             }
                             break;
 
@@ -1293,22 +1178,17 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 AnsiConsole.WriteLine();
                                 if (await AnsiConsole.ConfirmAsync("Reconnect with new API key?", true, cancellationToken))
                                 {
-                                    ShowHeader(env);
-                                    var (newClient, userInfo) = await EnvironmentHelpers.SetupHttpClientAsync(env);
-                                    if (newClient != null)
+                                    (httpClient, currentUser, isConnected, serverVersion) = await ShowHeader(
+                                        env, apiUrl, currentFeed, shouldConnect: true);
+
+                                    if (isConnected && httpClient != null)
                                     {
-                                        httpClient = newClient;
-                                        currentUser = userInfo;
-                                        isConnected = true;
-                                        currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                                        currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, currentUser: currentUser);
                                     }
                                     else
                                     {
-                                        currentUser = null;
-                                        isConnected = false;
                                         currentFeed = null;
                                     }
-                                    skipClear = true;
                                 }
                                 else
                                 {
@@ -1382,22 +1262,17 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                             AnsiConsole.MarkupLine($"[green]✓[/] API key saved for {env}");
 
                                             // Reconnect with new key
-                                            ShowHeader(env);
-                                            var (newClient, userInfo) = await EnvironmentHelpers.SetupHttpClientAsync(env);
-                                            if (newClient != null)
+                                            (httpClient, currentUser, isConnected, serverVersion) = await ShowHeader(
+                                                env, apiUrl, currentFeed, shouldConnect: true);
+
+                                            if (isConnected && httpClient != null)
                                             {
-                                                httpClient = newClient;
-                                                currentUser = userInfo;
-                                                isConnected = true;
-                                                currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false);
+                                                currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, currentUser: currentUser);
                                             }
                                             else
                                             {
-                                                currentUser = null;
-                                                isConnected = false;
                                                 currentFeed = null;
                                             }
-                                            skipClear = true;
                                         }
                                         else
                                         {
@@ -1522,41 +1397,196 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
     private static void WaitForKeyPress()
     {
-        AnsiConsole.WriteLine();
         AnsiConsole.Markup("[grey]Press any key to continue...[/]");
         Console.ReadKey(true);
     }
 
-    private static void ShowHeader(string env)
+    private static async Task<(HttpClient?, CurrentUserInfo?, bool isConnected, string? serverVersion)> ShowHeader(
+        string env,
+        string? apiUrl,
+        FeedConfig? currentFeed,
+        bool shouldConnect,
+        bool currentlyConnected = false,
+        string? existingServerVersion = null)
     {
         Console.Write("\e[2J\e[H");
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Episode Manager[/]");
+
+        // Get CLI version
+        var versionAttr = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+        var version = versionAttr?.InformationalVersion ?? "unknown";
+
+        // Show title with server version if available
+        if (!string.IsNullOrEmpty(existingServerVersion))
+        {
+            AnsiConsole.MarkupLine($"[bold]FeatherPod Episode Manager[/] [grey]v{version} (server: {existingServerVersion})[/]");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine($"[bold]FeatherPod Episode Manager[/] [grey]v{version}[/]");
+        }
         AnsiConsole.WriteLine();
+
         AnsiConsole.MarkupLine($"Environment: [cyan]{env}[/]");
+        AnsiConsole.WriteLine();
+
+        if (!string.IsNullOrEmpty(apiUrl))
+        {
+            AnsiConsole.MarkupLine($"API: [cyan]{apiUrl}[/]");
+            if (!shouldConnect)
+            {
+                AnsiConsole.WriteLine();
+            }
+        }
+
+        HttpClient? httpClient = null;
+        CurrentUserInfo? userInfo = null;
+        var isConnected = currentlyConnected;
+        string? serverVersion = existingServerVersion;
+
+        if (shouldConnect)
+        {
+            // Get API key
+            var apiKey = PreferencesHelpers.GetApiKey(env);
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                if (!PreferencesHelpers.PromptAndSaveApiKey(env))
+                {
+                    AnsiConsole.MarkupLine("[red]✗[/] Disconnected (no API key)");
+                    AnsiConsole.WriteLine();
+                    ShowFeedStatus(currentFeed, false);
+                    return (null, null, false, null);
+                }
+                apiKey = PreferencesHelpers.GetApiKey(env);
+            }
+
+            if (string.IsNullOrEmpty(apiKey))
+            {
+                AnsiConsole.MarkupLine("[red]✗[/] Disconnected (no API key)");
+                AnsiConsole.WriteLine();
+                ShowFeedStatus(currentFeed, false);
+                return (null, null, false, null);
+            }
+
+            // Create HttpClient
+            var configuration = EnvironmentHelpers.BuildConfiguration(env);
+            var apiBaseUrl = configuration["Api:BaseUrl"] ?? "";
+            httpClient = new() { BaseAddress = new(apiBaseUrl) };
+            httpClient.DefaultRequestHeaders.Add("X-API-Key", apiKey);
+
+            // Test connection with spinner
+            try
+            {
+                await AnsiConsole.Status()
+                    .StartAsync("Connecting...", async _ =>
+                    {
+                        // Fetch user info
+                        var response = await httpClient.GetAsync("/api/users/me");
+                        response.EnsureSuccessStatusCode();
+
+                        var json = await response.Content.ReadAsStringAsync();
+                        var userData = JsonSerializer.Deserialize<JsonElement>(json);
+
+                        var id = userData.GetProperty("id").GetString() ?? "";
+                        var role = userData.GetProperty("role").GetString() ?? "FeedOwner";
+                        var ownedFeeds = new List<string>();
+
+                        if (userData.TryGetProperty("ownedFeeds", out var feedsElement) && feedsElement.ValueKind == JsonValueKind.Array)
+                        {
+                            ownedFeeds = feedsElement.EnumerateArray()
+                                .Select(e => e.GetString() ?? "")
+                                .Where(s => !string.IsNullOrEmpty(s))
+                                .ToList();
+                        }
+
+                        userInfo = new(id, role, ownedFeeds);
+
+                        // Fetch server version
+                        try
+                        {
+                            var versionResponse = await httpClient.GetAsync("/api/version");
+                            if (versionResponse.IsSuccessStatusCode)
+                            {
+                                var versionJson = await versionResponse.Content.ReadAsStringAsync();
+                                var versionData = JsonSerializer.Deserialize<JsonElement>(versionJson);
+                                if (versionData.TryGetProperty("version", out var serverVer))
+                                {
+                                    serverVersion = serverVer.GetString();
+                                }
+                            }
+                        }
+                        catch
+                        {
+                            // Ignore version fetch errors
+                        }
+                    });
+
+                isConnected = true;
+                Console.WriteLine();
+                AnsiConsole.MarkupLine("[green]✓[/] Connected");
+
+                // Update title line with server version immediately
+                if (!string.IsNullOrEmpty(serverVersion))
+                {
+                    Console.Write($"\e[s\e[2;1H\e[2K");
+                    AnsiConsole.Markup($"[bold]FeatherPod Episode Manager[/] [grey]v{version} (server: {serverVersion})[/]");
+                    Console.Write("\e[u");
+                }
+            }
+            catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                Console.WriteLine();
+                AnsiConsole.MarkupLine("[red]✗[/] Authentication failed (invalid API key)");
+                httpClient = null;
+                isConnected = false;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine();
+                AnsiConsole.MarkupLine($"[red]✗[/] Connection failed: {Markup.Escape(ex.Message)}");
+                httpClient = null;
+                isConnected = false;
+            }
+        }
+        else
+        {
+            AnsiConsole.MarkupLine(isConnected ? "[green]✓[/] Connected" : "[red]✗[/] Disconnected");
+        }
+
+        AnsiConsole.WriteLine();
+        ShowFeedStatus(currentFeed, isConnected);
+
+        return (httpClient, userInfo, isConnected, serverVersion);
+    }
+
+    private static void ShowFeedStatus(FeedConfig? currentFeed, bool isConnected)
+    {
+        if (currentFeed != null)
+        {
+            AnsiConsole.MarkupLine($"Feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
+        }
+        else if (!isConnected)
+        {
+            AnsiConsole.MarkupLine("[grey]No feed selected (not connected)[/]");
+        }
+        else
+        {
+            AnsiConsole.MarkupLine("[yellow]No feed selected[/]");
+        }
+
         AnsiConsole.WriteLine();
     }
 
     private static MenuChoice ShowMenu(FeedConfig? currentFeed, bool isConnected, CurrentUserInfo? currentUser)
     {
-        if (currentFeed != null)
-        {
-            AnsiConsole.MarkupLine($"Feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
-            AnsiConsole.WriteLine();
-        }
-        else if (!isConnected)
-        {
-            AnsiConsole.MarkupLine("[grey]No feed selected (not connected)[/]");
-            AnsiConsole.WriteLine();
-        }
-
         var menu = new MenuBuilder<MenuChoice>()
             .WithTitle("What would you like to do?")
             .WithHint("(arrow keys or highlighted letter)")
             .AddOption("L", "List episodes", MenuChoice.List)
             .AddOption("P", "Push episodes", MenuChoice.Push)
             .AddOption("D", "Delete episodes", MenuChoice.Delete)
-            .AddOption("O", "Move/Copy episodes", MenuChoice.MoveCopy)
+            .AddOption("V", "Move/Copy episodes", MenuChoice.MoveCopy)
             .AddOption("I", "Icon management", MenuChoice.Icon);
 
         // Only show User Management for Admin users
@@ -1569,7 +1599,6 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             .AddOption("M", "Manage feeds", MenuChoice.ManageFeeds)
             .AddOption("F", "Switch feed", MenuChoice.SwitchFeed)
             .AddOption("E", "Environment", MenuChoice.SwitchEnvironment)
-            .AddOption("V", "Version", MenuChoice.Version)
             .AddOption("S", "Settings", MenuChoice.Preferences)
             .AddOption("Q", "Quit", MenuChoice.Quit)
             .AllowCancel(false) // Don't allow escape on main menu
@@ -1586,7 +1615,6 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         UserManagement,
         SwitchFeed,
         ManageFeeds,
-        Version,
         Preferences,
         SwitchEnvironment,
         Quit
