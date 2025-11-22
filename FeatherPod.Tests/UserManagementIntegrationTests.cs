@@ -282,6 +282,43 @@ public class UserManagementIntegrationTests : IDisposable
         Assert.NotEqual(oldApiKey, newApiKey);
     }
 
+    [AzuriteFact]
+    public async Task RotateKey_ShouldWork_WhenFeedOwnerRotatesOwnKey()
+    {
+        // Arrange
+        var feedOwnerApiKey = await CreateTestUserAsync("selfrotate", "FeedOwner", []);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/users/selfrotate/key/regenerate");
+        request.Headers.Add("X-API-Key", feedOwnerApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var content = await response.Content.ReadAsStringAsync();
+        var doc = JsonSerializer.Deserialize<JsonElement>(content);
+        var newApiKey = doc.GetProperty("apiKey").GetString()!;
+        Assert.NotEqual(feedOwnerApiKey, newApiKey);
+    }
+
+    [AzuriteFact]
+    public async Task RotateKey_ShouldReturn403_WhenFeedOwnerRotatesOtherUserKey()
+    {
+        // Arrange
+        await CreateTestUserAsync("victim", "FeedOwner", []);
+        var attackerApiKey = await CreateTestUserAsync("attacker", "FeedOwner", []);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/users/victim/key/regenerate");
+        request.Headers.Add("X-API-Key", attackerApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
     // ============================================================================
     // FEED OWNERSHIP GRANT/REVOKE TESTS
     // ============================================================================

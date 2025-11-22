@@ -358,9 +358,9 @@ internal static class EpisodeHelpers
         var prompt = new MultiSelectionPrompt<Episode>()
             .Title("Select episodes:")
             .PageSize(10)
-            .Required()
+            .NotRequired()
             .MoreChoicesText("[grey](Move up/down for more)[/]")
-            .InstructionsText("[grey]([blue]Space[/] to toggle, [green]Enter[/] to confirm)[/]")
+            .InstructionsText("[grey]([blue]Space[/] to toggle, [green]Enter[/] to confirm, Enter with none to cancel)[/]")
             .UseConverter(ep => $"[grey]{ep.PublishedDate:yyyy-MM-dd}[/] {Markup.Escape(ep.Title)}")
             .AddChoices(episodes);
 

@@ -46,14 +46,26 @@ internal static class FeedHelpers
         }
     }
 
-    internal static async Task<FeedConfig?> SelectFeedAsync(HttpClient httpClient, string environment, bool forcePrompt = false, string? contextMessage = null)
+    internal static async Task<FeedConfig?> SelectFeedAsync(HttpClient httpClient, string environment, bool forcePrompt = false, string? contextMessage = null, CurrentUserInfo? currentUser = null, bool showNoFeedsMessage = true)
     {
         var feeds = await GetFeedsAsync(httpClient);
 
+        // Filter feeds by ownership for FeedOwner users
+        if (currentUser?.Role == "FeedOwner")
+        {
+            feeds = feeds.Where(f => currentUser.OwnedFeeds.Contains(f.Id)).ToList();
+        }
+
         if (feeds.Count == 0)
         {
-            AnsiConsole.MarkupLine("[yellow]No feeds found.[/] Use [cyan]'M: Manage Feeds'[/] to create one.");
-            AnsiConsole.WriteLine();
+            if (showNoFeedsMessage)
+            {
+                var message = currentUser?.Role == "FeedOwner"
+                    ? "[yellow]No feeds available.[/] You don't own any feeds."
+                    : "[yellow]No feeds found.[/] Use [cyan]'M: Manage Feeds'[/] to create one.";
+                AnsiConsole.MarkupLine(message);
+                AnsiConsole.WriteLine();
+            }
             return null;
         }
 

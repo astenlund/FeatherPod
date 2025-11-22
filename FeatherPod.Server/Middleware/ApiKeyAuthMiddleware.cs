@@ -139,11 +139,17 @@ public class ApiKeyAuthMiddleware
             return true;
         }
 
-        // User management endpoints are admin-only, except /api/users/me
+        // User management endpoints are admin-only, except /api/users/me and rotating own key
         if (path.StartsWith("/api/users"))
         {
             // Allow any authenticated user to access /api/users/me
             if (path.Equals("/api/users/me", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            // Allow users to rotate their own API key
+            if (path.Equals($"/api/users/{user.Id}/key/regenerate", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }

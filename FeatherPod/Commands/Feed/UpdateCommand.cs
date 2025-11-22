@@ -36,7 +36,8 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
             new MultiSelectionPrompt<string>()
                 .Title("Select fields to edit:")
                 .PageSize(10)
-                .InstructionsText("[grey]([blue]Space[/] to toggle, [green]Enter[/] to confirm)[/]")
+                .NotRequired()
+                .InstructionsText("[grey]([blue]Space[/] to toggle, [green]Enter[/] to confirm, Enter with none to cancel)[/]")
                 .AddChoices(fieldOptions));
 
         if (selectedFields.Count == 0)

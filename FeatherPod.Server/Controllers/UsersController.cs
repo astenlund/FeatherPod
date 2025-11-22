@@ -109,10 +109,10 @@ public class UsersController : ControllerBase
             return BadRequest(new { error = "Name is required" });
         }
 
-        if (!body.TryGetProperty("email", out var emailElement) || string.IsNullOrWhiteSpace(emailElement.GetString()))
-        {
-            return BadRequest(new { error = "Email is required" });
-        }
+        // Email is optional
+        body.TryGetProperty("email", out var emailElement);
+        var email = emailElement.ValueKind == JsonValueKind.String ? emailElement.GetString() : null;
+        if (string.IsNullOrWhiteSpace(email)) email = null;
 
         if (!body.TryGetProperty("role", out var roleElement) || !Enum.TryParse<UserRole>(roleElement.GetString(), true, out var role))
         {
@@ -129,7 +129,7 @@ public class UsersController : ControllerBase
         {
             Id = idElement.GetString()!,
             Name = nameElement.GetString()!,
-            Email = emailElement.GetString()!,
+            Email = email,
             Role = role,
             OwnedFeeds = ownedFeeds,
             ApiKeyHash = "" // Will be set by UserService
