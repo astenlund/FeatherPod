@@ -81,13 +81,7 @@ https://<your-app-name>.azurewebsites.net/{feedId}/feed.xml
 
 ## Development Workflow
 
-Pull requests are automatically deployed to an isolated test environment where you can validate changes before promoting to production. The GitHub Actions workflow:
-
-1. Builds and deploys PR changes to test environment
-2. Comments on PR with test URLs
-3. Allows testing with real Azure infrastructure
-
-**Setup:** See [.github/DEPLOYMENT.md](.github/DEPLOYMENT.md) for configuring automated deployments and [.github/API-KEY-SETUP.md](.github/API-KEY-SETUP.md) for API key security.
+PRs auto-deploy to test environment via GitHub Actions. See [.github/DEPLOYMENT.md](.github/DEPLOYMENT.md) for setup.
 
 ## Usage
 
@@ -189,6 +183,7 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
+| `/api/users/me` | GET | Any | Get current authenticated user |
 | `/api/users` | GET | Admin | List all users |
 | `/api/users/{userId}` | GET | Admin | Get user by ID |
 | `/api/users` | POST | Admin | Create user (returns API key once) |
@@ -205,12 +200,7 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 | `/{feedId}/icon.png` | GET | Public | Feed icon |
 | `/{feedId}/audio/{filename}` | GET | Public | Stream audio (range requests) |
 
-**Authentication & Authorization:**
-- Protected endpoints require `X-API-Key` header
-- **Admin** role has full access to all feeds and user management
-- **FeedOwner** role has access only to owned feeds
-- Legacy API key automatically migrated to admin user on first use
-- Each user has their own API key (32-byte random, SHA256 hashed)
+**Authentication:** `X-API-Key` header required for protected endpoints. Admin has full access; FeedOwner limited to owned feeds.
 
 ## Configuration
 
@@ -295,6 +285,8 @@ FeatherPod -e Test feed list
 FeatherPod
 ```
 
+**Interactive mode** provides full feature parity with CLI commands - all operations (push, move, copy, delete, icon management, user management, etc.) are available through menus with arrow key navigation.
+
 **User preferences** are stored in `%APPDATA%\FeatherPod\preferences.json`:
 - API keys (per environment)
 - Audio normalization enabled/disabled (defaults to enabled)
@@ -314,13 +306,10 @@ dotnet test           # Run tests (starts integration tests if Azurite is runnin
 ## Architecture
 
 - **.NET 9 ASP.NET Core** - Controllers-based REST API
-- **Multi-feed architecture** - Single instance hosts multiple isolated podcast feeds
-- **Role-based access control** - Admin and FeedOwner roles with per-user API keys and feed ownership
-- **Azure Blob Storage** - Cloud-native file storage with managed identity support
-- **Hash-based episode IDs** - `SHA256(feedId:filename:filesize)` ensures stability
-- **User management** - User accounts stored in `users.json` with SHA256 hashed API keys
-- **Range request support** - Enables seeking and resuming in podcast apps
-- **Cross-feed operations** - Move or copy episodes between feeds via REST API
+- **Multi-feed** - Single instance, multiple isolated feeds
+- **Role-based access** - Admin and FeedOwner roles with per-user API keys
+- **Azure Blob Storage** - Managed Identity support, hash-based episode IDs
+- **Range requests** - Seeking/resuming in podcast apps
 
 **Supported formats:** MP3, M4A, AAC, WAV, OGG, FLAC
 
