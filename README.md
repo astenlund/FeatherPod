@@ -247,10 +247,8 @@ FeatherPod feed create --id my-podcast --title "My Podcast" --author "John Doe"
 FeatherPod feed update my-podcast --title "New Title"
 FeatherPod feed rename old-id new-id
 FeatherPod feed delete my-podcast --force
-
-# Icon management
-FeatherPod icon set icon.png -f my-podcast
-FeatherPod icon unset -f my-podcast
+FeatherPod feed set-icon icon.png my-podcast
+FeatherPod feed unset-icon my-podcast
 
 # User management (Admin only)
 FeatherPod user create
