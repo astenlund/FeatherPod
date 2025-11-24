@@ -21,7 +21,7 @@ param testAppServiceName string = 'featherpod-test'
 param appServicePlanSku string = 'F1'
 
 @description('.NET runtime version')
-param dotnetVersion string = 'DOTNETCORE|9.0'
+param dotnetVersion string = 'DOTNETCORE|10.0'
 
 @description('Podcast title for test environment')
 param podcastTitle string = 'FeatherPod Test'

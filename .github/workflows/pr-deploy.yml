@@ -5,7 +5,7 @@ on:
     types: [opened, synchronize, reopened, closed]
 
 env:
-  DOTNET_VERSION: '9.0.x'
+  DOTNET_VERSION: '10.0.x'
   TEST_RESOURCE_GROUP: 'featherpod-test-rg'
   TEST_APP_NAME: 'featherpod-test'
   TEST_APP_URL: 'https://featherpod-test.azurewebsites.net'
