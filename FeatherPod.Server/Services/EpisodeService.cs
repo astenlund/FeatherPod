@@ -249,20 +249,21 @@ public sealed class EpisodeService : IDisposable
         try
         {
             // Initialize episode list for feed if doesn't exist
-            if (!_episodesByFeed.ContainsKey(feedId))
+            if (!_episodesByFeed.TryGetValue(feedId, out var value))
             {
-                _episodesByFeed[feedId] = [];
+                value = [];
+                _episodesByFeed[feedId] = value;
             }
 
             // Check if episode already exists
-            var existing = _episodesByFeed[feedId].FirstOrDefault(e => e.Id == id);
+            var existing = value.FirstOrDefault(e => e.Id == id);
             if (existing != null)
             {
                 _logger.LogInformation("Episode with ID {Id} already exists in feed {FeedId}, replacing with new upload", id, feedId);
-                _episodesByFeed[feedId].Remove(existing);
+                value.Remove(existing);
             }
 
-            var duration = await GetAudioDurationAsync(filePath);
+            var duration = GetAudioDuration(filePath);
 
             // Determine published date
             DateTime finalPublishedDate;
@@ -298,8 +299,7 @@ public sealed class EpisodeService : IDisposable
                 Duration = duration,
                 PublishedDate = finalPublishedDate
             };
-
-            _episodesByFeed[feedId].Add(episode);
+            value.Add(episode);
             await SaveEpisodesAsync(feedId);
 
             _logger.LogInformation("Added episode to feed {FeedId}: {Title} ({FileName})", feedId, episode.Title, fileName);
@@ -457,7 +457,6 @@ public sealed class EpisodeService : IDisposable
             }
 
             var blobFiles = await _blobStorage.ListAudioFilesAsync(feedId);
-            var metadataFiles = _episodesByFeed[feedId].Select(e => e.FileName).ToHashSet();
 
             // Remove episodes whose blob files are missing
             var episodesToRemove = _episodesByFeed[feedId]
@@ -525,12 +524,12 @@ public sealed class EpisodeService : IDisposable
 
     private async Task SaveEpisodesAsync(string feedId)
     {
-        if (!_episodesByFeed.ContainsKey(feedId))
+        if (!_episodesByFeed.TryGetValue(feedId, out var value))
         {
             return;
         }
 
-        var json = JsonSerializer.Serialize(_episodesByFeed[feedId], _jsonSerializerOptions);
+        var json = JsonSerializer.Serialize(value, _jsonSerializerOptions);
         await _blobStorage.SaveEpisodeMetadataAsync(feedId, json);
     }
 
@@ -542,17 +541,17 @@ public sealed class EpisodeService : IDisposable
         }
     }
 
-    private Task<TimeSpan> GetAudioDurationAsync(string filePath)
+    private TimeSpan GetAudioDuration(string filePath)
     {
         try
         {
             using var file = TagLib.File.Create(filePath);
-            return Task.FromResult(file.Properties.Duration);
+            return file.Properties.Duration;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to read audio duration from {FilePath}, using 0:00", filePath);
-            return Task.FromResult(TimeSpan.Zero);
+            return TimeSpan.Zero;
         }
     }
 

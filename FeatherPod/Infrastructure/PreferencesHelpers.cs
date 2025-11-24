@@ -6,6 +6,7 @@ namespace FeatherPod.Infrastructure;
 
 internal static class PreferencesHelpers
 {
+    private static readonly JsonSerializerOptions JsonWriteOptions = new() { WriteIndented = true };
     /// <summary>
     /// Gets the path to the user preferences file in AppData.
     /// </summary>
@@ -58,8 +59,7 @@ internal static class PreferencesHelpers
         environments[environment]!["ApiKey"] = apiKey;
 
         // Write back with nice formatting
-        var options = new JsonSerializerOptions { WriteIndented = true };
-        File.WriteAllText(filePath, root.ToJsonString(options));
+        File.WriteAllText(filePath, root.ToJsonString(JsonWriteOptions));
     }
 
     /// <summary>
@@ -189,8 +189,7 @@ internal static class PreferencesHelpers
         root["AudioNormalization"]!["Enabled"] = enabled;
 
         // Write back with nice formatting
-        var options = new JsonSerializerOptions { WriteIndented = true };
-        File.WriteAllText(filePath, root.ToJsonString(options));
+        File.WriteAllText(filePath, root.ToJsonString(JsonWriteOptions));
     }
 
     /// <summary>
@@ -253,7 +252,6 @@ internal static class PreferencesHelpers
         root["AutoConnect"]!["Enabled"] = enabled;
 
         // Write back with nice formatting
-        var options = new JsonSerializerOptions { WriteIndented = true };
-        File.WriteAllText(filePath, root.ToJsonString(options));
+        File.WriteAllText(filePath, root.ToJsonString(JsonWriteOptions));
     }
 }

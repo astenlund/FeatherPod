@@ -1,6 +1,9 @@
 using System.Text.Json.Serialization;
 using FeatherPod.Server.Middleware;
 using FeatherPod.Server.Services;
+using FeatherPod.Shared;
+
+const long MaxUploadSizeBytes = 500 * 1024 * 1024; // 500 MB
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,7 +14,7 @@ builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 // Configure Kestrel for large file uploads
 builder.WebHost.ConfigureKestrel(options =>
 {
-    options.Limits.MaxRequestBodySize = 500 * 1024 * 1024; // 500 MB max file size
+    options.Limits.MaxRequestBodySize = MaxUploadSizeBytes;
     options.Limits.RequestHeadersTimeout = TimeSpan.FromMinutes(2);
     options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(2);
 });
@@ -19,7 +22,7 @@ builder.WebHost.ConfigureKestrel(options =>
 // Configure form options for large file uploads
 builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
 {
-    options.MultipartBodyLengthLimit = 500 * 1024 * 1024; // 500 MB
+    options.MultipartBodyLengthLimit = MaxUploadSizeBytes;
     options.ValueLengthLimit = int.MaxValue;
     options.MultipartHeadersLengthLimit = int.MaxValue;
 });
@@ -118,7 +121,7 @@ app.MapGet("/{feedId}/audio/{filename}", async (string feedId, string filename, 
         context.Response.Headers.ContentRange = $"bytes 0-{fileSize - 1}/{fileSize}";
     }
 
-    context.Response.ContentType = GetMimeType(filename);
+    context.Response.ContentType = AudioHelper.GetMimeType(filename);
     context.Response.ContentLength = fileSize;
 
     await stream.CopyToAsync(context.Response.Body);
@@ -128,25 +131,5 @@ app.MapGet("/{feedId}/audio/{filename}", async (string feedId, string filename, 
 .Produces(200)
 .Produces(206)
 .Produces(404);
-
-// ============================================================================
-// HELPER METHODS
-// ============================================================================
-
-static string GetMimeType(string fileName)
-{
-    var extension = Path.GetExtension(fileName).ToLowerInvariant();
-
-    return extension switch
-    {
-        ".mp3" => "audio/mpeg",
-        ".m4a" => "audio/mp4",
-        ".wav" => "audio/wav",
-        ".ogg" => "audio/ogg",
-        ".flac" => "audio/flac",
-        ".aac" => "audio/aac",
-        _ => "audio/mpeg"
-    };
-}
 
 app.Run();
