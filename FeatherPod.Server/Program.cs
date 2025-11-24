@@ -63,6 +63,15 @@ var baseUrl = app.Configuration.GetSection("Podcast")["BaseUrl"]
 app.MapControllers();
 
 // ============================================================================
+// HEALTH CHECK ENDPOINT
+// ============================================================================
+
+// Simple health check endpoint for Azure Monitor health probes
+app.MapGet("/health", () => Results.Ok())
+    .WithName("GetHealth")
+    .Produces(200);
+
+// ============================================================================
 // FEED-SPECIFIC ENDPOINTS
 // ============================================================================
 
