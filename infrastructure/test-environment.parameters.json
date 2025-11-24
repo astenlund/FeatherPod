@@ -21,7 +21,7 @@
       "value": "F1"
     },
     "dotnetVersion": {
-      "value": "DOTNETCORE|9.0"
+      "value": "DOTNETCORE|10.0"
     },
     "podcastTitle": {
       "value": "FeatherPod Test"

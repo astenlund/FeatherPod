@@ -21,7 +21,7 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 
 ## Prerequisites
 
-- .NET 9 SDK
+- .NET 10 SDK
 - Azure Storage Account (or Azurite for local development)
 - Azure App Service (optional for deployment)
 
@@ -303,7 +303,7 @@ dotnet test           # Run tests (starts integration tests if Azurite is runnin
 
 ## Architecture
 
-- **.NET 9 ASP.NET Core** - Controllers-based REST API
+- **.NET 10 ASP.NET Core** - Controllers-based REST API
 - **Multi-feed** - Single instance, multiple isolated feeds
 - **Role-based access** - Admin and FeedOwner roles with per-user API keys
 - **Azure Blob Storage** - Managed Identity support, hash-based episode IDs
