@@ -1,9 +1,9 @@
 using System.ComponentModel;
 using Spectre.Console.Cli;
 
-namespace FeatherPod.Settings.Icon;
+namespace FeatherPod.Settings.Feed;
 
-internal sealed class SetSettings : CommandSettings
+internal sealed class SetIconSettings : CommandSettings
 {
     [CommandArgument(0, "<icon-path>")]
     [Description("Path to the icon file (PNG/JPEG)")]
@@ -13,7 +13,7 @@ internal sealed class SetSettings : CommandSettings
     [Description("Target environment (Dev, Test, Prod)")]
     public string? Environment { get; init; }
 
-    [CommandOption("-f|--feed")]
+    [CommandArgument(1, "[feed-id]")]
     [Description("Feed ID to set icon for (optional, will prompt if omitted)")]
     public string? FeedId { get; init; }
 }

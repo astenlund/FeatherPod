@@ -1,13 +1,13 @@
 using FeatherPod.Infrastructure;
-using FeatherPod.Settings.Icon;
+using FeatherPod.Settings.Feed;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
-namespace FeatherPod.Commands.Icon;
+namespace FeatherPod.Commands.Feed;
 
-internal sealed class UnsetCommand : AsyncCommand<UnsetSettings>
+internal sealed class UnsetIconCommand : AsyncCommand<UnsetIconSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, UnsetSettings settings, CancellationToken cancellationToken)
+    public override async Task<int> ExecuteAsync(CommandContext context, UnsetIconSettings settings, CancellationToken cancellationToken)
     {
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("[bold]FeatherPod Icon Removal[/]");
@@ -25,7 +25,7 @@ internal sealed class UnsetCommand : AsyncCommand<UnsetSettings>
             return 1;
         }
 
-        // Select feed (use -f flag if provided, otherwise prompt user to select)
+        // Select feed (use argument if provided, otherwise prompt user to select)
         var feed = !string.IsNullOrEmpty(settings.FeedId)
             ? await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FeedId)
             : await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);

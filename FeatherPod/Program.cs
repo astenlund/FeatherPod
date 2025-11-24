@@ -1,7 +1,6 @@
 using System.Reflection;
 using FeatherPod.Commands;
 using FeatherPod.Commands.Episode;
-using FeatherPod.Commands.Icon;
 using Spectre.Console.Cli;
 
 using ConfigCommands = FeatherPod.Commands.Config;
@@ -53,21 +52,6 @@ internal class Program
                     .WithDescription("Copy episode(s) from one feed to another")
                     .WithExample("episode", "copy")
                     .WithExample("episode", "copy", "--from", "feed1", "--to", "feed2", "--episode", "Episode*");
-            });
-
-            config.AddBranch("icon", icon =>
-            {
-                icon.SetDescription("Icon management commands");
-
-                icon.AddCommand<SetCommand>("set")
-                    .WithDescription("Upload/replace feed icon")
-                    .WithExample("icon", "set", "icon.png", "--feed", "my-podcast")
-                    .WithExample("icon", "set", "artwork.jpg");
-
-                icon.AddCommand<UnsetCommand>("unset")
-                    .WithDescription("Remove feed icon")
-                    .WithExample("icon", "unset", "--feed", "my-podcast")
-                    .WithExample("icon", "unset");
             });
 
             config.AddBranch("user", user =>
@@ -127,6 +111,16 @@ internal class Program
                     .WithDescription("Delete a feed and all its episodes")
                     .WithExample("feed", "delete", "my-podcast")
                     .WithExample("feed", "delete", "my-podcast", "--force");
+
+                feed.AddCommand<FeedCommands.SetIconCommand>("set-icon")
+                    .WithDescription("Upload/replace feed icon")
+                    .WithExample("feed", "set-icon", "icon.png", "my-podcast")
+                    .WithExample("feed", "set-icon", "artwork.jpg");
+
+                feed.AddCommand<FeedCommands.UnsetIconCommand>("unset-icon")
+                    .WithDescription("Remove feed icon")
+                    .WithExample("feed", "unset-icon", "my-podcast")
+                    .WithExample("feed", "unset-icon");
             });
 
             config.AddBranch("config", cfg =>

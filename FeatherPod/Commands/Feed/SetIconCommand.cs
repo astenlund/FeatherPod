@@ -1,13 +1,13 @@
 using FeatherPod.Infrastructure;
-using FeatherPod.Settings.Icon;
+using FeatherPod.Settings.Feed;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
-namespace FeatherPod.Commands.Icon;
+namespace FeatherPod.Commands.Feed;
 
-internal sealed class SetCommand : AsyncCommand<SetSettings>
+internal sealed class SetIconCommand : AsyncCommand<SetIconSettings>
 {
-    public override async Task<int> ExecuteAsync(CommandContext context, SetSettings settings, CancellationToken cancellationToken)
+    public override async Task<int> ExecuteAsync(CommandContext context, SetIconSettings settings, CancellationToken cancellationToken)
     {
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine("[bold]FeatherPod Icon Upload[/]");
@@ -43,7 +43,7 @@ internal sealed class SetCommand : AsyncCommand<SetSettings>
             return 1;
         }
 
-        // Select feed (use -f flag if provided, otherwise prompt user to select)
+        // Select feed (use argument if provided, otherwise prompt user to select)
         var feed = !string.IsNullOrEmpty(settings.FeedId)
             ? await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FeedId)
             : await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);

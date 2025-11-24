@@ -1,15 +1,15 @@
 using System.ComponentModel;
 using Spectre.Console.Cli;
 
-namespace FeatherPod.Settings.Icon;
+namespace FeatherPod.Settings.Feed;
 
-internal sealed class UnsetSettings : CommandSettings
+internal sealed class UnsetIconSettings : CommandSettings
 {
     [CommandOption("-e|--environment")]
     [Description("Target environment (Dev, Test, Prod)")]
     public string? Environment { get; init; }
 
-    [CommandOption("-f|--feed")]
+    [CommandArgument(0, "[feed-id]")]
     [Description("Feed ID to remove icon from (optional, will prompt if omitted)")]
     public string? FeedId { get; init; }
 }
