@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using FeatherPod.Settings.Episode;
 using Microsoft.Extensions.Configuration;
@@ -154,7 +155,7 @@ internal static class EpisodeHelpers
                         // Add file (use normalized file if available, otherwise original)
                         var fileBytes = await File.ReadAllBytesAsync(fileToUpload);
                         var fileContent = new ByteArrayContent(fileBytes);
-                        fileContent.Headers.ContentType = new MediaTypeHeaderValue("audio/mpeg");
+                        fileContent.Headers.ContentType = new MediaTypeHeaderValue(AudioHelper.GetMimeType(fileName));
                         content.Add(fileContent, "file", fileName);
 
                         // Add optional title

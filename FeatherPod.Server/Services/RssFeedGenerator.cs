@@ -1,10 +1,11 @@
 using System.Text;
 using System.Xml;
+using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 
 namespace FeatherPod.Server.Services;
 
-public class RssFeedGenerator
+public static class RssFeedGenerator
 {
     public static string GenerateFeed(FeedConfig feedConfig, string baseUrl, List<Episode> episodes)
     {
@@ -100,7 +101,7 @@ public class RssFeedGenerator
         writer.WriteStartElement("enclosure");
         writer.WriteAttributeString("url", audioUrl);
         writer.WriteAttributeString("length", episode.FileSize.ToString());
-        writer.WriteAttributeString("type", GetMimeType(episode.FileName));
+        writer.WriteAttributeString("type", AudioHelper.GetMimeType(episode.FileName));
         writer.WriteEndElement();
 
         // iTunes specific episode tags
@@ -115,21 +116,6 @@ public class RssFeedGenerator
         }
 
         writer.WriteEndElement(); // item
-    }
-
-    private static string GetMimeType(string fileName)
-    {
-        var extension = Path.GetExtension(fileName).ToLowerInvariant();
-        return extension switch
-        {
-            ".mp3" => "audio/mpeg",
-            ".m4a" => "audio/mp4",
-            ".wav" => "audio/wav",
-            ".ogg" => "audio/ogg",
-            ".flac" => "audio/flac",
-            ".aac" => "audio/aac",
-            _ => "audio/mpeg"
-        };
     }
 }
 
