@@ -79,20 +79,17 @@ public class ApiKeyAuthMiddleware
         // Store user in context for downstream use
         context.Items["User"] = user;
 
-        // Update last active timestamp (async, don't await to avoid blocking request)
+        // Update last active timestamp
         if (user.Id != "legacy-admin")
         {
-            _ = Task.Run(async () =>
+            try
             {
-                try
-                {
-                    await userService.UpdateLastActiveAsync(user.Id);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to update last active timestamp for user '{UserId}'", user.Id);
-                }
-            });
+                await userService.UpdateLastActiveAsync(user.Id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to update last active timestamp for user '{UserId}'", user.Id);
+            }
         }
 
         // Check permissions based on endpoint type
