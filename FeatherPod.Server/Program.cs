@@ -147,24 +147,64 @@ app.MapGet("/{feedId}/audio/{filename}", async (string feedId, string filename, 
         return Results.NotFound($"Audio file '{filename}' not found in feed '{feedId}'");
     }
 
-    var stream = await service.DownloadAudioAsync(feedId, filename);
     var fileSize = await service.GetAudioFileSizeAsync(feedId, filename);
+    var rangeHeader = context.Request.Headers.Range.ToString();
 
-    // Support range requests for audio streaming
-    var range = context.Request.Headers.Range.ToString();
-    if (!string.IsNullOrEmpty(range))
-    {
-        context.Response.StatusCode = 206; // Partial Content
-        context.Response.Headers.AcceptRanges = "bytes";
-        context.Response.Headers.ContentRange = $"bytes 0-{fileSize - 1}/{fileSize}";
-    }
-
+    context.Response.Headers.AcceptRanges = "bytes";
     context.Response.ContentType = AudioHelper.GetMimeType(filename);
-    context.Response.ContentLength = fileSize;
 
-    await using (stream)
+    // Parse and handle range requests for audio streaming (e.g., seeking in podcast players)
+    if (!string.IsNullOrEmpty(rangeHeader) && rangeHeader.StartsWith("bytes="))
     {
-        await stream.CopyToAsync(context.Response.Body);
+        var rangeValue = rangeHeader["bytes=".Length..];
+        var rangeParts = rangeValue.Split('-');
+
+        var rangeStart = long.TryParse(rangeParts[0], out var start) ? start : 0;
+        var rangeEnd = rangeParts.Length > 1 && long.TryParse(rangeParts[1], out var end) ? end : fileSize - 1;
+
+        // Clamp values to valid range
+        rangeStart = Math.Max(0, Math.Min(rangeStart, fileSize - 1));
+        rangeEnd = Math.Max(rangeStart, Math.Min(rangeEnd, fileSize - 1));
+
+        var contentLength = rangeEnd - rangeStart + 1;
+
+        context.Response.StatusCode = 206; // Partial Content
+        context.Response.Headers.ContentRange = $"bytes {rangeStart}-{rangeEnd}/{fileSize}";
+        context.Response.ContentLength = contentLength;
+
+        // Download to temp file and stream the requested range
+        var tempPath = await service.DownloadAudioToTempAsync(feedId, filename);
+        try
+        {
+            await using var fileStream = File.OpenRead(tempPath);
+            fileStream.Seek(rangeStart, SeekOrigin.Begin);
+
+            var buffer = new byte[81920]; // 80KB buffer
+            var remaining = contentLength;
+            while (remaining > 0)
+            {
+                var toRead = (int)Math.Min(buffer.Length, remaining);
+                var bytesRead = await fileStream.ReadAsync(buffer.AsMemory(0, toRead));
+                if (bytesRead == 0) break;
+
+                await context.Response.Body.WriteAsync(buffer.AsMemory(0, bytesRead));
+                remaining -= bytesRead;
+            }
+        }
+        finally
+        {
+            try { File.Delete(tempPath); } catch { /* Ignore cleanup errors */ }
+        }
+    }
+    else
+    {
+        // Full file request
+        context.Response.ContentLength = fileSize;
+        var stream = await service.DownloadAudioAsync(feedId, filename);
+        await using (stream)
+        {
+            await stream.CopyToAsync(context.Response.Body);
+        }
     }
 
     return Results.Empty;
