@@ -155,6 +155,151 @@ public class IntegrationTests : IDisposable
     }
 
     [AzuriteFact]
+    public async Task GetAudio_ShouldReturn206_ForStandardRangeRequest()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+        var audioData = new byte[1000];
+        for (var i = 0; i < audioData.Length; i++) audioData[i] = (byte)(i % 256);
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(audioData);
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "range-test.mp3");
+        content.Add(new StringContent("Range Test"), "title");
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        await _client.SendAsync(postRequest);
+
+        // Act - Request bytes 100-199
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/{TestFeedId}/audio/range-test.mp3");
+        request.Headers.Add("Range", "bytes=100-199");
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+        Assert.Equal("bytes 100-199/1000", response.Content.Headers.ContentRange!.ToString());
+        var downloadedContent = await response.Content.ReadAsByteArrayAsync();
+        Assert.Equal(100, downloadedContent.Length);
+        Assert.Equal(audioData[100..200], downloadedContent);
+    }
+
+    [AzuriteFact]
+    public async Task GetAudio_ShouldReturn206_ForOpenEndedRangeRequest()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+        var audioData = new byte[500];
+        for (var i = 0; i < audioData.Length; i++) audioData[i] = (byte)(i % 256);
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(audioData);
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "open-range.mp3");
+        content.Add(new StringContent("Open Range Test"), "title");
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        await _client.SendAsync(postRequest);
+
+        // Act - Request bytes 400 to end
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/{TestFeedId}/audio/open-range.mp3");
+        request.Headers.Add("Range", "bytes=400-");
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+        Assert.Equal("bytes 400-499/500", response.Content.Headers.ContentRange!.ToString());
+        var downloadedContent = await response.Content.ReadAsByteArrayAsync();
+        Assert.Equal(100, downloadedContent.Length);
+        Assert.Equal(audioData[400..500], downloadedContent);
+    }
+
+    [AzuriteFact]
+    public async Task GetAudio_ShouldReturn206_ForSuffixRangeRequest()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+        var audioData = new byte[500];
+        for (var i = 0; i < audioData.Length; i++) audioData[i] = (byte)(i % 256);
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(audioData);
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "suffix-range.mp3");
+        content.Add(new StringContent("Suffix Range Test"), "title");
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        await _client.SendAsync(postRequest);
+
+        // Act - Request last 50 bytes (bytes=-50)
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/{TestFeedId}/audio/suffix-range.mp3");
+        request.Headers.Add("Range", "bytes=-50");
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+        Assert.Equal("bytes 450-499/500", response.Content.Headers.ContentRange!.ToString());
+        var downloadedContent = await response.Content.ReadAsByteArrayAsync();
+        Assert.Equal(50, downloadedContent.Length);
+        Assert.Equal(audioData[450..500], downloadedContent);
+    }
+
+    [AzuriteFact]
+    public async Task GetAudio_ShouldReturn416_ForUnsatisfiableRange()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+        var audioData = new byte[100];
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(audioData);
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "small-file.mp3");
+        content.Add(new StringContent("Small File"), "title");
+
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        await _client.SendAsync(postRequest);
+
+        // Act - Request range starting beyond file size
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/{TestFeedId}/audio/small-file.mp3");
+        request.Headers.Add("Range", "bytes=200-300");
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.RequestedRangeNotSatisfiable, response.StatusCode);
+        Assert.Equal("bytes */100", response.Content.Headers.ContentRange!.ToString());
+    }
+
+    [AzuriteFact]
+    public async Task GetAudio_ShouldReturn416_ForMalformedRange()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+        var audioData = new byte[100];
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(audioData);
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "malformed-test.mp3");
+        content.Add(new StringContent("Malformed Test"), "title");
+
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        await _client.SendAsync(postRequest);
+
+        // Act - Send malformed range header (use TryAddWithoutValidation to bypass client-side validation)
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/{TestFeedId}/audio/malformed-test.mp3");
+        request.Headers.TryAddWithoutValidation("Range", "bytes=abc-def");
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.RequestedRangeNotSatisfiable, response.StatusCode);
+    }
+
+    [AzuriteFact]
     public async Task DeleteEpisode_ShouldRemoveEpisodeFromFeed()
     {
         // Arrange
