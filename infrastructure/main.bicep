@@ -43,7 +43,7 @@ param appServiceName string
 param appServicePlanSku string = 'F1'
 
 @description('.NET runtime version')
-param dotnetVersion string = 'DOTNETCORE:10.0'
+param dotnetVersion string = 'DOTNETCORE|10.0'
 
 // Storage Account
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
