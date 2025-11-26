@@ -79,6 +79,11 @@ app.MapGet("/health", () => Results.Ok())
 // RSS feed for specific feed
 app.MapGet("/{feedId}/feed.xml", async (string feedId, EpisodeService service) =>
 {
+    if (!InputValidation.IsValidFeedId(feedId))
+    {
+        return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+    }
+
     var feed = await service.GetFeedAsync(feedId);
     if (feed == null)
     {
@@ -97,6 +102,11 @@ app.MapGet("/{feedId}/feed.xml", async (string feedId, EpisodeService service) =
 // Icon for specific feed (streams from blob storage)
 app.MapGet("/{feedId}/icon.png", async (string feedId, IBlobStorageService service) =>
 {
+    if (!InputValidation.IsValidFeedId(feedId))
+    {
+        return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+    }
+
     var exists = await service.IconExistsAsync(feedId);
     if (!exists)
     {
@@ -113,10 +123,15 @@ app.MapGet("/{feedId}/icon.png", async (string feedId, IBlobStorageService servi
 // Audio file streaming with range support
 app.MapGet("/{feedId}/audio/{filename}", async (string feedId, string filename, IBlobStorageService service, HttpContext context) =>
 {
-    // Validate filename to prevent path traversal
+    // Validate feedId and filename to prevent path traversal
+    if (!InputValidation.IsValidFeedId(feedId))
+    {
+        return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+    }
+
     if (!InputValidation.IsValidFilename(filename))
     {
-        return Results.BadRequest(InputValidation.GetFilenameValidationError(filename));
+        return Results.BadRequest(new { error = InputValidation.GetFilenameValidationError(filename) });
     }
 
     var exists = await service.AudioExistsAsync(feedId, filename);
