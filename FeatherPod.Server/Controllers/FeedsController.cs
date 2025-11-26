@@ -26,9 +26,15 @@ public class FeedsController : ControllerBase
 
     [HttpGet("{feedId}")]
     [ProducesResponseType<FeedConfig>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> GetFeed(string feedId)
     {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
         var feed = await _episodeService.GetFeedAsync(feedId);
         return feed != null ? Ok(feed) : NotFound(new { error = $"Feed '{feedId}' not found" });
     }
@@ -38,7 +44,6 @@ public class FeedsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> CreateFeed([FromBody] FeedConfig feedConfig)
     {
-        // Validate feed ID format
         if (!InputValidation.IsValidFeedId(feedConfig.Id))
         {
             return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedConfig.Id) });
@@ -57,9 +62,15 @@ public class FeedsController : ControllerBase
 
     [HttpPut("{feedId}")]
     [ProducesResponseType<FeedConfig>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> UpdateFeed(string feedId, [FromBody] FeedConfig feedConfig)
     {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
         try
         {
             var updated = await _episodeService.UpdateFeedAsync(feedId, feedConfig);
@@ -76,7 +87,11 @@ public class FeedsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> RenameFeed(string feedId, [FromQuery] string newId)
     {
-        // Validate new feed ID format
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
         if (!InputValidation.IsValidFeedId(newId))
         {
             return BadRequest(new { error = InputValidation.GetFeedIdValidationError(newId) });
@@ -95,9 +110,15 @@ public class FeedsController : ControllerBase
 
     [HttpDelete("{feedId}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DeleteFeed(string feedId)
     {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
         try
         {
             await _episodeService.DeleteFeedAsync(feedId);
