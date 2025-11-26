@@ -68,6 +68,8 @@ resource testAppServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
   parent: testAppService
   name: 'appsettings'
   properties: {
+    // Security: Restrict allowed hosts to prevent Host Header Injection attacks
+    AllowedHosts: '${testAppServiceName}.azurewebsites.net'
     Azure__AccountName: storageAccountName
     Azure__ContainerName: testContainerName
     Podcast__BaseUrl: 'https://${testAppServiceName}.azurewebsites.net'
