@@ -45,25 +45,6 @@ param appServicePlanSku string = 'F1'
 @description('.NET runtime version')
 param dotnetVersion string = 'DOTNETCORE:10.0'
 
-// Podcast Configuration
-@description('Podcast title')
-param podcastTitle string
-
-@description('Podcast description')
-param podcastDescription string
-
-@description('Podcast author')
-param podcastAuthor string
-
-@description('Podcast email')
-param podcastEmail string
-
-@description('Podcast language (e.g., en-us)')
-param podcastLanguage string = 'en-us'
-
-@description('Podcast category')
-param podcastCategory string
-
 // Storage Account
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
@@ -138,14 +119,7 @@ resource appServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
   properties: {
     Azure__AccountName: storageAccountName
     Azure__ContainerName: containerName
-    Podcast__Title: podcastTitle
-    Podcast__Description: podcastDescription
-    Podcast__Author: podcastAuthor
-    Podcast__Email: podcastEmail
-    Podcast__Language: podcastLanguage
-    Podcast__Category: podcastCategory
     Podcast__BaseUrl: 'https://${appServiceName}.azurewebsites.net'
-    Podcast__ImageUrl: 'https://${appServiceName}.azurewebsites.net/icon.png'
   }
 }
 

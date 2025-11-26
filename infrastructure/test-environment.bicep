@@ -23,24 +23,6 @@ param appServicePlanSku string = 'F1'
 @description('.NET runtime version')
 param dotnetVersion string = 'DOTNETCORE|10.0'
 
-@description('Podcast title for test environment')
-param podcastTitle string = 'FeatherPod Test'
-
-@description('Podcast description')
-param podcastDescription string = 'Test environment for FeatherPod'
-
-@description('Podcast author')
-param podcastAuthor string = 'Test Author'
-
-@description('Podcast email')
-param podcastEmail string = 'test@example.com'
-
-@description('Podcast language')
-param podcastLanguage string = 'en-us'
-
-@description('Podcast category')
-param podcastCategory string = 'Technology'
-
 // Note: Blob containers and role assignment must be created separately
 // due to cross-resource-group scope limitations.
 // See deployment instructions for manual setup steps.
@@ -88,14 +70,7 @@ resource testAppServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
   properties: {
     Azure__AccountName: storageAccountName
     Azure__ContainerName: testContainerName
-    Podcast__Title: podcastTitle
-    Podcast__Description: podcastDescription
-    Podcast__Author: podcastAuthor
-    Podcast__Email: podcastEmail
-    Podcast__Language: podcastLanguage
-    Podcast__Category: podcastCategory
     Podcast__BaseUrl: 'https://${testAppServiceName}.azurewebsites.net'
-    Podcast__ImageUrl: 'https://${testAppServiceName}.azurewebsites.net/icon.png'
   }
 }
 
