@@ -100,7 +100,7 @@ app.MapGet("/{feedId}/feed.xml", async (string feedId, EpisodeService service) =
 .Produces(404);
 
 // Icon for specific feed (streams from blob storage)
-app.MapGet("/{feedId}/icon.png", async (string feedId, IBlobStorageService service) =>
+app.MapGet("/{feedId}/icon.png", async (string feedId, IBlobStorageService service, HttpContext context) =>
 {
     if (!InputValidation.IsValidFeedId(feedId))
     {
@@ -114,7 +114,14 @@ app.MapGet("/{feedId}/icon.png", async (string feedId, IBlobStorageService servi
     }
 
     var stream = await service.DownloadIconAsync(feedId);
-    return Results.File(stream, "image/png");
+    context.Response.ContentType = "image/png";
+
+    await using (stream)
+    {
+        await stream.CopyToAsync(context.Response.Body);
+    }
+
+    return Results.Empty;
 })
 .WithName("GetIcon")
 .Produces(200, contentType: "image/png")
@@ -155,7 +162,11 @@ app.MapGet("/{feedId}/audio/{filename}", async (string feedId, string filename, 
     context.Response.ContentType = AudioHelper.GetMimeType(filename);
     context.Response.ContentLength = fileSize;
 
-    await stream.CopyToAsync(context.Response.Body);
+    await using (stream)
+    {
+        await stream.CopyToAsync(context.Response.Body);
+    }
+
     return Results.Empty;
 })
 .WithName("GetAudio")
