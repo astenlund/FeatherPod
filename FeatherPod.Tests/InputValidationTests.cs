@@ -87,9 +87,9 @@ public class InputValidationTests
     }
 
     [Fact]
-    public void IsValidFeedId_WithDots_ReturnsFalse()
+    public void IsValidFeedId_WithDots_ReturnsTrue()
     {
-        Assert.False(InputValidation.IsValidFeedId("my.feed"));
+        Assert.True(InputValidation.IsValidFeedId("my.feed"));
     }
 
     [Fact]
