@@ -118,6 +118,32 @@ public class TestBlobStorageService : IBlobStorageService
         return await Task.FromResult(tempPath);
     }
 
+    public async Task<Stream> DownloadAudioRangeAsync(string feedId, string fileName, long offset, long length)
+    {
+        var filePath = Path.Combine(_rootPath, feedId, "audio", fileName);
+        var memoryStream = new MemoryStream();
+
+        await using var fileStream = File.OpenRead(filePath);
+
+        fileStream.Seek(offset, SeekOrigin.Begin);
+
+        var buffer = new byte[81920];
+        var remaining = length;
+
+        while (remaining > 0)
+        {
+            var toRead = (int)Math.Min(buffer.Length, remaining);
+            var bytesRead = await fileStream.ReadAsync(buffer.AsMemory(0, toRead));
+            if (bytesRead == 0) break;
+            await memoryStream.WriteAsync(buffer.AsMemory(0, bytesRead));
+            remaining -= bytesRead;
+        }
+
+        memoryStream.Position = 0;
+
+        return memoryStream;
+    }
+
     public async Task SaveEpisodeMetadataAsync(string feedId, string metadataJson)
     {
         var feedMetadataPath = Path.Combine(_rootPath, feedId, "episodes.json");

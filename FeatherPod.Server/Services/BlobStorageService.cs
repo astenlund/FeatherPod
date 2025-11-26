@@ -1,5 +1,7 @@
+using Azure;
 using Azure.Identity;
 using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
 
 namespace FeatherPod.Server.Services;
 
@@ -173,6 +175,18 @@ public class BlobStorageService : IBlobStorageService
         await blobClient.DownloadToAsync(tempPath);
 
         return tempPath;
+    }
+
+    public async Task<Stream> DownloadAudioRangeAsync(string feedId, string fileName, long offset, long length)
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+        var blobPath = $"{feedId}/audio/{fileName}";
+        var blobClient = containerClient.GetBlobClient(blobPath);
+        var options = new BlobDownloadOptions { Range = new(offset, length) };
+
+        var response = await blobClient.DownloadStreamingAsync(options);
+
+        return response.Value.Content;
     }
 
     public async Task UploadIconAsync(string feedId, string filePath)

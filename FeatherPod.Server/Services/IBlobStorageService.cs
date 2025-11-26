@@ -20,6 +20,7 @@ public interface IBlobStorageService
     Task<List<string>> ListAudioFilesAsync(string feedId);
     Task<long> GetAudioFileSizeAsync(string feedId, string fileName);
     Task<string> DownloadAudioToTempAsync(string feedId, string fileName);
+    Task<Stream> DownloadAudioRangeAsync(string feedId, string fileName, long offset, long length);
 
     // Icon operations
     Task UploadIconAsync(string feedId, string filePath);
