@@ -25,24 +25,6 @@
     },
     "dotnetVersion": {
       "value": "DOTNETCORE|10.0"
-    },
-    "podcastTitle": {
-      "value": "FeatherPod"
-    },
-    "podcastDescription": {
-      "value": "Personal podcast feed for Mr. Andreas Stenlund"
-    },
-    "podcastAuthor": {
-      "value": "FeatherPod"
-    },
-    "podcastEmail": {
-      "value": "podcast@localhost"
-    },
-    "podcastLanguage": {
-      "value": "en-us"
-    },
-    "podcastCategory": {
-      "value": "Technology"
     }
   }
 }
