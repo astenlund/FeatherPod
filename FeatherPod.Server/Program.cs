@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using FeatherPod.Server.Middleware;
 using FeatherPod.Server.Services;
+using FeatherPod.Server.Validation;
 using FeatherPod.Shared;
 
 const long MaxUploadSizeBytes = 500 * 1024 * 1024; // 500 MB
@@ -112,6 +113,12 @@ app.MapGet("/{feedId}/icon.png", async (string feedId, IBlobStorageService servi
 // Audio file streaming with range support
 app.MapGet("/{feedId}/audio/{filename}", async (string feedId, string filename, IBlobStorageService service, HttpContext context) =>
 {
+    // Validate filename to prevent path traversal
+    if (!InputValidation.IsValidFilename(filename))
+    {
+        return Results.BadRequest(InputValidation.GetFilenameValidationError(filename));
+    }
+
     var exists = await service.AudioExistsAsync(feedId, filename);
     if (!exists)
     {
