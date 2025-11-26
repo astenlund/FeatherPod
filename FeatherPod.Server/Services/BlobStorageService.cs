@@ -264,7 +264,12 @@ public class BlobStorageService : IBlobStorageService
             var sourceBlobClient = containerClient.GetBlobClient(oldBlobPath);
             var destBlobClient = containerClient.GetBlobClient(newBlobPath);
 
-            await destBlobClient.StartCopyFromUriAsync(sourceBlobClient.Uri);
+            // Start the copy operation
+            var copyOperation = await destBlobClient.StartCopyFromUriAsync(sourceBlobClient.Uri);
+
+            // Wait for the copy to complete before deleting source
+            await copyOperation.WaitForCompletionAsync();
+
             await sourceBlobClient.DeleteAsync();
 
             _logger.LogInformation("Moved blob: {Old} -> {New}", oldBlobPath, newBlobPath);
