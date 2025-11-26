@@ -1,5 +1,6 @@
 using FeatherPod.Shared.Models;
 using FeatherPod.Server.Services;
+using FeatherPod.Server.Validation;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FeatherPod.Server.Controllers;
@@ -37,6 +38,12 @@ public class FeedsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> CreateFeed([FromBody] FeedConfig feedConfig)
     {
+        // Validate feed ID format
+        if (!InputValidation.IsValidFeedId(feedConfig.Id))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedConfig.Id) });
+        }
+
         try
         {
             var created = await _episodeService.CreateFeedAsync(feedConfig);
@@ -69,6 +76,12 @@ public class FeedsController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> RenameFeed(string feedId, [FromQuery] string newId)
     {
+        // Validate new feed ID format
+        if (!InputValidation.IsValidFeedId(newId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(newId) });
+        }
+
         try
         {
             await _episodeService.RenameFeedAsync(feedId, newId);
