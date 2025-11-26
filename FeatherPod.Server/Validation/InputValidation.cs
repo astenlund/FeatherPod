@@ -7,8 +7,8 @@ namespace FeatherPod.Server.Validation;
 /// </summary>
 public static partial class InputValidation
 {
-    // Feed IDs should be alphanumeric with hyphens and underscores, 1-64 characters
-    [GeneratedRegex(@"^[a-zA-Z0-9_-]{1,64}$")]
+    // Feed IDs should be alphanumeric with dots, hyphens, and underscores, 1-64 characters
+    [GeneratedRegex(@"^[a-zA-Z0-9._-]{1,64}$")]
     private static partial Regex FeedIdPattern();
 
     // Filenames should not contain path separators or null bytes
@@ -53,7 +53,7 @@ public static partial class InputValidation
         if (string.IsNullOrWhiteSpace(feedId))
             return "Feed ID is required";
 
-        return "Feed ID must be 1-64 characters, alphanumeric with hyphens and underscores only";
+        return "Feed ID must be 1-64 characters, alphanumeric with dots, hyphens, and underscores only";
     }
 
     /// <summary>
