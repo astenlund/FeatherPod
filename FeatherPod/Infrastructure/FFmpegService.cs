@@ -24,7 +24,7 @@ internal static class FFmpegService
 
         try
         {
-            var process = new Process
+            using var process = new Process
             {
                 StartInfo = new ProcessStartInfo
                 {
@@ -41,8 +41,9 @@ internal static class FFmpegService
             process.WaitForExit();
             _isFFmpegAvailable = process.ExitCode == 0;
         }
-        catch
+        catch (Exception)
         {
+            // FFmpeg not installed or not in PATH
             _isFFmpegAvailable = false;
         }
 
@@ -93,12 +94,14 @@ internal static class FFmpegService
 
             return success ? tempFile : null;
         }
-        catch
+        catch (Exception)
         {
-            // Clean up temp file on failure
+            // Clean up temp file on failure (normalization failed)
             if (File.Exists(tempFile))
             {
-                try { File.Delete(tempFile); } catch { /* Ignore cleanup errors */ }
+                try { File.Delete(tempFile); }
+                catch (IOException) { /* File in use, OS will clean temp */ }
+                catch (UnauthorizedAccessException) { /* Permission issue, OS will clean temp */ }
             }
             return null;
         }
@@ -153,8 +156,9 @@ internal static class FFmpegService
             var result = JsonSerializer.Deserialize<LoudnormAnalysisResult>(jsonMatch.Value);
             return result;
         }
-        catch
+        catch (JsonException)
         {
+            // Failed to parse FFmpeg loudness analysis output
             return null;
         }
     }
@@ -254,9 +258,9 @@ internal static class FFmpegService
                 return duration;
             }
         }
-        catch
+        catch (Exception)
         {
-            // Fallback to -1 if ffprobe fails
+            // FFprobe not available or failed - fallback to indeterminate duration
         }
 
         return -1;
@@ -293,9 +297,9 @@ internal static class FFmpegService
                 return file.Tag.DateTagged.Value.ToUniversalTime();
             }
         }
-        catch
+        catch (Exception)
         {
-            // TagLib failed, continue to ffprobe
+            // TagLib failed to read file metadata, continue to ffprobe fallback
         }
 
         try
@@ -323,9 +327,9 @@ internal static class FFmpegService
                 return creationTime.ToUniversalTime();
             }
         }
-        catch
+        catch (Exception)
         {
-            // ffprobe failed, return null
+            // FFprobe not available or failed to read creation time
         }
 
         return null;
