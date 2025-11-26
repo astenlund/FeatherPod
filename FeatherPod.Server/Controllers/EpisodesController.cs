@@ -1,7 +1,7 @@
 using System.Text.Json;
-
 using FeatherPod.Shared.Models;
 using FeatherPod.Server.Services;
+using FeatherPod.Server.Validation;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FeatherPod.Server.Controllers;
@@ -22,9 +22,15 @@ public class EpisodesController : ControllerBase
 
     [HttpGet]
     [ProducesResponseType<List<Episode>>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> ListEpisodes(string feedId)
     {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
         var feed = await _episodeService.GetFeedAsync(feedId);
         if (feed == null)
         {
@@ -55,6 +61,11 @@ public class EpisodesController : ControllerBase
         [FromForm] string? summary,
         [FromForm] DateTime? publishedDate)
     {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
         var feed = await _episodeService.GetFeedAsync(feedId);
         if (feed == null)
         {
@@ -64,6 +75,11 @@ public class EpisodesController : ControllerBase
         if (file == null || file.Length == 0)
         {
             return BadRequest(new { error = "No file uploaded" });
+        }
+
+        if (!InputValidation.IsValidFilename(file.FileName))
+        {
+            return BadRequest(new { error = InputValidation.GetFilenameValidationError(file.FileName) });
         }
 
         // Save uploaded file to temp location with original filename
@@ -109,9 +125,15 @@ public class EpisodesController : ControllerBase
 
     [HttpDelete("{id}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DeleteEpisode(string feedId, string id)
     {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
         var feed = await _episodeService.GetFeedAsync(feedId);
         if (feed == null)
         {
@@ -132,6 +154,11 @@ public class EpisodesController : ControllerBase
         string id,
         [FromBody] JsonElement body)
     {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
         if (!body.TryGetProperty("targetFeedId", out var targetFeedIdElement))
         {
             return BadRequest(new { error = "targetFeedId is required in request body" });
@@ -141,6 +168,11 @@ public class EpisodesController : ControllerBase
         if (string.IsNullOrEmpty(targetFeedId))
         {
             return BadRequest(new { error = "targetFeedId cannot be empty" });
+        }
+
+        if (!InputValidation.IsValidFeedId(targetFeedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(targetFeedId) });
         }
 
         try
@@ -168,6 +200,11 @@ public class EpisodesController : ControllerBase
         string id,
         [FromBody] JsonElement body)
     {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
         if (!body.TryGetProperty("targetFeedId", out var targetFeedIdElement))
         {
             return BadRequest(new { error = "targetFeedId is required in request body" });
@@ -177,6 +214,11 @@ public class EpisodesController : ControllerBase
         if (string.IsNullOrEmpty(targetFeedId))
         {
             return BadRequest(new { error = "targetFeedId cannot be empty" });
+        }
+
+        if (!InputValidation.IsValidFeedId(targetFeedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(targetFeedId) });
         }
 
         try
