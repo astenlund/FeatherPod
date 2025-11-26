@@ -121,7 +121,7 @@ internal static class FFmpegService
         var truePeak = config.TruePeak.ToString("G", CultureInfo.InvariantCulture);
         var loudnessRange = config.LoudnessRange.ToString("G", CultureInfo.InvariantCulture);
 
-        var process = new Process
+        using var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
@@ -181,7 +181,7 @@ internal static class FFmpegService
                            $"measured_LRA={analysis.input_lra}:measured_thresh={analysis.input_thresh}:" +
                            $"offset={analysis.target_offset}:print_format=summary";
 
-        var process = new Process
+        using var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
@@ -195,7 +195,7 @@ internal static class FFmpegService
         };
 
         var duration = await GetAudioDurationAsync(inputPath);
-        var progressBar = duration > 0
+        var exitCode = duration > 0
             ? AnsiConsole.Progress().Start(ctx =>
             {
                 var task = ctx.AddTask("[cyan]Normalizing audio...[/]", maxValue: duration);
@@ -226,7 +226,7 @@ internal static class FFmpegService
             })
             : await RunProcessWithSpinnerAsync(process, "Normalizing audio...");
 
-        return progressBar == 0 && File.Exists(outputPath);
+        return exitCode == 0 && File.Exists(outputPath);
     }
 
     /// <summary>
@@ -236,7 +236,7 @@ internal static class FFmpegService
     {
         try
         {
-            var process = new Process
+            using var process = new Process
             {
                 StartInfo = new ProcessStartInfo
                 {
@@ -305,7 +305,7 @@ internal static class FFmpegService
         try
         {
             // Try ffprobe to get creation_time from container metadata
-            var process = new Process
+            using var process = new Process
             {
                 StartInfo = new ProcessStartInfo
                 {
