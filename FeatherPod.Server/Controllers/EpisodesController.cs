@@ -108,16 +108,20 @@ public class EpisodesController : ControllerBase
         }
         finally
         {
-            // Clean up temp directory
+            // Clean up temp directory - best effort, don't fail the request on cleanup errors
             if (Directory.Exists(tempDir))
             {
                 try
                 {
                     Directory.Delete(tempDir, recursive: true);
                 }
-                catch
+                catch (IOException)
                 {
-                    // Ignore cleanup errors
+                    // File may be locked or in use - OS will clean up temp eventually
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    // Permission issue - OS will clean up temp eventually
                 }
             }
         }
