@@ -154,46 +154,62 @@ app.MapGet("/{feedId}/audio/{filename}", async (string feedId, string filename, 
     context.Response.ContentType = AudioHelper.GetMimeType(filename);
 
     // Parse and handle range requests for audio streaming (e.g., seeking in podcast players)
+    // Implements RFC 7233: https://www.rfc-editor.org/rfc/rfc7233
     if (!string.IsNullOrEmpty(rangeHeader) && rangeHeader.StartsWith("bytes="))
     {
         var rangeValue = rangeHeader["bytes=".Length..];
         var rangeParts = rangeValue.Split('-');
 
-        var rangeStart = long.TryParse(rangeParts[0], out var start) ? start : 0;
-        var rangeEnd = rangeParts.Length > 1 && long.TryParse(rangeParts[1], out var end) ? end : fileSize - 1;
+        long rangeStart;
+        long rangeEnd;
 
-        // Clamp values to valid range
-        rangeStart = Math.Max(0, Math.Min(rangeStart, fileSize - 1));
-        rangeEnd = Math.Max(rangeStart, Math.Min(rangeEnd, fileSize - 1));
+        // Handle suffix range: bytes=-N (last N bytes)
+        if (string.IsNullOrEmpty(rangeParts[0]) && rangeParts.Length > 1 && long.TryParse(rangeParts[1], out var suffixLength))
+        {
+            if (suffixLength <= 0)
+            {
+                context.Response.StatusCode = 416; // Range Not Satisfiable
+                context.Response.Headers.ContentRange = $"bytes */{fileSize}";
+                return Results.Empty;
+            }
+            rangeStart = Math.Max(0, fileSize - suffixLength);
+            rangeEnd = fileSize - 1;
+        }
+        // Handle standard range: bytes=N-M or bytes=N-
+        else if (long.TryParse(rangeParts[0], out var start))
+        {
+            rangeStart = start;
+            rangeEnd = rangeParts.Length > 1 && long.TryParse(rangeParts[1], out var end) ? end : fileSize - 1;
+        }
+        else
+        {
+            // Malformed range header
+            context.Response.StatusCode = 416; // Range Not Satisfiable
+            context.Response.Headers.ContentRange = $"bytes */{fileSize}";
+            return Results.Empty;
+        }
 
+        // Validate range is satisfiable
+        if (rangeStart >= fileSize || rangeStart < 0 || rangeEnd < rangeStart)
+        {
+            context.Response.StatusCode = 416; // Range Not Satisfiable
+            context.Response.Headers.ContentRange = $"bytes */{fileSize}";
+            return Results.Empty;
+        }
+
+        // Clamp rangeEnd to file bounds (valid per RFC 7233)
+        rangeEnd = Math.Min(rangeEnd, fileSize - 1);
         var contentLength = rangeEnd - rangeStart + 1;
 
         context.Response.StatusCode = 206; // Partial Content
         context.Response.Headers.ContentRange = $"bytes {rangeStart}-{rangeEnd}/{fileSize}";
         context.Response.ContentLength = contentLength;
 
-        // Download to temp file and stream the requested range
-        var tempPath = await service.DownloadAudioToTempAsync(feedId, filename);
-        try
+        // Use native Azure range download - no temp file needed
+        var stream = await service.DownloadAudioRangeAsync(feedId, filename, rangeStart, contentLength);
+        await using (stream)
         {
-            await using var fileStream = File.OpenRead(tempPath);
-            fileStream.Seek(rangeStart, SeekOrigin.Begin);
-
-            var buffer = new byte[81920]; // 80KB buffer
-            var remaining = contentLength;
-            while (remaining > 0)
-            {
-                var toRead = (int)Math.Min(buffer.Length, remaining);
-                var bytesRead = await fileStream.ReadAsync(buffer.AsMemory(0, toRead));
-                if (bytesRead == 0) break;
-
-                await context.Response.Body.WriteAsync(buffer.AsMemory(0, bytesRead));
-                remaining -= bytesRead;
-            }
-        }
-        finally
-        {
-            try { File.Delete(tempPath); } catch { /* Ignore cleanup errors */ }
+            await stream.CopyToAsync(context.Response.Body);
         }
     }
     else
@@ -212,6 +228,7 @@ app.MapGet("/{feedId}/audio/{filename}", async (string feedId, string filename, 
 .WithName("GetAudio")
 .Produces(200)
 .Produces(206)
-.Produces(404);
+.Produces(404)
+.Produces(416);
 
 app.Run();
