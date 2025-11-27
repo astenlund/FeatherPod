@@ -3,56 +3,30 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using FFMpegCore;
 using Spectre.Console;
 
 namespace FeatherPod.Infrastructure;
 
 /// <summary>
 /// Service for FFmpeg-based audio processing operations.
+/// Uses FFMpegCore library with auto-download support via FFmpegBinaryManager.
 /// </summary>
-internal static class FFmpegService
+internal static partial class FFmpegService
 {
-    private static bool? _isFFmpegAvailable;
+    private static readonly Regex ProgressRegex = MyRegex();
 
     /// <summary>
-    /// Check if FFmpeg is installed and available on the system PATH.
+    /// Check if FFmpeg is installed and available (on PATH or downloaded locally).
     /// </summary>
     public static bool IsFFmpegAvailable()
     {
-        if (_isFFmpegAvailable.HasValue)
-            return _isFFmpegAvailable.Value;
-
-        try
-        {
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "ffmpeg",
-                    Arguments = "-version",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-
-            process.Start();
-            process.WaitForExit();
-            _isFFmpegAvailable = process.ExitCode == 0;
-        }
-        catch (Exception)
-        {
-            // FFmpeg not installed or not in PATH
-            _isFFmpegAvailable = false;
-        }
-
-        return _isFFmpegAvailable.Value;
+        return FFmpegBinaryManager.IsFFmpegAvailable();
     }
 
     /// <summary>
     /// Normalize audio file to target loudness using FFmpeg's loudnorm filter.
-    /// Uses two-pass processing for accurate normalization.
+    /// Uses two-pass processing for accurate EBU R128 normalization.
     /// </summary>
     /// <param name="inputPath">Path to the input audio file</param>
     /// <param name="config">Normalization configuration</param>
@@ -71,80 +45,173 @@ internal static class FFmpegService
         var extension = Path.GetExtension(inputPath);
         var tempFile = Path.Combine(tempDir, $"{Guid.NewGuid()}{extension}");
 
+        // Get duration first for progress tracking
+        var duration = await GetAudioDurationAsync(inputPath);
+
         try
         {
-            // Pass 1: Analyze loudness
-            var analysisResult = await AnalyzeLoudnessAsync(inputPath, config);
-            if (analysisResult == null)
+            if (duration > TimeSpan.Zero)
             {
-                return null;
+                // Use two progress bars when duration is known
+                return await NormalizeWithProgressAsync(inputPath, tempFile, config, duration);
             }
-
-            // Pass 2: Apply normalization with measured values
-            var success = await ApplyNormalizationAsync(
-                inputPath,
-                tempFile,
-                config,
-                analysisResult);
-
-            if (success)
+            else
             {
-                AnsiConsole.MarkupLine($"[grey]Original: {analysisResult.input_i} LUFS → Normalized: {config.TargetLoudness} LUFS[/]");
+                // Fall back to spinner when duration unknown
+                return await NormalizeWithSpinnerAsync(inputPath, tempFile, config);
             }
-
-            return success ? tempFile : null;
         }
         catch (Exception)
         {
-            // Clean up temp file on failure (normalization failed)
+            // Clean up temp file on failure
             if (File.Exists(tempFile))
             {
                 try { File.Delete(tempFile); }
-                catch (IOException) { /* File in use, OS will clean temp */ }
-                catch (UnauthorizedAccessException) { /* Permission issue, OS will clean temp */ }
+                catch { /* Ignore cleanup errors */ }
             }
             return null;
         }
     }
 
     /// <summary>
-    /// Pass 1: Analyze audio loudness and return measured values.
+    /// Normalize with two progress bars (when duration is known).
     /// </summary>
-    private static async Task<LoudnormAnalysisResult?> AnalyzeLoudnessAsync(
+    private static async Task<string?> NormalizeWithProgressAsync(
         string inputPath,
+        string outputPath,
+        AudioNormalizationConfig config,
+        TimeSpan duration)
+    {
+        return await AnsiConsole.Progress()
+            .AutoClear(false)
+            .Columns(
+                new TaskDescriptionColumn(),
+                new ProgressBarColumn(),
+                new PercentageColumn())
+            .StartAsync(async ctx =>
+            {
+                var analyzeTask = ctx.AddTask("[cyan]Analyzing audio...[/]", maxValue: 100);
+                var normalizeTask = ctx.AddTask("[grey]Normalizing audio...[/]", maxValue: 100);
+
+                // Pass 1: Analyze with progress
+                var analysis = await AnalyzeLoudnessWithProgressAsync(inputPath, config, duration, analyzeTask);
+                analyzeTask.Value = 100;
+                analyzeTask.StopTask();
+
+                if (analysis == null)
+                {
+                    AnsiConsole.MarkupLine("[red]Audio analysis failed[/]");
+                    normalizeTask.StopTask();
+                    return null;
+                }
+
+                // Update normalize task to active state
+                normalizeTask.Description = "[cyan]Normalizing audio...[/]";
+
+                // Pass 2: Apply with progress
+                var success = await ApplyNormalizationWithProgressAsync(inputPath, outputPath, config, analysis, duration, normalizeTask);
+                normalizeTask.Value = 100;
+                normalizeTask.StopTask();
+
+                if (success)
+                {
+                    AnsiConsole.MarkupLine($"[grey]Original: {analysis.InputI} LUFS → Normalized: {config.TargetLoudness} LUFS[/]");
+                    return outputPath;
+                }
+
+                return null;
+            });
+    }
+
+    /// <summary>
+    /// Normalize with spinner (when duration is unknown).
+    /// </summary>
+    private static async Task<string?> NormalizeWithSpinnerAsync(
+        string inputPath,
+        string outputPath,
         AudioNormalizationConfig config)
     {
-        var output = new StringBuilder();
+        return await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync("[cyan]Analyzing and normalizing audio...[/]", async _ =>
+            {
+                // Pass 1: Analyze
+                var analysis = await AnalyzeLoudnessAsync(inputPath, config);
+                if (analysis == null)
+                {
+                    return null;
+                }
+
+                // Pass 2: Apply
+                var success = await ApplyNormalizationAsync(inputPath, outputPath, config, analysis);
+
+                if (success)
+                {
+                    AnsiConsole.MarkupLine($"[grey]Original: {analysis.InputI} LUFS → Normalized: {config.TargetLoudness} LUFS[/]");
+                    return outputPath;
+                }
+
+                return null;
+            });
+    }
+
+    /// <summary>
+    /// Pass 1: Analyze audio loudness with progress tracking.
+    /// </summary>
+    private static async Task<LoudnessAnalysis?> AnalyzeLoudnessWithProgressAsync(
+        string inputPath,
+        AudioNormalizationConfig config,
+        TimeSpan duration,
+        ProgressTask progressTask)
+    {
         var error = new StringBuilder();
+        var durationSeconds = duration.TotalSeconds;
 
         var targetLoudness = config.TargetLoudness.ToString("G", CultureInfo.InvariantCulture);
         var truePeak = config.TruePeak.ToString("G", CultureInfo.InvariantCulture);
         var loudnessRange = config.LoudnessRange.ToString("G", CultureInfo.InvariantCulture);
 
-        using var process = new Process
+        var ffmpegPath = GetFFmpegPath();
+
+        using var process = new Process();
+        process.StartInfo = new()
         {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "ffmpeg",
-                Arguments = $"-i \"{inputPath}\" -af loudnorm=I={targetLoudness}:TP={truePeak}:LRA={loudnessRange}:print_format=json -f null -",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            }
+            FileName = ffmpegPath,
+            Arguments = $"-i \"{inputPath}\" -af loudnorm=I={targetLoudness}:TP={truePeak}:LRA={loudnessRange}:print_format=json -f null -",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
         };
 
-        process.OutputDataReceived += (_, e) => { if (e.Data != null) output.AppendLine(e.Data); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data != null) error.AppendLine(e.Data); };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data != null)
+            {
+                error.AppendLine(e.Data);
+
+                // Parse progress from stderr
+                var match = ProgressRegex.Match(e.Data);
+                if (match.Success)
+                {
+                    var hours = double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+                    var minutes = double.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
+                    var seconds = double.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
+                    var currentTime = hours * 3600 + minutes * 60 + seconds;
+                    var percent = Math.Min(100, (currentTime / durationSeconds) * 100);
+                    progressTask.Value = percent;
+                }
+            }
+        };
 
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
         await process.WaitForExitAsync();
 
-        // Parse JSON output from stderr (FFmpeg writes to stderr)
+        // Parse JSON output from stderr
         var errorText = error.ToString();
-        var jsonMatch = Regex.Match(errorText, @"\{[^\}]*""input_i""[^\}]*\}", RegexOptions.Singleline);
+        var jsonMatch = JsonRegex().Match(errorText);
 
         if (!jsonMatch.Success)
         {
@@ -153,133 +220,156 @@ internal static class FFmpegService
 
         try
         {
-            var result = JsonSerializer.Deserialize<LoudnormAnalysisResult>(jsonMatch.Value);
-            return result;
+            return JsonSerializer.Deserialize<LoudnessAnalysis>(jsonMatch.Value);
         }
         catch (JsonException)
         {
-            // Failed to parse FFmpeg loudness analysis output
             return null;
         }
     }
 
     /// <summary>
-    /// Pass 2: Apply normalization using measured values from Pass 1.
+    /// Pass 1: Analyze audio loudness (no progress, for spinner mode).
+    /// </summary>
+    private static async Task<LoudnessAnalysis?> AnalyzeLoudnessAsync(
+        string inputPath,
+        AudioNormalizationConfig config)
+    {
+        var error = new StringBuilder();
+
+        var targetLoudness = config.TargetLoudness.ToString("G", CultureInfo.InvariantCulture);
+        var truePeak = config.TruePeak.ToString("G", CultureInfo.InvariantCulture);
+        var loudnessRange = config.LoudnessRange.ToString("G", CultureInfo.InvariantCulture);
+
+        var ffmpegPath = GetFFmpegPath();
+
+        using var process = new Process();
+        process.StartInfo = new()
+        {
+            FileName = ffmpegPath,
+            Arguments = $"-i \"{inputPath}\" -af loudnorm=I={targetLoudness}:TP={truePeak}:LRA={loudnessRange}:print_format=json -f null -",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        process.ErrorDataReceived += (_, e) => { if (e.Data != null) error.AppendLine(e.Data); };
+
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        await process.WaitForExitAsync();
+
+        var errorText = error.ToString();
+        var jsonMatch = JsonRegex().Match(errorText);
+
+        if (!jsonMatch.Success)
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<LoudnessAnalysis>(jsonMatch.Value);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Pass 2: Apply normalization with progress tracking.
+    /// </summary>
+    private static async Task<bool> ApplyNormalizationWithProgressAsync(
+        string inputPath,
+        string outputPath,
+        AudioNormalizationConfig config,
+        LoudnessAnalysis analysis,
+        TimeSpan duration,
+        ProgressTask progressTask)
+    {
+        var loudnormFilter = BuildLoudnormFilter(config, analysis);
+
+        try
+        {
+            await FFMpegArguments
+                .FromFileInput(inputPath)
+                .OutputToFile(outputPath, true, options => options
+                    .WithCustomArgument($"-af {loudnormFilter}")
+                    .WithAudioSamplingRate())
+                .NotifyOnProgress(percent =>
+                {
+                    progressTask.Value = percent;
+                }, duration)
+                .ProcessAsynchronously();
+
+            return File.Exists(outputPath);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Pass 2: Apply normalization (no progress, for spinner mode).
     /// </summary>
     private static async Task<bool> ApplyNormalizationAsync(
         string inputPath,
         string outputPath,
         AudioNormalizationConfig config,
-        LoudnormAnalysisResult analysis)
+        LoudnessAnalysis analysis)
+    {
+        var loudnormFilter = BuildLoudnormFilter(config, analysis);
+
+        try
+        {
+            await FFMpegArguments
+                .FromFileInput(inputPath)
+                .OutputToFile(outputPath, true, options => options
+                    .WithCustomArgument($"-af {loudnormFilter}")
+                    .WithAudioSamplingRate())
+                .ProcessAsynchronously();
+
+            return File.Exists(outputPath);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Build the loudnorm filter string with measured values.
+    /// </summary>
+    private static string BuildLoudnormFilter(AudioNormalizationConfig config, LoudnessAnalysis analysis)
     {
         var targetLoudness = config.TargetLoudness.ToString("G", CultureInfo.InvariantCulture);
         var truePeak = config.TruePeak.ToString("G", CultureInfo.InvariantCulture);
         var loudnessRange = config.LoudnessRange.ToString("G", CultureInfo.InvariantCulture);
 
-        var loudnormFilter = $"loudnorm=I={targetLoudness}:TP={truePeak}:LRA={loudnessRange}:" +
-                           $"measured_I={analysis.input_i}:measured_TP={analysis.input_tp}:" +
-                           $"measured_LRA={analysis.input_lra}:measured_thresh={analysis.input_thresh}:" +
-                           $"offset={analysis.target_offset}:print_format=summary";
-
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = "ffmpeg",
-                Arguments = $"-i \"{inputPath}\" -af {loudnormFilter} -ar 48000 \"{outputPath}\"",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            }
-        };
-
-        var duration = await GetAudioDurationAsync(inputPath);
-        var exitCode = duration > 0
-            ? AnsiConsole.Progress().Start(ctx =>
-            {
-                var task = ctx.AddTask("[cyan]Normalizing audio...[/]", maxValue: duration);
-
-                process.ErrorDataReceived += (_, e) =>
-                {
-                    if (e.Data != null)
-                    {
-                        var timeMatch = Regex.Match(e.Data, @"time=(\d+):(\d+):(\d+\.\d+)");
-                        if (timeMatch.Success)
-                        {
-                            var hours = double.Parse(timeMatch.Groups[1].Value);
-                            var minutes = double.Parse(timeMatch.Groups[2].Value);
-                            var seconds = double.Parse(timeMatch.Groups[3].Value);
-                            var currentTime = hours * 3600 + minutes * 60 + seconds;
-                            task.Value = currentTime;
-                        }
-                    }
-                };
-
-                process.Start();
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-                process.WaitForExit();
-
-                task.StopTask();
-                return process.ExitCode;
-            })
-            : await RunProcessWithSpinnerAsync(process, "Normalizing audio...");
-
-        return exitCode == 0 && File.Exists(outputPath);
+        return $"loudnorm=I={targetLoudness}:TP={truePeak}:LRA={loudnessRange}:" +
+               $"measured_I={analysis.InputI}:measured_TP={analysis.InputTp}:" +
+               $"measured_LRA={analysis.InputLra}:measured_thresh={analysis.InputThresh}:" +
+               $"offset={analysis.TargetOffset}:print_format=summary";
     }
 
     /// <summary>
-    /// Get audio duration in seconds using FFprobe.
+    /// Get audio duration using FFMpegCore's FFProbe.
     /// </summary>
-    private static async Task<double> GetAudioDurationAsync(string inputPath)
+    private static async Task<TimeSpan> GetAudioDurationAsync(string inputPath)
     {
         try
         {
-            using var process = new Process
-            {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "ffprobe",
-                    Arguments = $"-v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 \"{inputPath}\"",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-
-            process.Start();
-            var output = await process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
-
-            if (double.TryParse(output.Trim(), out var duration))
-            {
-                return duration;
-            }
+            var mediaInfo = await FFProbe.AnalyseAsync(inputPath);
+            return mediaInfo.Duration;
         }
-        catch (Exception)
+        catch
         {
-            // FFprobe not available or failed - fallback to indeterminate duration
+            return TimeSpan.Zero;
         }
-
-        return -1;
-    }
-
-    /// <summary>
-    /// Run a process with a spinner (fallback when progress bar fails).
-    /// </summary>
-    private static async Task<int> RunProcessWithSpinnerAsync(Process process, string statusMessage)
-    {
-        return await AnsiConsole.Status()
-            .StartAsync(statusMessage, async _ =>
-            {
-                process.Start();
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-                await process.WaitForExitAsync();
-                return process.ExitCode;
-            });
     }
 
     /// <summary>
@@ -297,25 +387,25 @@ internal static class FFmpegService
                 return file.Tag.DateTagged.Value.ToUniversalTime();
             }
         }
-        catch (Exception)
+        catch
         {
-            // TagLib failed to read file metadata, continue to ffprobe fallback
+            // TagLib failed, continue to ffprobe fallback
         }
 
         try
         {
-            // Try ffprobe to get creation_time from container metadata
-            using var process = new Process
+            // Try FFProbe to get creation_time from container metadata
+            var ffprobePath = GetFFprobePath();
+
+            using var process = new Process();
+            process.StartInfo = new()
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "ffprobe",
-                    Arguments = $"-v quiet -show_entries format_tags=creation_time -of default=noprint_wrappers=1:nokey=1 \"{filePath}\"",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
+                FileName = ffprobePath,
+                Arguments = $"-v quiet -show_entries format_tags=creation_time -of default=noprint_wrappers=1:nokey=1 \"{filePath}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
             };
 
             process.Start();
@@ -327,23 +417,41 @@ internal static class FFmpegService
                 return creationTime.ToUniversalTime();
             }
         }
-        catch (Exception)
+        catch
         {
-            // FFprobe not available or failed to read creation time
+            // FFprobe not available or failed
         }
 
         return null;
     }
 
     /// <summary>
-    /// Result from FFmpeg loudnorm analysis (Pass 1).
+    /// Get the path to the FFmpeg executable.
     /// </summary>
-    private class LoudnormAnalysisResult
+    private static string GetFFmpegPath()
     {
-        public string input_i { get; set; } = string.Empty;
-        public string input_tp { get; set; } = string.Empty;
-        public string input_lra { get; set; } = string.Empty;
-        public string input_thresh { get; set; } = string.Empty;
-        public string target_offset { get; set; } = string.Empty;
+        var binDir = FFmpegBinaryManager.GetBinaryDirectory();
+        var ffmpegName = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
+        var localPath = Path.Combine(binDir, ffmpegName);
+
+        return File.Exists(localPath) ? localPath : "ffmpeg";
     }
+
+    /// <summary>
+    /// Get the path to the FFprobe executable.
+    /// </summary>
+    private static string GetFFprobePath()
+    {
+        var binDir = FFmpegBinaryManager.GetBinaryDirectory();
+        var ffprobeName = OperatingSystem.IsWindows() ? "ffprobe.exe" : "ffprobe";
+        var localPath = Path.Combine(binDir, ffprobeName);
+
+        return File.Exists(localPath) ? localPath : "ffprobe";
+    }
+
+    [GeneratedRegex("""time=(\d+):(\d+):(\d+\.\d+)""", RegexOptions.Compiled)]
+    private static partial Regex MyRegex();
+
+    [GeneratedRegex("""\{[^\}]*"input_i"[^\}]*\}""", RegexOptions.Singleline)]
+    private static partial Regex JsonRegex();
 }

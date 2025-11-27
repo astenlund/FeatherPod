@@ -89,27 +89,63 @@ internal static class EpisodeHelpers
                 if (!FFmpegService.IsFFmpegAvailable())
                 {
                     AnsiConsole.WriteLine();
-                    AnsiConsole.MarkupLine("[yellow]Warning:[/] FFmpeg is not installed or not found in PATH.");
-                    AnsiConsole.MarkupLine("  Audio normalization requires FFmpeg to be installed.");
-                    AnsiConsole.MarkupLine("  Download from: [link]https://ffmpeg.org/download.html[/]");
-                    AnsiConsole.WriteLine();
+                    AnsiConsole.MarkupLine("[yellow]Warning:[/] FFmpeg is not installed or not found.");
 
-                    var continueWithoutNormalization = new MenuBuilder<bool?>()
-                        .WithTitle("Continue upload without normalization?")
+                    // Offer to download FFmpeg automatically
+                    var downloadChoice = new MenuBuilder<bool?>()
+                        .WithTitle("Download FFmpeg automatically?")
                         .WithHint("(arrow keys or Y/N, Esc to cancel)")
-                        .AddOption("Y", "Yes - Upload original file", true)
-                        .AddOption("N", "No - Cancel upload", false)
+                        .AddOption("Y", "Yes - Download FFmpeg (~100MB)", true)
+                        .AddOption("N", "No - Skip normalization", false)
                         .AllowCancel(true, false)
                         .Show();
 
-                    if (continueWithoutNormalization != true)
+                    if (downloadChoice == true)
                     {
+                        AnsiConsole.WriteLine();
+                        var downloadSuccess = await DownloadFFmpegWithProgressAsync();
+
+                        if (!downloadSuccess)
+                        {
+                            AnsiConsole.MarkupLine("[red]Failed to download FFmpeg.[/]");
+                            AnsiConsole.WriteLine();
+
+                            var continueAfterFailure = new MenuBuilder<bool?>()
+                                .WithTitle("Continue upload without normalization?")
+                                .WithHint("(arrow keys or Y/N, Esc to cancel)")
+                                .AddOption("Y", "Yes - Upload original file", true)
+                                .AddOption("N", "No - Cancel upload", false)
+                                .AllowCancel(true, false)
+                                .Show();
+
+                            if (continueAfterFailure != true)
+                            {
+                                AnsiConsole.MarkupLine("[grey]Upload cancelled.[/]");
+                                return false;
+                            }
+                        }
+                        else
+                        {
+                            AnsiConsole.MarkupLine("[green]✓[/] FFmpeg downloaded successfully");
+                        }
+
+                        AnsiConsole.WriteLine();
+                    }
+                    else if (downloadChoice == false)
+                    {
+                        // User chose not to download, continue without normalization
+                        AnsiConsole.WriteLine();
+                    }
+                    else
+                    {
+                        // User cancelled (Esc)
                         AnsiConsole.MarkupLine("[grey]Upload cancelled.[/]");
                         return false;
                     }
-                    AnsiConsole.WriteLine();
                 }
-                else
+
+                // Re-check availability after potential download
+                if (FFmpegService.IsFFmpegAvailable())
                 {
                     // Normalize audio
                     AnsiConsole.MarkupLine($"Normalizing [cyan]{fileName}[/] to -16 LUFS...");
@@ -133,14 +169,14 @@ internal static class EpisodeHelpers
                             AnsiConsole.MarkupLine("[grey]Upload cancelled.[/]");
                             return false;
                         }
-                        AnsiConsole.WriteLine();
                     }
                     else
                     {
                         fileToUpload = normalizedTempFile;
                         AnsiConsole.MarkupLine("[green]✓[/] Audio normalized successfully");
-                        AnsiConsole.WriteLine();
                     }
+
+                    AnsiConsole.WriteLine();
                 }
             }
 
@@ -380,7 +416,7 @@ internal static class EpisodeHelpers
         var lower = pattern.ToLower();
 
         // Contains pattern: *text*
-        if (pattern.StartsWith("*") && pattern.EndsWith("*"))
+        if (pattern.StartsWith('*') && pattern.EndsWith('*'))
         {
             var contains = lower.Trim('*');
             return episodes.Where(e =>
@@ -389,7 +425,7 @@ internal static class EpisodeHelpers
         }
 
         // Prefix pattern: text*
-        if (pattern.EndsWith("*"))
+        if (pattern.EndsWith('*'))
         {
             var prefix = lower[..^1];
             return episodes.Where(e =>
@@ -398,7 +434,7 @@ internal static class EpisodeHelpers
         }
 
         // Suffix pattern: *text
-        if (pattern.StartsWith("*"))
+        if (pattern.StartsWith('*'))
         {
             var suffix = lower[1..];
             return episodes.Where(e =>
@@ -410,5 +446,12 @@ internal static class EpisodeHelpers
         return episodes.Where(e =>
             e.FileName.Equals(pattern, StringComparison.OrdinalIgnoreCase) ||
             e.Title.Equals(pattern, StringComparison.OrdinalIgnoreCase)).ToList();
+    }
+
+    private static async Task<bool> DownloadFFmpegWithProgressAsync()
+    {
+        return await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync("[cyan]Downloading FFmpeg...[/]", async _ => await FFmpegBinaryManager.DownloadFFmpegAsync());
     }
 }
