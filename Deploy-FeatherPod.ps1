@@ -73,8 +73,11 @@ function Deploy-Environment {
     Write-Host "======================================`n" -ForegroundColor Magenta
 
     try {
-        Write-Host "Publishing FeatherPod...`n" -ForegroundColor Cyan
-        dotnet publish $projectPath -c Release -o $publishPath
+        Write-Host "Building solution...`n" -ForegroundColor Cyan
+        dotnet build -c Release
+
+        Write-Host "`nPublishing FeatherPod...`n" -ForegroundColor Cyan
+        dotnet publish $projectPath -c Release -o $publishPath --no-build
         if ($LASTEXITCODE -ne 0) {
             throw "dotnet publish failed with exit code $LASTEXITCODE"
         }
