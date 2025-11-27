@@ -67,10 +67,32 @@ app.MapControllers();
 // HEALTH CHECK ENDPOINT
 // ============================================================================
 
-// Simple health check endpoint for Azure Monitor health probes
-app.MapGet("/health", () => Results.Ok())
-    .WithName("GetHealth")
-    .Produces(200);
+// Health check endpoint for Azure Monitor health probes
+app.MapGet("/health", async (EpisodeService episodeService) =>
+{
+    try
+    {
+        var feeds = await episodeService.GetFeedsAsync();
+        return Results.Ok(new
+        {
+            Status = "Healthy",
+            FeedCount = feeds.Count,
+            Timestamp = DateTime.UtcNow
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new
+        {
+            Status = "Unhealthy",
+            Error = ex.Message,
+            Timestamp = DateTime.UtcNow
+        }, statusCode: 503);
+    }
+})
+.WithName("GetHealth")
+.Produces(200)
+.Produces(503);
 
 // ============================================================================
 // FEED-SPECIFIC ENDPOINTS
