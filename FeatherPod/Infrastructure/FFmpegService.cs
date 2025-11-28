@@ -211,6 +211,9 @@ internal static partial class FFmpegService
                     var currentTime = hours * 3600 + minutes * 60 + seconds;
                     var percent = Math.Min(100, (currentTime / durationSeconds) * 100);
                     progressTask.Value = percent;
+
+                    var position = NormalizationProgressHelper.FormatPosition(TimeSpan.FromSeconds(currentTime), duration);
+                    progressTask.Description = $"[cyan]Analyzing[/] [grey]{position}[/]";
                 }
             }
         };
@@ -313,6 +316,9 @@ internal static partial class FFmpegService
                 .NotifyOnProgress(percent =>
                 {
                     progressTask.Value = percent;
+                    var currentPosition = TimeSpan.FromSeconds(duration.TotalSeconds * percent / 100);
+                    var position = NormalizationProgressHelper.FormatPosition(currentPosition, duration);
+                    progressTask.Description = $"[cyan]Normalizing[/] [grey]{position}[/]";
                 }, duration)
                 .ProcessAsynchronously();
 

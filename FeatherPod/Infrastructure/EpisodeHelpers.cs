@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
@@ -357,7 +358,7 @@ internal static class EpisodeHelpers
         {
             var requestBody = new { targetFeedId = toFeed };
             var json = JsonSerializer.Serialize(requestBody);
-            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             var response = await httpClient.PostAsync($"/api/feeds/{fromFeed}/episodes/{episodeId}/move", content);
 
@@ -385,7 +386,7 @@ internal static class EpisodeHelpers
         {
             var requestBody = new { targetFeedId = toFeed };
             var json = JsonSerializer.Serialize(requestBody);
-            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             var response = await httpClient.PostAsync($"/api/feeds/{fromFeed}/episodes/{episodeId}/copy", content);
 
@@ -479,22 +480,155 @@ internal static class EpisodeHelpers
 
     private static async Task<bool> PollJobCompletionAsync(HttpClient httpClient, string jobId, string fileName)
     {
-        const int pollIntervalMs = 2000;
         const int maxWaitMs = 600000; // 10 minutes
+        using var cts = new CancellationTokenSource(maxWaitMs);
+
+        try
+        {
+            return await StreamJobProgressAsync(httpClient, jobId, fileName, cts.Token);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException)
+        {
+            AnsiConsole.MarkupLine($"[yellow]SSE connection failed, falling back to polling...[/]");
+
+            return await FallbackPollJobCompletionAsync(httpClient, jobId, fileName, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine($"[yellow]![/] Normalization timed out after {maxWaitMs / 1000} seconds");
+            AnsiConsole.MarkupLine($"  Job ID: [grey]{jobId}[/] - check status manually");
+
+            return false;
+        }
+    }
+
+    private static async Task<bool> StreamJobProgressAsync(HttpClient httpClient, string jobId, string fileName, CancellationToken cancellationToken)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/api/jobs/{jobId}/progress");
+        var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException($"SSE endpoint returned {response.StatusCode}");
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var reader = new StreamReader(stream);
+
+        JobStatusResponse? finalStatus = null;
+
+        await AnsiConsole.Progress()
+            .AutoClear(false)
+            .Columns(
+                new TaskDescriptionColumn(),
+                new ProgressBarColumn(),
+                new PercentageColumn(),
+                new SpinnerColumn())
+            .StartAsync(async ctx =>
+            {
+                var task = ctx.AddTask($"[cyan]{Markup.Escape(fileName)}[/]", maxValue: 100);
+
+                string? currentEvent = null;
+                var dataBuilder = new StringBuilder();
+
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    var line = await reader.ReadLineAsync(cancellationToken);
+                    if (line == null)
+                    {
+                        break;
+                    }
+
+                    if (line.StartsWith("event:"))
+                    {
+                        currentEvent = line[6..].Trim();
+                    }
+                    else if (line.StartsWith("data:"))
+                    {
+                        dataBuilder.AppendLine(line[5..].Trim());
+                    }
+                    else if (line.StartsWith(':'))
+                    {
+                        // Comment/heartbeat - ignore
+                    }
+                    else if (string.IsNullOrWhiteSpace(line) && currentEvent != null)
+                    {
+                        var data = dataBuilder.ToString().Trim();
+                        dataBuilder.Clear();
+
+                        if (currentEvent == "progress")
+                        {
+                            var status = JsonSerializer.Deserialize<JobStatusResponse>(data, JsonOptions);
+                            if (status != null)
+                            {
+                                task.Value = status.ProgressPercent ?? 0;
+
+                                var stageDesc = NormalizationProgressHelper.GetStageDescription(status.Stage);
+                                var position = FormatPositionFromMs(status.CurrentPositionMs, status.TotalDurationMs);
+                                var desc = string.IsNullOrEmpty(position)
+                                    ? $"[cyan]{stageDesc}[/]"
+                                    : $"[cyan]{stageDesc}[/] [grey]{position}[/]";
+                                task.Description = desc;
+
+                                finalStatus = status;
+                            }
+                        }
+                        else if (currentEvent == "done")
+                        {
+                            task.Value = 100;
+                            task.StopTask();
+
+                            break;
+                        }
+                        else if (currentEvent == "error")
+                        {
+                            task.StopTask();
+
+                            break;
+                        }
+
+                        currentEvent = null;
+                    }
+                }
+            });
+
+        if (finalStatus?.Status == nameof(JobStatus.Completed))
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine($"[green]✓[/] Normalization complete");
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine($"  Episode ID: [grey]{finalStatus.EpisodeId}[/]");
+
+            return true;
+        }
+
+        if (finalStatus?.Status == nameof(JobStatus.Failed))
+        {
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine($"[red]✗[/] Normalization failed: {Markup.Escape(finalStatus.Error ?? "Unknown error")}");
+        }
+
+        return false;
+    }
+
+    private static async Task<bool> FallbackPollJobCompletionAsync(HttpClient httpClient, string jobId, string fileName, CancellationToken cancellationToken)
+    {
+        const int pollIntervalMs = 2000;
         var elapsed = 0;
 
         return await AnsiConsole.Status()
             .Spinner(Spinner.Known.Dots)
             .StartAsync($"[cyan]Normalizing {Markup.Escape(fileName)}...[/]", async ctx =>
             {
-                while (elapsed < maxWaitMs)
+                while (!cancellationToken.IsCancellationRequested)
                 {
-                    await Task.Delay(pollIntervalMs);
+                    await Task.Delay(pollIntervalMs, cancellationToken);
                     elapsed += pollIntervalMs;
 
                     try
                     {
-                        var response = await httpClient.GetAsync($"/api/jobs/{jobId}");
+                        var response = await httpClient.GetAsync($"/api/jobs/{jobId}", cancellationToken);
                         if (!response.IsSuccessStatusCode)
                         {
                             AnsiConsole.MarkupLine($"\n[red]✗[/] Failed to check job status: {response.StatusCode}");
@@ -502,7 +636,7 @@ internal static class EpisodeHelpers
                             return false;
                         }
 
-                        var json = await response.Content.ReadAsStringAsync();
+                        var json = await response.Content.ReadAsStringAsync(cancellationToken);
                         var status = JsonSerializer.Deserialize<JobStatusResponse>(json, JsonOptions);
 
                         if (status == null)
@@ -528,8 +662,11 @@ internal static class EpisodeHelpers
                             return false;
                         }
 
-                        // Update status message
                         ctx.Status($"[cyan]Normalizing {Markup.Escape(fileName)}...[/] ({elapsed / 1000}s)");
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
                     }
                     catch (Exception ex)
                     {
@@ -539,12 +676,21 @@ internal static class EpisodeHelpers
                     }
                 }
 
-                AnsiConsole.WriteLine();
-                AnsiConsole.MarkupLine($"[yellow]![/] Normalization timed out after {maxWaitMs / 1000} seconds");
-                AnsiConsole.MarkupLine($"  Job ID: [grey]{jobId}[/] - check status manually");
-
                 return false;
             });
+    }
+
+    private static string FormatPositionFromMs(long? currentMs, long? totalMs)
+    {
+        if (currentMs == null || totalMs == null || totalMs <= 0)
+        {
+            return string.Empty;
+        }
+
+        var current = TimeSpan.FromMilliseconds(currentMs.Value);
+        var total = TimeSpan.FromMilliseconds(totalMs.Value);
+
+        return NormalizationProgressHelper.FormatPosition(current, total);
     }
 
     private static void DisplayEpisodeDetails(Episode episode)
