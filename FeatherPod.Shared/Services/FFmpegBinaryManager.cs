@@ -1,16 +1,28 @@
 using FFMpegCore;
 using FFMpegCore.Extensions.Downloader;
+using Microsoft.Extensions.Logging;
 
-namespace FeatherPod.Infrastructure;
+namespace FeatherPod.Shared.Services;
 
 /// <summary>
 /// Manages FFmpeg binary availability, including auto-download capabilities.
 /// </summary>
-internal static class FFmpegBinaryManager
+public class FFmpegBinaryManager
 {
-    private static bool? _isAvailable;
-    private static bool _configured;
-    private static readonly Lock _lock = new();
+    private readonly ILogger<FFmpegBinaryManager>? _logger;
+    private readonly Lock _lock = new();
+
+    private bool? _isAvailable;
+    private bool _configured;
+
+    /// <summary>
+    /// Creates an FFmpegBinaryManager with optional logging support.
+    /// </summary>
+    /// <param name="logger">Optional logger for DI scenarios (Server). Pass null for CLI usage.</param>
+    public FFmpegBinaryManager(ILogger<FFmpegBinaryManager>? logger = null)
+    {
+        _logger = logger;
+    }
 
     /// <summary>
     /// Gets the platform-specific directory for storing downloaded FFmpeg binaries.
@@ -20,18 +32,19 @@ internal static class FFmpegBinaryManager
         if (OperatingSystem.IsWindows())
         {
             var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
             return Path.Combine(localAppData, "FeatherPod", "ffmpeg");
         }
 
-        // Linux/macOS: XDG standard
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return Path.Combine(home, ".local", "share", "FeatherPod", "ffmpeg");
+        // Linux (Azure App Service): Use /home for persistent storage
+        // /home is the only directory that persists across restarts on Azure App Service
+        return Path.Combine("/home", ".featherpod", "ffmpeg");
     }
 
     /// <summary>
     /// Check if FFmpeg is available (either on PATH or in local download directory).
     /// </summary>
-    public static bool IsFFmpegAvailable()
+    public bool IsFFmpegAvailable()
     {
         if (_isAvailable.HasValue)
         {
@@ -48,6 +61,7 @@ internal static class FFmpegBinaryManager
             // First, check system PATH
             if (CheckSystemPath())
             {
+                _logger?.LogInformation("FFmpeg found on system PATH");
                 _isAvailable = true;
 
                 return true;
@@ -58,11 +72,13 @@ internal static class FFmpegBinaryManager
             if (CheckLocalBinaries(binDir))
             {
                 ConfigureFFMpegCore(binDir);
+                _logger?.LogInformation("FFmpeg found in local directory: {BinDir}", binDir);
                 _isAvailable = true;
 
                 return true;
             }
 
+            _logger?.LogWarning("FFmpeg not available on PATH or in local directory");
             _isAvailable = false;
 
             return false;
@@ -70,47 +86,66 @@ internal static class FFmpegBinaryManager
     }
 
     /// <summary>
+    /// Ensures FFmpeg is available, downloading if necessary.
+    /// </summary>
+    /// <returns>True if FFmpeg is available after this call</returns>
+    public async Task<bool> EnsureFFmpegAvailableAsync()
+    {
+        if (IsFFmpegAvailable())
+        {
+            return true;
+        }
+
+        _logger?.LogInformation("FFmpeg not found, attempting to download...");
+        return await DownloadFFmpegAsync();
+    }
+
+    /// <summary>
     /// Download FFmpeg binaries to the local directory.
     /// </summary>
     /// <returns>True if download succeeded</returns>
-    public static async Task<bool> DownloadFFmpegAsync()
+    public async Task<bool> DownloadFFmpegAsync()
     {
         var binDir = GetBinaryDirectory();
 
         Directory.CreateDirectory(binDir);
 
+        _logger?.LogInformation("Downloading FFmpeg binaries to {BinDir}...", binDir);
+
         try
         {
-            // Create FFOptions with the target binary folder
             var options = new FFOptions { BinaryFolder = binDir };
-
-            // Download FFmpeg and FFprobe binaries
             var downloadedFiles = await FFMpegDownloader.DownloadBinaries(options: options);
 
             if (downloadedFiles.Count == 0)
             {
+                _logger?.LogError("FFmpeg download returned no files");
                 return false;
             }
 
-            // Configure FFMpegCore to use the downloaded binaries
+            _logger?.LogInformation("Downloaded {Count} FFmpeg binaries: {Files}", downloadedFiles.Count, string.Join(", ", downloadedFiles));
             ConfigureFFMpegCore(binDir);
 
-            // Verify the binaries exist
             if (!CheckLocalBinaries(binDir))
             {
+                _logger?.LogError("FFmpeg binaries not found after download");
+
                 return false;
             }
 
-            // Update cached state
             lock (_lock)
             {
                 _isAvailable = true;
             }
 
+            _logger?.LogInformation("FFmpeg download complete and verified");
+
             return true;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger?.LogError(ex, "Failed to download FFmpeg binaries");
+
             return false;
         }
     }
@@ -119,7 +154,6 @@ internal static class FFmpegBinaryManager
     {
         try
         {
-            // Try to run ffmpeg -version to see if it's on PATH
             var startInfo = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "ffmpeg",
@@ -131,7 +165,6 @@ internal static class FFmpegBinaryManager
             };
 
             using var process = System.Diagnostics.Process.Start(startInfo);
-
             if (process == null)
             {
                 return false;
@@ -153,7 +186,9 @@ internal static class FFmpegBinaryManager
     private static bool CheckLocalBinaries(string binDir)
     {
         if (!Directory.Exists(binDir))
+        {
             return false;
+        }
 
         var ffmpegName = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
         var ffprobeName = OperatingSystem.IsWindows() ? "ffprobe.exe" : "ffprobe";
@@ -164,13 +199,19 @@ internal static class FFmpegBinaryManager
         return File.Exists(ffmpegPath) && File.Exists(ffprobePath);
     }
 
-    private static void ConfigureFFMpegCore(string binDir)
+    private void ConfigureFFMpegCore(string binDir)
     {
-        if (_configured) return;
+        if (_configured)
+        {
+            return;
+        }
 
         lock (_lock)
         {
-            if (_configured) return;
+            if (_configured)
+            {
+                return;
+            }
 
             GlobalFFOptions.Configure(options =>
             {
@@ -178,6 +219,8 @@ internal static class FFmpegBinaryManager
             });
 
             _configured = true;
+
+            _logger?.LogDebug("Configured FFMpegCore to use binaries from {BinDir}", binDir);
         }
     }
 }

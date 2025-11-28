@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using FeatherPod.Shared.Services;
 using FFMpegCore;
 using Spectre.Console;
 
@@ -15,13 +16,22 @@ namespace FeatherPod.Infrastructure;
 internal static partial class FFmpegService
 {
     private static readonly Regex ProgressRegex = MyRegex();
+    private static readonly FFmpegBinaryManager BinaryManager = new();
 
     /// <summary>
     /// Check if FFmpeg is installed and available (on PATH or downloaded locally).
     /// </summary>
     public static bool IsFFmpegAvailable()
     {
-        return FFmpegBinaryManager.IsFFmpegAvailable();
+        return BinaryManager.IsFFmpegAvailable();
+    }
+
+    /// <summary>
+    /// Download FFmpeg binaries to the local directory.
+    /// </summary>
+    public static Task<bool> DownloadFFmpegAsync()
+    {
+        return BinaryManager.DownloadFFmpegAsync();
     }
 
     /// <summary>

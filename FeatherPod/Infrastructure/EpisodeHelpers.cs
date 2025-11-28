@@ -452,6 +452,6 @@ internal static class EpisodeHelpers
     {
         return await AnsiConsole.Status()
             .Spinner(Spinner.Known.Dots)
-            .StartAsync("[cyan]Downloading FFmpeg...[/]", async _ => await FFmpegBinaryManager.DownloadFFmpegAsync());
+            .StartAsync("[cyan]Downloading FFmpeg...[/]", async _ => await FFmpegService.DownloadFFmpegAsync());
     }
 }
