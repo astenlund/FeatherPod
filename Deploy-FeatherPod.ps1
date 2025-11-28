@@ -1,55 +1,67 @@
 <#
 .SYNOPSIS
-    Publishes and deploys FeatherPod to Azure App Service.
+    Publishes and deploys FeatherPod to Azure App Service and Function App.
 
 .DESCRIPTION
-    Builds the project, creates a deployment package, deploys to Azure, and cleans up temporary files.
+    Builds the project, creates deployment packages, deploys App Service and Function App to Azure,
+    and optionally deploys infrastructure via Bicep.
 
 .PARAMETER Environment
     Target environment: Test, Prod, or All (defaults to Prod).
 
+.PARAMETER Infrastructure
+    Include Bicep infrastructure deployment. Use this for initial setup or infrastructure changes.
+
 .EXAMPLE
     .\Deploy-FeatherPod.ps1
-    Deploys to production (featherpod)
+    Deploys code to production (App Service + Function App)
 
 .EXAMPLE
     .\Deploy-FeatherPod.ps1 -Environment Test
-    Deploys to test environment (featherpod-test)
+    Deploys code to test environment
+
+.EXAMPLE
+    .\Deploy-FeatherPod.ps1 -Environment Test -Infrastructure
+    Deploys infrastructure and code to test environment
 
 .EXAMPLE
     .\Deploy-FeatherPod.ps1 -Environment All
-    Deploys to both test and production environments
+    Deploys code to both test and production environments
 #>
 
 param(
-    [Parameter(Mandatory=$false)]
+    [Parameter(Mandatory)]
     [ValidateSet("Test", "Prod", "All")]
-    [string]$Environment
+    [string]$Environment,
+
+    [switch]$Infrastructure
 )
 
 $ErrorActionPreference = "Stop"
 
 function Main {
     param(
-        [string]$Environment
+        [string]$Environment,
+        [switch]$Infrastructure
     )
 
     if ($Environment -eq "All") {
         $environments = @("Test", "Prod")
-        foreach ($env in $environments) { Deploy-Environment -TargetEnvironment $env }
+        foreach ($env in $environments) { Deploy-Environment -TargetEnvironment $env -Infrastructure:$Infrastructure }
         Write-Host "`n======================================" -ForegroundColor Green
         Write-Host "  All deployments completed!" -ForegroundColor Green
         Write-Host "======================================`n" -ForegroundColor Green
     }
     else {
-        Deploy-Environment -TargetEnvironment $Environment
+        Deploy-Environment -TargetEnvironment $Environment -Infrastructure:$Infrastructure
     }
 }
 
 # Deployment function for a single environment
 function Deploy-Environment {
     param(
-        [string]$TargetEnvironment
+        [string]$TargetEnvironment,
+        [switch]$Infrastructure
     )
 
     $ResourceGroup = switch ($TargetEnvironment) {
@@ -62,27 +74,68 @@ function Deploy-Environment {
         "Prod" { "featherpod" }
     }
 
-    $projectPath = Join-Path $PSScriptRoot "FeatherPod.Server\FeatherPod.Server.csproj"
+    $FunctionAppName = switch ($TargetEnvironment) {
+        "Test" { "featherpod-test-func" }
+        "Prod" { "featherpod-func" }
+    }
+
+    $ParametersFile = switch ($TargetEnvironment) {
+        "Test" { "parameters-test.json" }
+        "Prod" { "parameters.json" }
+    }
+
+    $serverProjectPath = Join-Path $PSScriptRoot "FeatherPod.Server\FeatherPod.Server.csproj"
+    $functionsProjectPath = Join-Path $PSScriptRoot "FeatherPod.Functions\FeatherPod.Functions.csproj"
     $publishPath = Join-Path $PSScriptRoot "publish"
+    $funcPublishPath = Join-Path $PSScriptRoot "publish-func"
     $zipPath = Join-Path $PSScriptRoot "deploy.zip"
 
     Write-Host "`n======================================" -ForegroundColor Magenta
     Write-Host "  Deploying to: $TargetEnvironment" -ForegroundColor Magenta
     Write-Host "  Resource Group: $ResourceGroup" -ForegroundColor Magenta
-    Write-Host "  App Name: $AppName" -ForegroundColor Magenta
+    Write-Host "  App Service: $AppName" -ForegroundColor Magenta
+    Write-Host "  Function App: $FunctionAppName" -ForegroundColor Magenta
+    if ($Infrastructure) {
+        Write-Host "  Infrastructure: Yes (Bicep)" -ForegroundColor Magenta
+    }
     Write-Host "======================================`n" -ForegroundColor Magenta
 
     try {
-        Write-Host "Building solution...`n" -ForegroundColor Cyan
-        dotnet build -c Release
+        # 1. Deploy infrastructure (if requested)
+        if ($Infrastructure) {
+            Write-Host "Deploying infrastructure via Bicep...`n" -ForegroundColor Cyan
 
-        Write-Host "`nPublishing FeatherPod...`n" -ForegroundColor Cyan
-        dotnet publish $projectPath -c Release -o $publishPath --no-build
-        if ($LASTEXITCODE -ne 0) {
-            throw "dotnet publish failed with exit code $LASTEXITCODE"
+            $secretsFile = Join-Path $PSScriptRoot "infrastructure\parameters.secrets.json"
+            if (-not (Test-Path $secretsFile)) {
+                throw "Secrets file not found: $secretsFile. Create it with internalApiKey parameter."
+            }
+
+            az deployment group create `
+                --resource-group $ResourceGroup `
+                --template-file (Join-Path $PSScriptRoot "infrastructure\main.bicep") `
+                --parameters (Join-Path $PSScriptRoot "infrastructure\$ParametersFile") `
+                --parameters $secretsFile
+            if ($LASTEXITCODE -ne 0) {
+                throw "Bicep deployment failed with exit code $LASTEXITCODE"
+            }
+            Write-Host "`nInfrastructure deployment complete.`n" -ForegroundColor Green
         }
 
-        Write-Host "`nCreating deployment package..." -ForegroundColor Cyan
+        # 2. Build solution
+        Write-Host "Building solution...`n" -ForegroundColor Cyan
+        dotnet build -c Release
+        if ($LASTEXITCODE -ne 0) {
+            throw "dotnet build failed with exit code $LASTEXITCODE"
+        }
+
+        # 3. Deploy App Service
+        Write-Host "`nPublishing App Service...`n" -ForegroundColor Cyan
+        dotnet publish $serverProjectPath -c Release -o $publishPath --no-build
+        if ($LASTEXITCODE -ne 0) {
+            throw "dotnet publish (Server) failed with exit code $LASTEXITCODE"
+        }
+
+        Write-Host "Creating deployment package..." -ForegroundColor Cyan
         if (Test-Path $zipPath) {
             Remove-Item $zipPath -Force
         }
@@ -101,9 +154,28 @@ function Deploy-Environment {
             throw "az webapp deploy failed with exit code $LASTEXITCODE"
         }
 
+        # 4. Deploy Function App
+        Write-Host "`nPublishing Function App...`n" -ForegroundColor Cyan
+        dotnet publish $functionsProjectPath -c Release -o $funcPublishPath --no-build
+        if ($LASTEXITCODE -ne 0) {
+            throw "dotnet publish (Functions) failed with exit code $LASTEXITCODE"
+        }
+
+        Write-Host "Deploying to Azure Function App...`n" -ForegroundColor Cyan
+        Push-Location $funcPublishPath
+        try {
+            func azure functionapp publish $FunctionAppName
+            if ($LASTEXITCODE -ne 0) {
+                throw "func azure functionapp publish failed with exit code $LASTEXITCODE"
+            }
+        }
+        finally {
+            Pop-Location
+        }
+
         Write-Host "`nDeployment successful!`n" -ForegroundColor Green
-        Write-Host "App URL: https://$AppName.azurewebsites.net" -ForegroundColor Yellow
-        Write-Host "Feed URL: https://$AppName.azurewebsites.net/feed.xml" -ForegroundColor Yellow
+        Write-Host "App Service URL: https://$AppName.azurewebsites.net" -ForegroundColor Yellow
+        Write-Host "Function App URL: https://$FunctionAppName.azurewebsites.net" -ForegroundColor Yellow
     }
     catch {
         Write-Error "Deployment to $TargetEnvironment failed: $_"
@@ -121,6 +193,11 @@ function Deploy-Environment {
         if (Test-Path $publishPath) {
             Remove-Item $publishPath -Recurse -Force
             Write-Host "Removed $publishPath" -ForegroundColor Gray
+        }
+
+        if (Test-Path $funcPublishPath) {
+            Remove-Item $funcPublishPath -Recurse -Force
+            Write-Host "Removed $funcPublishPath" -ForegroundColor Gray
         }
 
         Write-Host "`nCleanup complete." -ForegroundColor Green
