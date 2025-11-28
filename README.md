@@ -7,7 +7,7 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 - **Multi-feed support** - Host multiple podcast feeds from a single instance
 - **Role-based access control** - Admin and FeedOwner roles with per-user API keys
 - **User management** - Create users, manage permissions, and assign feed ownership via API and CLI
-- **Audio normalization** - Automatic loudness normalization (-16 LUFS) via FFmpeg
+- **Audio normalization** - Automatic loudness normalization (-16 LUFS) via FFmpeg (auto-downloads binaries)
 - **Azure Blob Storage** - Scalable cloud storage for audio files
 - **RSS podcast feeds** - iTunes spec compatible with per-feed configuration
 - **CLI tool** - Command-line interface for episode, icon, feed, and user management
@@ -113,6 +113,7 @@ curl -X POST https://<your-app>.azurewebsites.net/api/feeds/{feedId}/episodes \
 - `description` - Full description for RSS feed
 - `summary` - Short summary for iTunes (defaults to description if not provided)
 - `publishedDate` - Set explicit date (ISO 8601 format)
+- `normalize=true` (query param) - Server-side audio normalization to -16 LUFS
 
 ### Removing Episodes
 
@@ -167,7 +168,7 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
 | `/api/feeds/{feedId}/episodes` | GET | Admin/Owner | List episodes for feed |
-| `/api/feeds/{feedId}/episodes` | POST | Admin/Owner | Upload episode |
+| `/api/feeds/{feedId}/episodes` | POST | Admin/Owner | Upload episode (`?normalize=true` for server normalization) |
 | `/api/feeds/{feedId}/episodes/{id}` | DELETE | Admin/Owner | Delete episode |
 | `/api/feeds/{feedId}/episodes/{id}/move` | POST | Admin/Owner | Move episode between feeds |
 | `/api/feeds/{feedId}/episodes/{id}/copy` | POST | Admin/Owner | Copy episode between feeds |
@@ -198,7 +199,8 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 |----------|--------|------|-------------|
 | `/{feedId}/feed.xml` | GET | Public | RSS podcast feed |
 | `/{feedId}/icon.png` | GET | Public | Feed icon |
-| `/{feedId}/audio/{filename}` | GET | Public | Stream audio (range requests) |
+| `/{feedId}/audio/{filename}` | GET | Public | Stream audio (RFC 7233 range requests) |
+| `/health` | GET | Public | Health check (returns blob storage status) |
 
 **Authentication:** `X-API-Key` header required for protected endpoints. Admin has full access; FeedOwner limited to owned feeds.
 
