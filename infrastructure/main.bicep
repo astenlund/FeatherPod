@@ -1,5 +1,13 @@
 // FeatherPod Infrastructure - Multi-Feed Architecture
 // This template creates Storage Account, App Service, Function App (for async normalization), managed identities, and RBAC
+// All resource names are parameterized - use parameters.json for Prod, parameters-test.json for Test
+
+@description('Environment: Prod or Test (for documentation and tagging)')
+@allowed([
+  'Prod'
+  'Test'
+])
+param environment string = 'Prod'
 
 @description('Name of the storage account (must be globally unique, 3-24 chars, lowercase alphanumeric)')
 @minLength(3)
@@ -52,10 +60,17 @@ param functionAppName string
 @secure()
 param internalApiKey string
 
+// Resource tags
+var tags = {
+  Environment: environment
+  Application: 'FeatherPod'
+}
+
 // Storage Account
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
   location: location
+  tags: tags
   sku: {
     name: storageSku
   }
@@ -111,6 +126,7 @@ resource normalizationTable 'Microsoft.Storage/storageAccounts/tableServices/tab
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
   name: appServicePlanName
   location: location
+  tags: tags
   sku: {
     name: appServicePlanSku
     tier: appServicePlanSku == 'F1' ? 'Free' : (appServicePlanSku == 'B1' || appServicePlanSku == 'B2' || appServicePlanSku == 'B3' ? 'Basic' : 'Standard')
@@ -125,6 +141,7 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
 resource appService 'Microsoft.Web/sites@2023-01-01' = {
   name: appServiceName
   location: location
+  tags: tags
   kind: 'app,linux'
   identity: {
     type: 'SystemAssigned'
@@ -198,6 +215,7 @@ resource appServiceTableRoleAssignment 'Microsoft.Authorization/roleAssignments@
 resource functionAppPlan 'Microsoft.Web/serverfarms@2023-01-01' = {
   name: '${functionAppName}-plan'
   location: location
+  tags: tags
   sku: {
     name: 'Y1'
     tier: 'Dynamic'
@@ -212,6 +230,7 @@ resource functionAppPlan 'Microsoft.Web/serverfarms@2023-01-01' = {
 resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
   name: functionAppName
   location: location
+  tags: tags
   kind: 'functionapp,linux'
   identity: {
     type: 'SystemAssigned'

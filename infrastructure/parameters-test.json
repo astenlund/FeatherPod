@@ -2,19 +2,25 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
+    "environment": {
+      "value": "Test"
+    },
     "storageAccountName": {
-      "value": "featherpod"
+      "value": "featherpodtest"
     },
     "location": {
       "value": "swedencentral"
     },
-    "testContainerName": {
-      "value": "featherpod-test"
+    "storageSku": {
+      "value": "Standard_LRS"
     },
-    "testAppServicePlanName": {
+    "containerName": {
+      "value": "featherpod"
+    },
+    "appServicePlanName": {
       "value": "featherpod-test-plan"
     },
-    "testAppServiceName": {
+    "appServiceName": {
       "value": "featherpod-test"
     },
     "appServicePlanSku": {
@@ -22,6 +28,9 @@
     },
     "dotnetVersion": {
       "value": "DOTNETCORE|10.0"
+    },
+    "functionAppName": {
+      "value": "featherpod-test-func"
     }
   }
 }
