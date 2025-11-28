@@ -236,7 +236,19 @@ internal static class EpisodeHelpers
                         }
                         var response = await httpClient.PostAsync(uploadUrl, content);
 
-                        if (response.IsSuccessStatusCode)
+                        if (response.StatusCode == System.Net.HttpStatusCode.Accepted)
+                        {
+                            // Async normalization - need to poll for completion
+                            var responseContent = await response.Content.ReadAsStringAsync();
+                            var jobStatus = JsonSerializer.Deserialize<JobStatusResponse>(responseContent, JsonOptions);
+
+                            if (jobStatus != null)
+                            {
+                                AnsiConsole.MarkupLine($"[green]✓[/] Uploaded: [cyan]{fileName}[/] (normalizing...)");
+                                success = await PollJobCompletionAsync(httpClient, jobStatus.JobId, fileName);
+                            }
+                        }
+                        else if (response.IsSuccessStatusCode)
                         {
                             success = true;
                             var responseContent = await response.Content.ReadAsStringAsync();
@@ -247,11 +259,7 @@ internal static class EpisodeHelpers
 
                             if (episode != null)
                             {
-                                AnsiConsole.MarkupLine($"  ID: [grey]{episode.Id}[/]");
-                                AnsiConsole.MarkupLine($"  Title: {Markup.Escape(episode.Title)}");
-                                AnsiConsole.MarkupLine($"  Published: [grey]{episode.PublishedDate:yyyy-MM-dd HH:mm:ss}[/]");
-                                AnsiConsole.MarkupLine($"  Duration: [grey]{FormatDuration(episode.Duration)}[/]");
-                                AnsiConsole.MarkupLine($"  Size: [grey]{FormatFileSize(episode.FileSize)}[/]");
+                                DisplayEpisodeDetails(episode);
                             }
                         }
                         else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
@@ -462,5 +470,84 @@ internal static class EpisodeHelpers
         return await AnsiConsole.Status()
             .Spinner(Spinner.Known.Dots)
             .StartAsync("[cyan]Downloading FFmpeg...[/]", async _ => await FFmpegService.DownloadFFmpegAsync());
+    }
+
+    private static async Task<bool> PollJobCompletionAsync(HttpClient httpClient, string jobId, string fileName)
+    {
+        const int pollIntervalMs = 2000;
+        const int maxWaitMs = 600000; // 10 minutes
+        var elapsed = 0;
+
+        return await AnsiConsole.Status()
+            .Spinner(Spinner.Known.Dots)
+            .StartAsync($"[cyan]Normalizing {Markup.Escape(fileName)}...[/]", async ctx =>
+            {
+                while (elapsed < maxWaitMs)
+                {
+                    await Task.Delay(pollIntervalMs);
+                    elapsed += pollIntervalMs;
+
+                    try
+                    {
+                        var response = await httpClient.GetAsync($"/api/jobs/{jobId}");
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            AnsiConsole.MarkupLine($"\n[red]✗[/] Failed to check job status: {response.StatusCode}");
+
+                            return false;
+                        }
+
+                        var json = await response.Content.ReadAsStringAsync();
+                        var status = JsonSerializer.Deserialize<JobStatusResponse>(json, JsonOptions);
+
+                        if (status == null)
+                        {
+                            continue;
+                        }
+
+                        if (status.Status == nameof(JobStatus.Completed))
+                        {
+                            AnsiConsole.WriteLine();
+                            AnsiConsole.MarkupLine($"[green]✓[/] Normalization complete");
+                            AnsiConsole.WriteLine();
+                            AnsiConsole.MarkupLine($"  Episode ID: [grey]{status.EpisodeId}[/]");
+
+                            return true;
+                        }
+
+                        if (status.Status == nameof(JobStatus.Failed))
+                        {
+                            AnsiConsole.WriteLine();
+                            AnsiConsole.MarkupLine($"[red]✗[/] Normalization failed: {Markup.Escape(status.Error ?? "Unknown error")}");
+
+                            return false;
+                        }
+
+                        // Update status message
+                        ctx.Status($"[cyan]Normalizing {Markup.Escape(fileName)}...[/] ({elapsed / 1000}s)");
+                    }
+                    catch (Exception ex)
+                    {
+                        AnsiConsole.MarkupLine($"\n[red]✗[/] Error checking job status: {ex.Message}");
+
+                        return false;
+                    }
+                }
+
+                AnsiConsole.WriteLine();
+                AnsiConsole.MarkupLine($"[yellow]![/] Normalization timed out after {maxWaitMs / 1000} seconds");
+                AnsiConsole.MarkupLine($"  Job ID: [grey]{jobId}[/] - check status manually");
+
+                return false;
+            });
+    }
+
+    private static void DisplayEpisodeDetails(Episode episode)
+    {
+        AnsiConsole.MarkupLine($"  ID: [grey]{episode.Id}[/]");
+        AnsiConsole.MarkupLine($"  Title: {Markup.Escape(episode.Title)}");
+        AnsiConsole.MarkupLine($"  Published: [grey]{episode.PublishedDate:yyyy-MM-dd HH:mm:ss}[/]");
+        AnsiConsole.MarkupLine($"  Duration: [grey]{FormatDuration(episode.Duration)}[/]");
+        AnsiConsole.MarkupLine($"  Size: [grey]{FormatFileSize(episode.FileSize)}[/]");
     }
 }
