@@ -1,6 +1,13 @@
 {
   "version": "2.0",
   "logging": {
+    "logLevel": {
+      "default": "Warning",
+      "Function": "Information",
+      "FeatherPod": "Information",
+      "Azure.Core": "Error",
+      "Azure.Storage": "Error"
+    },
     "applicationInsights": {
       "samplingSettings": {
         "isEnabled": true,
@@ -15,7 +22,8 @@
       "visibilityTimeout": "00:15:00",
       "batchSize": 1,
       "maxDequeueCount": 3,
-      "newBatchThreshold": 0
+      "newBatchThreshold": 0,
+      "messageEncoding": "none"
     }
   }
 }

@@ -466,7 +466,15 @@ public sealed partial class EpisodeService : IDisposable
 
         try
         {
-            if (!_episodesByFeed.ContainsKey(feedId))
+            // Reload episodes from blob storage (picks up changes from Azure Functions)
+            var metadataJson = await _blobStorage.LoadEpisodeMetadataAsync(feedId);
+            if (metadataJson != null)
+            {
+                var episodes = JsonSerializer.Deserialize<List<Episode>>(metadataJson) ?? [];
+                _episodesByFeed[feedId] = episodes;
+                _logger.LogInformation("Reloaded {Count} episodes for feed {FeedId} from blob storage", episodes.Count, feedId);
+            }
+            else
             {
                 _episodesByFeed[feedId] = [];
             }

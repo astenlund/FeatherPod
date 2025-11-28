@@ -47,8 +47,19 @@ public class NormalizationFunction
     [Function("ProcessNormalizationJob")]
     public async Task ProcessNormalizationJob([QueueTrigger(QueueName, Connection = "AzureWebJobsStorage")] string message, CancellationToken cancellationToken)
     {
-        var job = JsonSerializer.Deserialize<NormalizationJob>(message)
-            ?? throw new InvalidOperationException("Failed to deserialize normalization job");
+        _logger.LogInformation("Queue trigger received message: {MessageLength} chars", message?.Length ?? 0);
+
+        NormalizationJob job;
+        try
+        {
+            job = JsonSerializer.Deserialize<NormalizationJob>(message!)
+                ?? throw new InvalidOperationException("Failed to deserialize normalization job");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to deserialize queue message. Raw message: {Message}", message);
+            throw;
+        }
 
         _logger.LogInformation("Processing normalization job {JobId} for {FeedId}/{FileName}",
             job.JobId, job.FeedId, job.FileName);

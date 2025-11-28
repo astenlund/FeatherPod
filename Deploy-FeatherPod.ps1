@@ -135,7 +135,7 @@ function Deploy-Environment {
             throw "dotnet publish (Server) failed with exit code $LASTEXITCODE"
         }
 
-        Write-Host "Creating deployment package..." -ForegroundColor Cyan
+        Write-Host "`nCreating deployment package..." -ForegroundColor Cyan
         if (Test-Path $zipPath) {
             Remove-Item $zipPath -Force
         }
@@ -149,9 +149,33 @@ function Deploy-Environment {
         }
 
         Write-Host "Deploying to Azure App Service...`n" -ForegroundColor Cyan
-        az webapp deploy --resource-group $ResourceGroup --name $AppName --src-path $zipPath --type zip --clean true
+        az webapp deploy --resource-group $ResourceGroup --name $AppName --src-path $zipPath --type zip --clean true --async true
         if ($LASTEXITCODE -ne 0) {
             throw "az webapp deploy failed with exit code $LASTEXITCODE"
+        }
+
+        # Give the app a moment to start, then verify it's running
+        Write-Host "Waiting for App Service to start..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 30
+        $versionUrl = "https://$AppName.azurewebsites.net/api/version"
+        $maxAttempts = 10
+        $attempt = 0
+        while ($attempt -lt $maxAttempts) {
+            $attempt++
+            try {
+                $response = Invoke-RestMethod -Uri $versionUrl -TimeoutSec 10 -ErrorAction Stop
+                Write-Host "App Service is running: v$($response.version)" -ForegroundColor Green
+                break
+            }
+            catch {
+                if ($attempt -eq $maxAttempts) {
+                    Write-Host "Warning: App Service health check timed out. It may still be starting." -ForegroundColor Yellow
+                }
+                else {
+                    Write-Host "  Attempt $attempt/$maxAttempts - waiting..." -ForegroundColor Gray
+                    Start-Sleep -Seconds 15
+                }
+            }
         }
 
         # 4. Deploy Function App
@@ -164,13 +188,20 @@ function Deploy-Environment {
         Write-Host "Deploying to Azure Function App...`n" -ForegroundColor Cyan
         Push-Location $funcPublishPath
         try {
-            func azure functionapp publish $FunctionAppName
+            func azure functionapp publish $FunctionAppName --dotnet-isolated
             if ($LASTEXITCODE -ne 0) {
                 throw "func azure functionapp publish failed with exit code $LASTEXITCODE"
             }
         }
         finally {
             Pop-Location
+        }
+
+        # Ensure .NET 10 runtime (func CLI defaults to 8.0)
+        Write-Host "Setting Function App runtime to .NET 10..." -ForegroundColor Yellow
+        az functionapp config set --name $FunctionAppName --resource-group $ResourceGroup --net-framework-version v10.0 --output none
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Warning: Failed to set .NET version. Function may use .NET 8." -ForegroundColor Yellow
         }
 
         Write-Host "`nDeployment successful!`n" -ForegroundColor Green
@@ -200,7 +231,7 @@ function Deploy-Environment {
             Write-Host "Removed $funcPublishPath" -ForegroundColor Gray
         }
 
-        Write-Host "`nCleanup complete." -ForegroundColor Green
+        Write-Host "`nCleanup complete.`n" -ForegroundColor Green
     }
 }
 

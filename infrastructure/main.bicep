@@ -211,7 +211,8 @@ resource appServiceTableRoleAssignment 'Microsoft.Authorization/roleAssignments@
   }
 }
 
-// Function App (Consumption Plan)
+// Function App (Consumption Plan - Windows)
+// Windows Consumption avoids Linux/App Service Plan conflicts in same resource group
 resource functionAppPlan 'Microsoft.Web/serverfarms@2023-01-01' = {
   name: '${functionAppName}-plan'
   location: location
@@ -222,7 +223,7 @@ resource functionAppPlan 'Microsoft.Web/serverfarms@2023-01-01' = {
   }
   kind: 'functionapp'
   properties: {
-    reserved: true
+    reserved: false
   }
 }
 
@@ -231,7 +232,7 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
   name: functionAppName
   location: location
   tags: tags
-  kind: 'functionapp,linux'
+  kind: 'functionapp'
   identity: {
     type: 'SystemAssigned'
   }
@@ -239,7 +240,7 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
     serverFarmId: functionAppPlan.id
     httpsOnly: true
     siteConfig: {
-      linuxFxVersion: 'DOTNET-ISOLATED|10.0'
+      netFrameworkVersion: 'v10.0'
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
     }

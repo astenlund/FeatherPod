@@ -29,17 +29,23 @@ public class FFmpegBinaryManager
     /// </summary>
     public static string GetBinaryDirectory()
     {
+        // Azure App Service/Functions: Use HOME directory for persistent storage
+        var websiteName = Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME");
+        if (websiteName != null)
+        {
+            var home = Environment.GetEnvironmentVariable("HOME");
+            if (!string.IsNullOrEmpty(home))
+            {
+                // Windows: D:\home, Linux: /home
+                return Path.Combine(home, ".featherpod", "ffmpeg");
+            }
+        }
+
         if (OperatingSystem.IsWindows())
         {
             var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
             return Path.Combine(localAppData, "FeatherPod", "ffmpeg");
-        }
-
-        // Azure App Service: Use /home for persistent storage (only dir that persists across restarts)
-        if (Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME") != null)
-        {
-            return Path.Combine("/home", ".featherpod", "ffmpeg");
         }
 
         // Linux/macOS: Use XDG Base Directory spec ($XDG_DATA_HOME or ~/.local/share)
@@ -49,9 +55,9 @@ public class FFmpegBinaryManager
             return Path.Combine(xdgDataHome, "FeatherPod", "ffmpeg");
         }
 
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
-        return Path.Combine(home, ".local", "share", "FeatherPod", "ffmpeg");
+        return Path.Combine(userHome, ".local", "share", "FeatherPod", "ffmpeg");
     }
 
     /// <summary>

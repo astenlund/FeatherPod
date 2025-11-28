@@ -128,7 +128,13 @@ public class ApiKeyAuthMiddleware
             }
         }
 
-        // All /api/* endpoints are protected by default
+        // Internal endpoints use their own X-Internal-Key authentication
+        if (path.StartsWith("/api/internal/"))
+        {
+            return false;
+        }
+
+        // All other /api/* endpoints are protected by default
         if (path.StartsWith("/api/"))
         {
             return true;

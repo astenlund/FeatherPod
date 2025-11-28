@@ -25,9 +25,12 @@ public class JobService : IJobService
         var azureConfig = config.GetSection("Azure").Get<AzureStorageConfig>()!;
 
         // Create clients using same auth pattern as BlobStorageService
+        // Disable Base64 encoding so Azure Functions receives plain JSON
+        var queueOptions = new QueueClientOptions { MessageEncoding = QueueMessageEncoding.None };
+
         if (!string.IsNullOrEmpty(azureConfig.ConnectionString))
         {
-            _queueClient = new(azureConfig.ConnectionString, QueueName);
+            _queueClient = new(azureConfig.ConnectionString, QueueName, queueOptions);
             _tableClient = new(azureConfig.ConnectionString, TableName);
             _logger.LogInformation("Using connection string for queue/table storage authentication");
         }
@@ -37,7 +40,7 @@ public class JobService : IJobService
             var queueUri = new Uri($"https://{azureConfig.AccountName}.queue.core.windows.net/{QueueName}");
             var tableUri = new Uri($"https://{azureConfig.AccountName}.table.core.windows.net");
 
-            _queueClient = new(queueUri, credential);
+            _queueClient = new(queueUri, credential, queueOptions);
             _tableClient = new(tableUri, TableName, credential);
             _logger.LogInformation("Using managed identity for queue/table storage authentication");
         }

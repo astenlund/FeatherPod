@@ -184,6 +184,9 @@ internal static class EpisodeHelpers
                 }
             }
 
+            // Track job for async normalization polling (must happen outside Status block)
+            string? pendingJobId = null;
+
             await AnsiConsole.Status()
                 .StartAsync($"Uploading [cyan]{fileName}[/]...", async _ =>
                 {
@@ -238,15 +241,10 @@ internal static class EpisodeHelpers
 
                         if (response.StatusCode == System.Net.HttpStatusCode.Accepted)
                         {
-                            // Async normalization - need to poll for completion
+                            // Async normalization - store job ID for polling outside this block
                             var responseContent = await response.Content.ReadAsStringAsync();
                             var jobStatus = JsonSerializer.Deserialize<JobStatusResponse>(responseContent, JsonOptions);
-
-                            if (jobStatus != null)
-                            {
-                                AnsiConsole.MarkupLine($"[green]✓[/] Uploaded: [cyan]{fileName}[/] (normalizing...)");
-                                success = await PollJobCompletionAsync(httpClient, jobStatus.JobId, fileName);
-                            }
+                            pendingJobId = jobStatus?.JobId;
                         }
                         else if (response.IsSuccessStatusCode)
                         {
@@ -281,6 +279,13 @@ internal static class EpisodeHelpers
                         AnsiConsole.MarkupLine($"[red]✗[/] Error uploading [cyan]{fileName}[/]: {ex.Message}");
                     }
                 });
+
+            // Poll for async normalization completion (outside Status block to avoid nesting)
+            if (pendingJobId != null)
+            {
+                AnsiConsole.MarkupLine($"[green]✓[/] Uploaded: [cyan]{fileName}[/] (normalizing on server...)");
+                success = await PollJobCompletionAsync(httpClient, pendingJobId, fileName);
+            }
 
             return success;
         }

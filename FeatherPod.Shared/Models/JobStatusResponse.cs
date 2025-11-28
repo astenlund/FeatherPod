@@ -41,6 +41,13 @@ public record JobStatusResponse
     public DateTimeOffset? CompletedAt { get; init; }
 
     /// <summary>
+    /// Time taken to process the job, or elapsed time if still processing.
+    /// </summary>
+    public TimeSpan? Duration => QueuedAt.HasValue
+        ? (CompletedAt ?? DateTimeOffset.UtcNow) - QueuedAt.Value
+        : null;
+
+    /// <summary>
     /// Create from a JobStatusEntity.
     /// </summary>
     public static JobStatusResponse FromEntity(JobStatusEntity entity)
