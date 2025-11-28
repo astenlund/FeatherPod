@@ -4,9 +4,10 @@ using FeatherPod.Shared.Models;
 
 namespace FeatherPod.Server.Services;
 
-public sealed class EpisodeService : IDisposable
+public sealed partial class EpisodeService : IDisposable
 {
     private readonly IBlobStorageService _blobStorage;
+    private readonly AudioNormalizationService _normalizationService;
     private readonly ILogger<EpisodeService> _logger;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
@@ -15,9 +16,10 @@ public sealed class EpisodeService : IDisposable
     private FeedsMetadata _feedsMetadata = new();
     private readonly JsonSerializerOptions _jsonSerializerOptions = new() { WriteIndented = true };
 
-    public EpisodeService(IBlobStorageService blobStorage, ILogger<EpisodeService> logger)
+    public EpisodeService(IBlobStorageService blobStorage, AudioNormalizationService normalizationService, ILogger<EpisodeService> logger)
     {
         _blobStorage = blobStorage;
+        _normalizationService = normalizationService;
         _logger = logger;
     }
 
@@ -33,6 +35,7 @@ public sealed class EpisodeService : IDisposable
     public async Task<List<FeedConfig>> GetFeedsAsync()
     {
         await _lock.WaitAsync();
+
         try
         {
             return _feedsMetadata.Feeds.ToList();
@@ -46,6 +49,7 @@ public sealed class EpisodeService : IDisposable
     public async Task<FeedConfig?> GetFeedAsync(string feedId)
     {
         await _lock.WaitAsync();
+
         try
         {
             return _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == feedId);
@@ -59,6 +63,7 @@ public sealed class EpisodeService : IDisposable
     public async Task<FeedConfig> CreateFeedAsync(FeedConfig feedConfig)
     {
         await _lock.WaitAsync();
+
         try
         {
             if (_feedsMetadata.Feeds.Any(f => f.Id == feedConfig.Id))
@@ -87,6 +92,7 @@ public sealed class EpisodeService : IDisposable
     public async Task<FeedConfig> UpdateFeedAsync(string feedId, FeedConfig updatedConfig)
     {
         await _lock.WaitAsync();
+
         try
         {
             var existingIndex = _feedsMetadata.Feeds.FindIndex(f => f.Id == feedId);
@@ -103,7 +109,7 @@ public sealed class EpisodeService : IDisposable
 
             var feeds = _feedsMetadata.Feeds.ToList();
             feeds[existingIndex] = updatedConfig;
-            _feedsMetadata = new FeedsMetadata { Feeds = feeds };
+            _feedsMetadata = new() { Feeds = feeds };
 
             await SaveFeedsAsync();
             _logger.LogInformation("Updated feed: {FeedId}", feedId);
@@ -119,6 +125,7 @@ public sealed class EpisodeService : IDisposable
     public async Task RenameFeedAsync(string oldFeedId, string newFeedId)
     {
         await _lock.WaitAsync();
+
         try
         {
             var feed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == oldFeedId);
@@ -138,7 +145,7 @@ public sealed class EpisodeService : IDisposable
             // Update feed config
             var updatedFeed = feed with { Id = newFeedId };
             var feeds = _feedsMetadata.Feeds.Where(f => f.Id != oldFeedId).Append(updatedFeed).ToList();
-            _feedsMetadata = new FeedsMetadata { Feeds = feeds };
+            _feedsMetadata = new() { Feeds = feeds };
 
             // Update episodes in memory
             if (_episodesByFeed.TryGetValue(oldFeedId, out var episodes))
@@ -150,6 +157,7 @@ public sealed class EpisodeService : IDisposable
             }
 
             await SaveFeedsAsync();
+
             _logger.LogInformation("Renamed feed: {OldId} → {NewId}", oldFeedId, newFeedId);
         }
         finally
@@ -161,6 +169,7 @@ public sealed class EpisodeService : IDisposable
     public async Task DeleteFeedAsync(string feedId)
     {
         await _lock.WaitAsync();
+
         try
         {
             var feed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == feedId);
@@ -182,6 +191,7 @@ public sealed class EpisodeService : IDisposable
             _episodesByFeed.Remove(feedId);
 
             await SaveFeedsAsync();
+
             _logger.LogInformation("Deleted feed: {FeedId}", feedId);
         }
         finally
@@ -195,6 +205,7 @@ public sealed class EpisodeService : IDisposable
     public async Task<List<Episode>> GetAllEpisodesAsync(string feedId)
     {
         await _lock.WaitAsync();
+
         try
         {
             return !_episodesByFeed.TryGetValue(feedId, out var value)
@@ -210,6 +221,7 @@ public sealed class EpisodeService : IDisposable
     public async Task<Episode?> GetEpisodeByIdAsync(string feedId, string id)
     {
         await _lock.WaitAsync();
+
         try
         {
             return !_episodesByFeed.TryGetValue(feedId, out var value)
@@ -228,11 +240,14 @@ public sealed class EpisodeService : IDisposable
         string? title = null,
         string? description = null,
         string? summary = null,
-        DateTime? publishedDate = null)
+        DateTime? publishedDate = null,
+        bool normalize = false)
     {
         var fileInfo = new FileInfo(filePath);
         if (!fileInfo.Exists)
+        {
             throw new FileNotFoundException("Audio file not found", filePath);
+        }
 
         // Verify feed exists
         var feed = await GetFeedAsync(feedId);
@@ -242,78 +257,120 @@ public sealed class EpisodeService : IDisposable
         }
 
         var fileName = fileInfo.Name;
-        var fileSize = fileInfo.Length;
-        var id = Episode.GenerateId(feedId, fileName, fileSize);
+        string? normalizedTempFile = null;
 
-        await _lock.WaitAsync();
         try
         {
-            // Initialize episode list for feed if doesn't exist
-            if (!_episodesByFeed.TryGetValue(feedId, out var value))
+            // Normalize audio if requested
+            var fileToUpload = filePath;
+            if (normalize)
             {
-                value = [];
-                _episodesByFeed[feedId] = value;
+                _logger.LogInformation("Normalizing audio for {FileName}", fileName);
+
+                normalizedTempFile = await _normalizationService.NormalizeAudioAsync(filePath);
+
+                fileToUpload = normalizedTempFile ?? throw new InvalidOperationException(
+                    $"Audio normalization failed for '{fileName}'. " +
+                    "Retry with ?normalize=false to upload without normalization.");
+
+                _logger.LogInformation("Audio normalized successfully for {FileName}", fileName);
             }
 
-            // Check if episode already exists
-            var existing = value.FirstOrDefault(e => e.Id == id);
-            if (existing != null)
+            // Get file info from the file we're actually uploading (may be normalized)
+            var uploadFileInfo = new FileInfo(fileToUpload);
+            var fileSize = uploadFileInfo.Length;
+            var id = Episode.GenerateId(feedId, fileName, fileSize);
+
+            await _lock.WaitAsync();
+            try
             {
-                _logger.LogInformation("Episode with ID {Id} already exists in feed {FeedId}, replacing with new upload", id, feedId);
-                value.Remove(existing);
+                // Initialize episode list for feed if doesn't exist
+                if (!_episodesByFeed.TryGetValue(feedId, out var value))
+                {
+                    value = [];
+                    _episodesByFeed[feedId] = value;
+                }
+
+                // Check if episode already exists
+                var existing = value.FirstOrDefault(e => e.Id == id);
+                if (existing != null)
+                {
+                    _logger.LogInformation("Episode with ID {Id} already exists in feed {FeedId}, replacing with new upload", id, feedId);
+                    value.Remove(existing);
+                }
+
+                var duration = GetAudioDuration(fileToUpload);
+
+                // Determine published date
+                DateTime finalPublishedDate;
+                if (publishedDate.HasValue)
+                {
+                    finalPublishedDate = publishedDate.Value;
+                    _logger.LogDebug("Using explicitly provided published date for {File}: {Date}", fileName, finalPublishedDate);
+                }
+                else if (feed.UseFileMetadataForPublishDate)
+                {
+                    // Use original file for metadata extraction (before normalization)
+                    finalPublishedDate = GetPublishedDate(filePath);
+                    _logger.LogDebug("Using file metadata (config) for published date for {File}: {Date}", fileName, finalPublishedDate);
+                }
+                else
+                {
+                    finalPublishedDate = DateTime.UtcNow;
+                    _logger.LogDebug("Using current time for published date for {File}: {Date}", fileName, finalPublishedDate);
+                }
+
+                // Upload audio file to blob storage (normalized or original)
+                await _blobStorage.UploadAudioAsync(feedId, fileName, fileToUpload);
+
+                // Create episode
+                var episode = new Episode
+                {
+                    Id = id,
+                    FeedId = feedId,
+                    Title = title ?? ParseTitleFromFilename(fileName),
+                    Description = description,
+                    Summary = summary,
+                    FileName = fileName,
+                    FileSize = fileSize,
+                    Duration = duration,
+                    PublishedDate = finalPublishedDate
+                };
+
+                value.Add(episode);
+
+                await SaveEpisodesAsync(feedId);
+
+                _logger.LogInformation("Added episode to feed {FeedId}: {Title} ({FileName})", feedId, episode.Title, fileName);
+
+                return episode;
             }
-
-            var duration = GetAudioDuration(filePath);
-
-            // Determine published date
-            DateTime finalPublishedDate;
-            if (publishedDate.HasValue)
+            finally
             {
-                finalPublishedDate = publishedDate.Value;
-                _logger.LogDebug("Using explicitly provided published date for {File}: {Date}", fileName, finalPublishedDate);
+                _lock.Release();
             }
-            else if (feed.UseFileMetadataForPublishDate)
-            {
-                finalPublishedDate = GetPublishedDate(filePath);
-                _logger.LogDebug("Using file metadata (config) for published date for {File}: {Date}", fileName, finalPublishedDate);
-            }
-            else
-            {
-                finalPublishedDate = DateTime.UtcNow;
-                _logger.LogDebug("Using current time for published date for {File}: {Date}", fileName, finalPublishedDate);
-            }
-
-            // Upload audio file to blob storage
-            await _blobStorage.UploadAudioAsync(feedId, fileName, filePath);
-
-            // Create episode
-            var episode = new Episode
-            {
-                Id = id,
-                FeedId = feedId,
-                Title = title ?? ParseTitleFromFilename(fileName),
-                Description = description,
-                Summary = summary,
-                FileName = fileName,
-                FileSize = fileSize,
-                Duration = duration,
-                PublishedDate = finalPublishedDate
-            };
-            value.Add(episode);
-            await SaveEpisodesAsync(feedId);
-
-            _logger.LogInformation("Added episode to feed {FeedId}: {Title} ({FileName})", feedId, episode.Title, fileName);
-            return episode;
         }
         finally
         {
-            _lock.Release();
+            // Clean up normalized temp file
+            if (normalizedTempFile != null && File.Exists(normalizedTempFile))
+            {
+                try
+                {
+                    File.Delete(normalizedTempFile);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to cleanup normalized temp file: {Path}", normalizedTempFile);
+                }
+            }
         }
     }
 
     public async Task<bool> DeleteEpisodeAsync(string feedId, string id)
     {
         await _lock.WaitAsync();
+
         try
         {
             if (!_episodesByFeed.TryGetValue(feedId, out var value))
@@ -335,6 +392,7 @@ public sealed class EpisodeService : IDisposable
             await SaveEpisodesAsync(feedId);
 
             _logger.LogInformation("Deleted episode from feed {FeedId}: {Title}", feedId, episode.Title);
+
             return true;
         }
         finally
@@ -346,6 +404,7 @@ public sealed class EpisodeService : IDisposable
     public async Task<Episode> MoveEpisodeAsync(string episodeId, string sourceFeedId, string targetFeedId)
     {
         await _lock.WaitAsync();
+
         try
         {
             // Verify both feeds exist
@@ -388,6 +447,7 @@ public sealed class EpisodeService : IDisposable
             await SaveEpisodesAsync(targetFeedId);
 
             _logger.LogInformation("Moved episode {Id} from feed {Source} to {Target}", episodeId, sourceFeedId, targetFeedId);
+
             return movedEpisode;
         }
         finally
@@ -399,6 +459,7 @@ public sealed class EpisodeService : IDisposable
     public async Task<Episode> CopyEpisodeAsync(string episodeId, string sourceFeedId, string targetFeedId)
     {
         await _lock.WaitAsync();
+
         try
         {
             // Verify both feeds exist
@@ -438,6 +499,7 @@ public sealed class EpisodeService : IDisposable
             await SaveEpisodesAsync(targetFeedId);
 
             _logger.LogInformation("Copied episode {Id} from feed {Source} to {Target}", episodeId, sourceFeedId, targetFeedId);
+
             return copiedEpisode;
         }
         finally
@@ -449,6 +511,7 @@ public sealed class EpisodeService : IDisposable
     public async Task SyncWithBlobStorageAsync(string feedId)
     {
         await _lock.WaitAsync();
+
         try
         {
             if (!_episodesByFeed.ContainsKey(feedId))
@@ -501,6 +564,7 @@ public sealed class EpisodeService : IDisposable
     private async Task SaveFeedsAsync()
     {
         var json = JsonSerializer.Serialize(_feedsMetadata, _jsonSerializerOptions);
+
         await _blobStorage.SaveFeedsConfigAsync(json);
     }
 
@@ -530,6 +594,7 @@ public sealed class EpisodeService : IDisposable
         }
 
         var json = JsonSerializer.Serialize(value, _jsonSerializerOptions);
+
         await _blobStorage.SaveEpisodeMetadataAsync(feedId, json);
     }
 
@@ -546,11 +611,13 @@ public sealed class EpisodeService : IDisposable
         try
         {
             using var file = TagLib.File.Create(filePath);
+
             return file.Properties.Duration;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to read audio duration from {FilePath}, using 0:00", filePath);
+
             return TimeSpan.Zero;
         }
     }
@@ -565,6 +632,7 @@ public sealed class EpisodeService : IDisposable
             if (file.Tag.DateTagged.HasValue)
             {
                 _logger.LogInformation("Using DateTagged from audio metadata: {Date}", file.Tag.DateTagged.Value);
+
                 return file.Tag.DateTagged.Value.ToUniversalTime();
             }
 
@@ -576,16 +644,19 @@ public sealed class EpisodeService : IDisposable
                 if (creationTime.HasValue)
                 {
                     _logger.LogInformation("Using MP4 container creation time: {Date}", creationTime.Value);
+
                     return creationTime.Value;
                 }
             }
 
             _logger.LogDebug("No metadata date found for {FilePath}, using current time", filePath);
+
             return DateTime.UtcNow;
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Failed to read published date from {FilePath}, using current time", filePath);
+
             return DateTime.UtcNow;
         }
     }
@@ -597,10 +668,10 @@ public sealed class EpisodeService : IDisposable
 
         // Handle PascalCase: Insert space before uppercase letters that follow lowercase letters
         // But preserve sequences like "2D", "3D", "4K" (digit followed by uppercase)
-        title = Regex.Replace(title, "(?<![A-Z0-9])(?=[A-Z])", " ");
+        title = PascalRegex().Replace(title, " ");
 
         // Collapse multiple spaces into single space
-        title = Regex.Replace(title, @"\s+", " ");
+        title = SpaceRegex().Replace(title, " ");
 
         return title.Trim();
     }
@@ -609,4 +680,10 @@ public sealed class EpisodeService : IDisposable
     {
         _lock.Dispose();
     }
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex SpaceRegex();
+
+    [GeneratedRegex("(?<![A-Z0-9])(?=[A-Z])")]
+    private static partial Regex PascalRegex();
 }

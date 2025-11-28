@@ -1,4 +1,5 @@
 using FeatherPod.Shared.Models;
+using FeatherPod.Shared.Services;
 using FeatherPod.Server.Services;
 using Microsoft.Extensions.Logging;
 
@@ -8,6 +9,7 @@ namespace FeatherPod.Tests;
 public class EpisodeServiceTests : IDisposable
 {
     private readonly string _testDirectory;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<EpisodeService> _logger;
     private const string TestFeedId = "test-feed";
 
@@ -21,12 +23,12 @@ public class EpisodeServiceTests : IDisposable
         Directory.CreateDirectory(_testDirectory);
 
         // Create logger that suppresses warnings from test dummy files
-        var loggerFactory = LoggerFactory.Create(builder =>
+        _loggerFactory = LoggerFactory.Create(builder =>
         {
             builder.SetMinimumLevel(LogLevel.Error); // Only show errors and above
         });
 
-        _logger = loggerFactory.CreateLogger<EpisodeService>();
+        _logger = _loggerFactory.CreateLogger<EpisodeService>();
     }
 
     private EpisodeService CreateService()
@@ -34,8 +36,13 @@ public class EpisodeServiceTests : IDisposable
         var blobStorage = new TestBlobStorageService(_testDirectory);
         _blobServicesToDispose.Add(blobStorage);
 
-        var service = new EpisodeService(blobStorage, _logger);
+        // Create normalization service (won't be used in these tests since normalize=false by default)
+        var ffmpegBinaryManager = new FFmpegBinaryManager(_loggerFactory.CreateLogger<FFmpegBinaryManager>());
+        var normalizationService = new AudioNormalizationService(ffmpegBinaryManager, _loggerFactory.CreateLogger<AudioNormalizationService>());
+
+        var service = new EpisodeService(blobStorage, normalizationService, _logger);
         _servicesToDispose.Add(service);
+
         return service;
     }
 
