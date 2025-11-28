@@ -27,6 +27,7 @@ public class NormalizationFunction
     private const string TableName = "normalizationjobs";
     private const string QueueName = "normalization-jobs";
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan ProgressUpdateThrottle = TimeSpan.FromSeconds(1);
 
     public NormalizationFunction(
         BlobServiceClient blobClient,
@@ -81,15 +82,46 @@ public class NormalizationFunction
         try
         {
             // Download pending blob to temp file
+            await UpdateProgressAsync(tableClient, job.JobId, new()
+            {
+                Stage = NormalizationStage.Downloading,
+                ProgressPercent = 0,
+                Message = "Downloading audio file"
+            });
+
             var pendingBlob = containerClient.GetBlobClient(pendingBlobPath);
             tempInputFile = Path.Combine(Path.GetTempPath(), $"{job.JobId}_{job.FileName}");
 
             _logger.LogDebug("Downloading pending blob to {TempFile}", tempInputFile);
             await pendingBlob.DownloadToAsync(tempInputFile, cancellationToken);
 
-            // Normalize audio
+            await UpdateProgressAsync(tableClient, job.JobId, new()
+            {
+                Stage = NormalizationStage.Downloading,
+                ProgressPercent = 100,
+                Message = "Download complete"
+            });
+
+            // Normalize audio with progress callback
             _logger.LogInformation("Starting normalization for {FileName}", job.FileName);
-            normalizedFile = await _normalizationService.NormalizeAudioAsync(tempInputFile, progressCallback: null, cancellationToken);
+            var lastProgressUpdate = DateTime.MinValue;
+
+            normalizedFile = await _normalizationService.NormalizeAudioAsync(
+                tempInputFile,
+                progressCallback: progress =>
+                {
+                    // Throttle updates to once per second
+                    var now = DateTime.UtcNow;
+                    if (now - lastProgressUpdate < ProgressUpdateThrottle)
+                    {
+                        return;
+                    }
+                    lastProgressUpdate = now;
+
+                    // Fire-and-forget progress update
+                    _ = UpdateProgressAsync(tableClient, job.JobId, progress);
+                },
+                cancellationToken);
 
             if (normalizedFile == null)
             {
@@ -101,12 +133,26 @@ public class NormalizationFunction
             var duration = mediaInfo.Duration;
 
             // Upload normalized file to final location
+            await UpdateProgressAsync(tableClient, job.JobId, new()
+            {
+                Stage = NormalizationStage.Uploading,
+                ProgressPercent = 0,
+                Message = "Uploading normalized file"
+            });
+
             _logger.LogDebug("Uploading normalized file to {FinalPath}", finalBlobPath);
             var finalBlob = containerClient.GetBlobClient(finalBlobPath);
             await using (var stream = File.OpenRead(normalizedFile))
             {
                 await finalBlob.UploadAsync(stream, overwrite: true, cancellationToken);
             }
+
+            await UpdateProgressAsync(tableClient, job.JobId, new()
+            {
+                Stage = NormalizationStage.Uploading,
+                ProgressPercent = 100,
+                Message = "Upload complete"
+            });
 
             // Get the file size of the normalized file for the episode
             var normalizedFileSize = new FileInfo(normalizedFile).Length;
@@ -126,9 +172,23 @@ public class NormalizationFunction
             };
 
             // Update episodes.json with lease for concurrency safety
+            await UpdateProgressAsync(tableClient, job.JobId, new()
+            {
+                Stage = NormalizationStage.Finalizing,
+                ProgressPercent = 0,
+                Message = "Updating feed metadata"
+            });
+
             await AddEpisodeToFeedAsync(containerClient, episodesJsonPath, episode, _logger, cancellationToken);
 
             // Update job status to Completed
+            await UpdateProgressAsync(tableClient, job.JobId, new()
+            {
+                Stage = NormalizationStage.Completed,
+                ProgressPercent = 100,
+                Message = "Normalization complete"
+            });
+
             await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Completed,
                 episodeId: job.EpisodeId, cancellationToken: cancellationToken);
 
@@ -241,6 +301,55 @@ public class NormalizationFunction
         }
 
         await tableClient.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
+    }
+
+    private async Task UpdateProgressAsync(
+        TableClient tableClient,
+        string jobId,
+        ProgressUpdate progress)
+    {
+        try
+        {
+            // Read existing entity to preserve QueuedAt and other fields
+            var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId);
+            var entity = existingResponse.Value;
+
+            // Update progress fields
+            entity.Stage = progress.Stage.ToString();
+            entity.ProgressPercent = progress.ProgressPercent;
+            entity.ProgressMessage = progress.Message;
+            entity.CurrentPositionMs = progress.CurrentPosition.HasValue ? (long)progress.CurrentPosition.Value.TotalMilliseconds : null;
+            entity.TotalDurationMs = progress.TotalDuration.HasValue ? (long)progress.TotalDuration.Value.TotalMilliseconds : null;
+
+            // Update Status based on stage
+            entity.Status = progress.Stage switch
+            {
+                NormalizationStage.Completed => nameof(JobStatus.Completed),
+                NormalizationStage.Failed => nameof(JobStatus.Failed),
+                NormalizationStage.Queued => nameof(JobStatus.Queued),
+                _ => nameof(JobStatus.Processing)
+            };
+
+            if (progress.Stage is NormalizationStage.Completed or NormalizationStage.Failed)
+            {
+                entity.CompletedAt = DateTimeOffset.UtcNow;
+            }
+
+            await tableClient.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 412)
+        {
+            // ETag conflict - entity was modified concurrently, ignore and continue
+            _logger.LogDebug("Progress update conflict for job {JobId}, will retry on next update", jobId);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 429)
+        {
+            // Throttled - ignore silently, next update will succeed
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to update progress for job {JobId}", jobId);
+        }
     }
 
     /// <summary>
