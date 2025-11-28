@@ -23,6 +23,7 @@ TestResults/
 
 # Local settings files (API keys, secrets)
 *.Local.json
+infrastructure/parameters.secrets.json
 
 # Episode data (customize as needed)
 Episodes/
