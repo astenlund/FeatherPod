@@ -7,7 +7,7 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 - **Multi-feed support** - Host multiple podcast feeds from a single instance
 - **Role-based access control** - Admin and FeedOwner roles with per-user API keys
 - **User management** - Create users, manage permissions, and assign feed ownership via API and CLI
-- **Audio normalization** - Loudness normalization (-16 LUFS) via FFmpeg, locally or server-side (`-n` flag)
+- **Audio normalization** - Loudness normalization (-16 LUFS) via FFmpeg, locally or server-side (async via Azure Functions)
 - **Azure Blob Storage** - Scalable cloud storage for audio files
 - **RSS podcast feeds** - iTunes spec compatible with per-feed configuration
 - **CLI tool** - Command-line interface for episode, icon, feed, and user management
@@ -113,7 +113,7 @@ curl -X POST https://<your-app>.azurewebsites.net/api/feeds/{feedId}/episodes \
 - `description` - Full description for RSS feed
 - `summary` - Short summary for iTunes (defaults to description if not provided)
 - `publishedDate` - Set explicit date (ISO 8601 format)
-- `normalize=true` (query param) - Server-side audio normalization to -16 LUFS
+- `normalize=true` (query param) - Async server-side audio normalization to -16 LUFS (returns 202 with job ID)
 
 ### Removing Episodes
 
@@ -168,10 +168,16 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
 | `/api/feeds/{feedId}/episodes` | GET | Admin/Owner | List episodes for feed |
-| `/api/feeds/{feedId}/episodes` | POST | Admin/Owner | Upload episode (`?normalize=true` for server normalization) |
+| `/api/feeds/{feedId}/episodes` | POST | Admin/Owner | Upload episode (201), or with `?normalize=true` for async normalization (202) |
 | `/api/feeds/{feedId}/episodes/{id}` | DELETE | Admin/Owner | Delete episode |
 | `/api/feeds/{feedId}/episodes/{id}/move` | POST | Admin/Owner | Move episode between feeds |
 | `/api/feeds/{feedId}/episodes/{id}/copy` | POST | Admin/Owner | Copy episode between feeds |
+
+### Job Status (Async Normalization)
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/jobs/{jobId}` | GET | Any | Get normalization job status (Queued/Processing/Completed/Failed) |
 
 ### Icon Management
 
@@ -307,9 +313,11 @@ dotnet test           # Run tests (starts integration tests if Azurite is runnin
 ## Architecture
 
 - **.NET 10 ASP.NET Core** - Controllers-based REST API
+- **Azure Functions** - Queue-triggered async audio normalization
 - **Multi-feed** - Single instance, multiple isolated feeds
 - **Role-based access** - Admin and FeedOwner roles with per-user API keys
 - **Azure Blob Storage** - Managed Identity support, hash-based episode IDs
+- **Azure Queue/Table Storage** - Job queuing and status tracking for async operations
 - **Range requests** - Seeking/resuming in podcast apps
 
 **Supported formats:** MP3, M4A, AAC, WAV, OGG, FLAC
