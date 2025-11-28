@@ -146,7 +146,7 @@ public class EpisodesController : ControllerBase
             }
 
             // Synchronous upload (no normalization)
-            var episode = await _episodeService.AddEpisodeAsync(feedId, tempPath, title, description, summary, publishedDate, normalize: false, HttpContext.RequestAborted);
+            var episode = await _episodeService.AddEpisodeAsync(feedId, tempPath, title, description, summary, publishedDate, HttpContext.RequestAborted);
             var episodeWithUrl = episode with { Url = episode.GetAudioUrl(_baseUrl) };
 
             return CreatedAtAction(nameof(ListEpisodes), new { feedId }, episodeWithUrl);

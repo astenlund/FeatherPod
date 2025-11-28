@@ -1,14 +1,12 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using FeatherPod.Shared.Models;
-using FeatherPod.Shared.Services;
 
 namespace FeatherPod.Server.Services;
 
 public sealed partial class EpisodeService : IDisposable
 {
     private readonly IBlobStorageService _blobStorage;
-    private readonly IAudioNormalizationService _normalizationService;
     private readonly ILogger<EpisodeService> _logger;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
@@ -17,10 +15,9 @@ public sealed partial class EpisodeService : IDisposable
     private FeedsMetadata _feedsMetadata = new();
     private readonly JsonSerializerOptions _jsonSerializerOptions = new() { WriteIndented = true };
 
-    public EpisodeService(IBlobStorageService blobStorage, IAudioNormalizationService normalizationService, ILogger<EpisodeService> logger)
+    public EpisodeService(IBlobStorageService blobStorage, ILogger<EpisodeService> logger)
     {
         _blobStorage = blobStorage;
-        _normalizationService = normalizationService;
         _logger = logger;
     }
 
@@ -242,7 +239,6 @@ public sealed partial class EpisodeService : IDisposable
         string? description = null,
         string? summary = null,
         DateTime? publishedDate = null,
-        bool normalize = false,
         CancellationToken cancellationToken = default)
     {
         var fileInfo = new FileInfo(filePath);
@@ -251,7 +247,6 @@ public sealed partial class EpisodeService : IDisposable
             throw new FileNotFoundException("Audio file not found", filePath);
         }
 
-        // Verify feed exists
         var feed = await GetFeedAsync(feedId);
         if (feed == null)
         {
@@ -259,115 +254,68 @@ public sealed partial class EpisodeService : IDisposable
         }
 
         var fileName = fileInfo.Name;
-        string? normalizedTempFile = null;
+        var id = Episode.GenerateId(feedId, fileName, fileInfo.Length);
 
+        await _lock.WaitAsync();
         try
         {
-            // Normalize audio if requested
-            var fileToUpload = filePath;
-            if (normalize)
+            if (!_episodesByFeed.TryGetValue(feedId, out var episodes))
             {
-                _logger.LogInformation("Normalizing audio for {FileName}", fileName);
-
-                normalizedTempFile = await _normalizationService.NormalizeAudioAsync(filePath, cancellationToken);
-
-                fileToUpload = normalizedTempFile ?? throw new InvalidOperationException(
-                    $"Audio normalization failed for '{fileName}'. " +
-                    "Retry with ?normalize=false to upload without normalization.");
-
-                _logger.LogInformation("Audio normalized successfully for {FileName}", fileName);
+                episodes = [];
+                _episodesByFeed[feedId] = episodes;
             }
 
-            // Use original file size for ID (ensures same source file → same ID regardless of normalization)
-            var id = Episode.GenerateId(feedId, fileName, fileInfo.Length);
-
-            // Use actual upload file size for Episode.FileSize (what will be downloaded)
-            var uploadFileInfo = new FileInfo(fileToUpload);
-            var fileSize = uploadFileInfo.Length;
-
-            await _lock.WaitAsync();
-            try
+            var existingEpisode = episodes.FirstOrDefault(e => e.Id == id);
+            if (existingEpisode != null)
             {
-                // Initialize episode list for feed if doesn't exist
-                if (!_episodesByFeed.TryGetValue(feedId, out var value))
-                {
-                    value = [];
-                    _episodesByFeed[feedId] = value;
-                }
-
-                // Check if episode already exists
-                var existing = value.FirstOrDefault(e => e.Id == id);
-                if (existing != null)
-                {
-                    _logger.LogInformation("Episode with ID {Id} already exists in feed {FeedId}, replacing with new upload", id, feedId);
-                    value.Remove(existing);
-                }
-
-                var duration = GetAudioDuration(fileToUpload);
-
-                // Determine published date
-                DateTime finalPublishedDate;
-                if (publishedDate.HasValue)
-                {
-                    finalPublishedDate = publishedDate.Value;
-                    _logger.LogDebug("Using explicitly provided published date for {File}: {Date}", fileName, finalPublishedDate);
-                }
-                else if (feed.UseFileMetadataForPublishDate)
-                {
-                    // Use original file for metadata extraction (before normalization)
-                    finalPublishedDate = GetPublishedDate(filePath);
-                    _logger.LogDebug("Using file metadata (config) for published date for {File}: {Date}", fileName, finalPublishedDate);
-                }
-                else
-                {
-                    finalPublishedDate = DateTime.UtcNow;
-                    _logger.LogDebug("Using current time for published date for {File}: {Date}", fileName, finalPublishedDate);
-                }
-
-                // Upload audio file to blob storage (normalized or original)
-                await _blobStorage.UploadAudioAsync(feedId, fileName, fileToUpload);
-
-                // Create episode
-                var episode = new Episode
-                {
-                    Id = id,
-                    FeedId = feedId,
-                    Title = title ?? ParseTitleFromFilename(fileName),
-                    Description = description,
-                    Summary = summary,
-                    FileName = fileName,
-                    FileSize = fileSize,
-                    Duration = duration,
-                    PublishedDate = finalPublishedDate
-                };
-
-                value.Add(episode);
-
-                await SaveEpisodesAsync(feedId);
-
-                _logger.LogInformation("Added episode to feed {FeedId}: {Title} ({FileName})", feedId, episode.Title, fileName);
-
-                return episode;
+                _logger.LogInformation("Episode with ID {Id} already exists in feed {FeedId}, replacing with new upload", id, feedId);
+                episodes.Remove(existingEpisode);
             }
-            finally
+
+            var duration = GetAudioDuration(filePath);
+
+            DateTime finalPublishedDate;
+            if (publishedDate.HasValue)
             {
-                _lock.Release();
+                finalPublishedDate = publishedDate.Value;
+                _logger.LogDebug("Using explicitly provided published date for {File}: {Date}", fileName, finalPublishedDate);
             }
+            else if (feed.UseFileMetadataForPublishDate)
+            {
+                finalPublishedDate = GetPublishedDate(filePath);
+                _logger.LogDebug("Using file metadata (config) for published date for {File}: {Date}", fileName, finalPublishedDate);
+            }
+            else
+            {
+                finalPublishedDate = DateTime.UtcNow;
+                _logger.LogDebug("Using current time for published date for {File}: {Date}", fileName, finalPublishedDate);
+            }
+
+            await _blobStorage.UploadAudioAsync(feedId, fileName, filePath);
+
+            var episode = new Episode
+            {
+                Id = id,
+                FeedId = feedId,
+                Title = title ?? ParseTitleFromFilename(fileName),
+                Description = description,
+                Summary = summary,
+                FileName = fileName,
+                FileSize = fileInfo.Length,
+                Duration = duration,
+                PublishedDate = finalPublishedDate
+            };
+
+            episodes.Add(episode);
+            await SaveEpisodesAsync(feedId);
+
+            _logger.LogInformation("Added episode to feed {FeedId}: {Title} ({FileName})", feedId, episode.Title, fileName);
+
+            return episode;
         }
         finally
         {
-            // Clean up normalized temp file
-            if (normalizedTempFile != null && File.Exists(normalizedTempFile))
-            {
-                try
-                {
-                    File.Delete(normalizedTempFile);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Failed to cleanup normalized temp file: {Path}", normalizedTempFile);
-                }
-            }
+            _lock.Release();
         }
     }
 

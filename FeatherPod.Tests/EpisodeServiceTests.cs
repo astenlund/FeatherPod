@@ -1,5 +1,4 @@
 using FeatherPod.Shared.Models;
-using FeatherPod.Shared.Services;
 using FeatherPod.Server.Services;
 using Microsoft.Extensions.Logging;
 
@@ -36,11 +35,7 @@ public class EpisodeServiceTests : IDisposable
         var blobStorage = new TestBlobStorageService(_testDirectory);
         _blobServicesToDispose.Add(blobStorage);
 
-        // Create normalization service (won't be used in these tests since normalize=false by default)
-        var ffmpegBinaryManager = new FFmpegBinaryManager(_loggerFactory.CreateLogger<FFmpegBinaryManager>());
-        var normalizationService = new AudioNormalizationService(ffmpegBinaryManager, _loggerFactory.CreateLogger<AudioNormalizationService>());
-
-        var service = new EpisodeService(blobStorage, normalizationService, _logger);
+        var service = new EpisodeService(blobStorage, _logger);
         _servicesToDispose.Add(service);
 
         return service;

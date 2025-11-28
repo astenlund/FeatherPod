@@ -3,7 +3,6 @@ using FeatherPod.Server.Middleware;
 using FeatherPod.Server.Services;
 using FeatherPod.Server.Validation;
 using FeatherPod.Shared;
-using FeatherPod.Shared.Services;
 
 const long MaxUploadSizeBytes = 500 * 1024 * 1024; // 500 MB
 
@@ -31,8 +30,6 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(optio
 
 // Add services
 builder.Services.AddSingleton<IBlobStorageService, BlobStorageService>();
-builder.Services.AddSingleton<FFmpegBinaryManager>();
-builder.Services.AddSingleton<IAudioNormalizationService, AudioNormalizationService>();
 builder.Services.AddSingleton<EpisodeService>();
 builder.Services.AddSingleton<IUserService, UserService>();
 builder.Services.AddSingleton<IJobService, JobService>();
