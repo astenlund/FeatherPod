@@ -45,7 +45,7 @@ public class NormalizationFunction
     }
 
     [Function("ProcessNormalizationJob")]
-    public async Task ProcessNormalizationJob([QueueTrigger(QueueName, Connection = "AzureWebJobsStorage")] string message, CancellationToken cancellationToken)
+    public async Task ProcessNormalizationJob([QueueTrigger(QueueName, Connection = "AzureWebJobsStorage")] string? message, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Queue trigger received message: {MessageLength} chars", message?.Length ?? 0);
 
@@ -89,7 +89,7 @@ public class NormalizationFunction
 
             // Normalize audio
             _logger.LogInformation("Starting normalization for {FileName}", job.FileName);
-            normalizedFile = await _normalizationService.NormalizeAudioAsync(tempInputFile, cancellationToken);
+            normalizedFile = await _normalizationService.NormalizeAudioAsync(tempInputFile, progressCallback: null, cancellationToken);
 
             if (normalizedFile == null)
             {
@@ -212,7 +212,7 @@ public class NormalizationFunction
         CancellationToken cancellationToken = default)
     {
         // Read existing entity to preserve QueuedAt
-        DateTimeOffset? queuedAt = null;
+        DateTimeOffset? queuedAt;
         try
         {
             var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
@@ -267,7 +267,7 @@ public class NormalizationFunction
                 if (!await blob.ExistsAsync(cancellationToken))
                 {
                     // Create empty episodes.json if it doesn't exist
-                    await blob.UploadAsync(BinaryData.FromString("[]"), overwrite: false, cancellationToken: cancellationToken);
+                    await blob.UploadAsync(BinaryData.FromString("[]"), overwrite: false, cancellationToken);
                 }
 
                 // Acquire lease for exclusive access

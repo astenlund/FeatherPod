@@ -53,9 +53,10 @@ public partial class AudioNormalizationService : IAudioNormalizationService
     /// Uses two-pass processing for accurate EBU R128 normalization.
     /// </summary>
     /// <param name="inputPath">Path to the input audio file</param>
+    /// <param name="progressCallback">Optional callback for progress updates</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Path to the normalized temporary file, or null if normalization fails</returns>
-    public async Task<string?> NormalizeAudioAsync(string inputPath, CancellationToken cancellationToken = default)
+    public async Task<string?> NormalizeAudioAsync(string inputPath, Action<ProgressUpdate>? progressCallback = null, CancellationToken cancellationToken = default)
     {
         if (!await EnsureFFmpegAvailableAsync())
         {
@@ -66,6 +67,10 @@ public partial class AudioNormalizationService : IAudioNormalizationService
 
         var fileName = Path.GetFileName(inputPath);
         _logger.LogInformation("Starting audio normalization for {FileName}", fileName);
+
+        // Probe duration for progress tracking
+        var totalDuration = await GetAudioDurationAsync(inputPath);
+        _logger.LogDebug("Audio duration: {Duration}", totalDuration);
 
         // Create temp file for normalized audio
         var tempDir = Path.Combine(Path.GetTempPath(), "FeatherPod");
@@ -78,7 +83,7 @@ public partial class AudioNormalizationService : IAudioNormalizationService
         {
             // Pass 1: Analyze loudness
             _logger.LogDebug("Pass 1: Analyzing loudness for {FileName}", fileName);
-            var analysis = await AnalyzeLoudnessAsync(inputPath, cancellationToken);
+            var analysis = await AnalyzeLoudnessAsync(inputPath, totalDuration, progressCallback, cancellationToken);
 
             if (analysis == null)
             {
@@ -92,7 +97,7 @@ public partial class AudioNormalizationService : IAudioNormalizationService
 
             // Pass 2: Apply normalization with measured values
             _logger.LogDebug("Pass 2: Applying normalization for {FileName}", fileName);
-            var success = await ApplyNormalizationAsync(inputPath, tempFile, analysis, cancellationToken);
+            var success = await ApplyNormalizationAsync(inputPath, tempFile, analysis, totalDuration, progressCallback, cancellationToken);
 
             if (!success)
             {
@@ -123,12 +128,33 @@ public partial class AudioNormalizationService : IAudioNormalizationService
         }
     }
 
+    private async Task<TimeSpan> GetAudioDurationAsync(string inputPath)
+    {
+        try
+        {
+            var mediaInfo = await FFProbe.AnalyseAsync(inputPath);
+
+            return mediaInfo.Duration;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to probe audio duration, progress will not be available");
+
+            return TimeSpan.Zero;
+        }
+    }
+
     /// <summary>
     /// Pass 1: Analyze audio loudness using FFmpeg's loudnorm filter.
     /// </summary>
-    private async Task<LoudnessAnalysis?> AnalyzeLoudnessAsync(string inputPath, CancellationToken cancellationToken)
+    private async Task<LoudnessAnalysis?> AnalyzeLoudnessAsync(
+        string inputPath,
+        TimeSpan totalDuration,
+        Action<ProgressUpdate>? progressCallback,
+        CancellationToken cancellationToken)
     {
         var error = new StringBuilder();
+        var durationSeconds = totalDuration.TotalSeconds;
 
         var targetLoudnessStr = TargetLoudness.ToString("G", CultureInfo.InvariantCulture);
         var truePeakStr = TruePeak.ToString("G", CultureInfo.InvariantCulture);
@@ -152,6 +178,30 @@ public partial class AudioNormalizationService : IAudioNormalizationService
             if (e.Data != null)
             {
                 error.AppendLine(e.Data);
+
+                // Parse progress from stderr
+                if (progressCallback != null && durationSeconds > 0)
+                {
+                    var match = ProgressRegex().Match(e.Data);
+                    if (match.Success)
+                    {
+                        var hours = double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+                        var minutes = double.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
+                        var seconds = double.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
+                        var currentSeconds = hours * 3600 + minutes * 60 + seconds;
+                        var currentPosition = TimeSpan.FromSeconds(currentSeconds);
+                        var percent = (int)Math.Min(100, (currentSeconds / durationSeconds) * 100);
+
+                        progressCallback(new()
+                        {
+                            Stage = NormalizationStage.Analyzing,
+                            ProgressPercent = percent,
+                            Message = "Pass 1: Analyzing loudness",
+                            CurrentPosition = currentPosition,
+                            TotalDuration = totalDuration
+                        });
+                    }
+                }
             }
         };
 
@@ -208,19 +258,43 @@ public partial class AudioNormalizationService : IAudioNormalizationService
     /// <summary>
     /// Pass 2: Apply normalization using FFMpegCore with measured values.
     /// </summary>
-    private async Task<bool> ApplyNormalizationAsync(string inputPath, string outputPath, LoudnessAnalysis analysis, CancellationToken cancellationToken)
+    private async Task<bool> ApplyNormalizationAsync(
+        string inputPath,
+        string outputPath,
+        LoudnessAnalysis analysis,
+        TimeSpan totalDuration,
+        Action<ProgressUpdate>? progressCallback,
+        CancellationToken cancellationToken)
     {
         var loudnormFilter = BuildLoudnormFilter(analysis);
 
         try
         {
-            await FFMpegArguments
+            var arguments = FFMpegArguments
                 .FromFileInput(inputPath)
                 .OutputToFile(outputPath, true, options => options
                     .WithCustomArgument($"-af {loudnormFilter}")
                     .WithAudioSamplingRate())
-                .CancellableThrough(cancellationToken)
-                .ProcessAsynchronously();
+                .CancellableThrough(cancellationToken);
+
+            // Add progress notification if callback and duration are available
+            if (progressCallback != null && totalDuration > TimeSpan.Zero)
+            {
+                arguments = arguments.NotifyOnProgress(percent =>
+                {
+                    var currentPosition = TimeSpan.FromSeconds(totalDuration.TotalSeconds * percent / 100);
+                    progressCallback(new()
+                    {
+                        Stage = NormalizationStage.Normalizing,
+                        ProgressPercent = (int)percent,
+                        Message = "Pass 2: Applying normalization",
+                        CurrentPosition = currentPosition,
+                        TotalDuration = totalDuration
+                    });
+                }, totalDuration);
+            }
+
+            await arguments.ProcessAsynchronously();
 
             return File.Exists(outputPath);
         }
@@ -276,4 +350,7 @@ public partial class AudioNormalizationService : IAudioNormalizationService
 
     [GeneratedRegex("""\{[^{}]*"input_i"[^{}]*\}""", RegexOptions.Singleline)]
     private static partial Regex JsonRegex();
+
+    [GeneratedRegex("""time=(\d+):(\d+):(\d+\.\d+)""", RegexOptions.Compiled)]
+    private static partial Regex ProgressRegex();
 }

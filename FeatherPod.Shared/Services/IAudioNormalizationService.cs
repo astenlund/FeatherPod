@@ -1,3 +1,5 @@
+using FeatherPod.Shared.Models;
+
 namespace FeatherPod.Shared.Services;
 
 /// <summary>
@@ -20,7 +22,11 @@ public interface IAudioNormalizationService
     /// Uses two-pass processing for accurate EBU R128 normalization.
     /// </summary>
     /// <param name="inputPath">Path to the input audio file</param>
+    /// <param name="progressCallback">Optional callback for progress updates</param>
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>Path to the normalized temporary file, or null if normalization fails</returns>
-    Task<string?> NormalizeAudioAsync(string inputPath, CancellationToken cancellationToken = default);
+    Task<string?> NormalizeAudioAsync(
+        string inputPath,
+        Action<ProgressUpdate>? progressCallback = null,
+        CancellationToken cancellationToken = default);
 }
