@@ -21,6 +21,14 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FeatherPod.Shared", "Feathe
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FeatherPod.Functions", "FeatherPod.Functions\FeatherPod.Functions.csproj", "{53572B2C-8A8F-45FC-9383-EB78B1582EE1}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "infrastructure", "infrastructure", "{2CDBC20A-26B6-49FD-A7AC-6FA59700C864}"
+	ProjectSection(SolutionItems) = preProject
+		infrastructure\main.bicep = infrastructure\main.bicep
+		infrastructure\parameters.json = infrastructure\parameters.json
+		infrastructure\test-environment.bicep = infrastructure\test-environment.bicep
+		infrastructure\test-environment.parameters.json = infrastructure\test-environment.parameters.json
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -94,5 +102,8 @@ Global
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{2CDBC20A-26B6-49FD-A7AC-6FA59700C864} = {961F82C2-FBDE-4933-ABA2-02BD2F2A2BC0}
 	EndGlobalSection
 EndGlobal

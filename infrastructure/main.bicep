@@ -1,5 +1,5 @@
 // FeatherPod Infrastructure - Multi-Feed Architecture
-// This template creates the Azure Storage Account, single blob container, App Service with managed identity, RBAC, and app settings
+// This template creates Storage Account, App Service, Function App (for async normalization), managed identities, and RBAC
 
 @description('Name of the storage account (must be globally unique, 3-24 chars, lowercase alphanumeric)')
 @minLength(3)
@@ -45,6 +45,13 @@ param appServicePlanSku string = 'F1'
 @description('.NET runtime version')
 param dotnetVersion string = 'DOTNETCORE|10.0'
 
+@description('Name of the Function App for async normalization')
+param functionAppName string
+
+@description('Shared secret for internal API calls between Function App and App Service')
+@secure()
+param internalApiKey string
+
 // Storage Account
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: storageAccountName
@@ -74,6 +81,30 @@ resource featherpodContainer 'Microsoft.Storage/storageAccounts/blobServices/con
   properties: {
     publicAccess: 'None'
   }
+}
+
+// Queue Service
+resource queueService 'Microsoft.Storage/storageAccounts/queueServices@2023-01-01' = {
+  parent: storageAccount
+  name: 'default'
+}
+
+// Normalization Jobs Queue
+resource normalizationQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-01-01' = {
+  parent: queueService
+  name: 'normalization-jobs'
+}
+
+// Table Service
+resource tableService 'Microsoft.Storage/storageAccounts/tableServices@2023-01-01' = {
+  parent: storageAccount
+  name: 'default'
+}
+
+// Normalization Jobs Status Table
+resource normalizationTable 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-01-01' = {
+  parent: tableService
+  name: 'normalizationjobs'
 }
 
 // App Service Plan
@@ -117,24 +148,129 @@ resource appServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
   parent: appService
   name: 'appsettings'
   properties: {
-    // Security: Restrict allowed hosts to prevent Host Header Injection attacks
     AllowedHosts: '${appServiceName}.azurewebsites.net'
     Azure__AccountName: storageAccountName
     Azure__ContainerName: containerName
     Podcast__BaseUrl: 'https://${appServiceName}.azurewebsites.net'
+    Internal__Key: internalApiKey
   }
 }
 
-// Storage Blob Data Contributor role definition (well-known GUID)
+// Role definition GUIDs (well-known)
 var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
+var storageTableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 
-// Role Assignment: Grant App Service managed identity access to Storage Account
-resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+// Role Assignment: Grant App Service managed identity access to Storage Account (Blob)
+resource appServiceBlobRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(storageAccount.id, appService.id, storageBlobDataContributorRoleId)
   scope: storageAccount
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
     principalId: appService.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Role Assignment: Grant App Service managed identity access to Queue Storage
+resource appServiceQueueRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, appService.id, storageQueueDataContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageQueueDataContributorRoleId)
+    principalId: appService.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Role Assignment: Grant App Service managed identity access to Table Storage
+resource appServiceTableRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, appService.id, storageTableDataContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageTableDataContributorRoleId)
+    principalId: appService.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Function App (Consumption Plan)
+resource functionAppPlan 'Microsoft.Web/serverfarms@2023-01-01' = {
+  name: '${functionAppName}-plan'
+  location: location
+  sku: {
+    name: 'Y1'
+    tier: 'Dynamic'
+  }
+  kind: 'functionapp'
+  properties: {
+    reserved: true
+  }
+}
+
+// Function App
+resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
+  name: functionAppName
+  location: location
+  kind: 'functionapp,linux'
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    serverFarmId: functionAppPlan.id
+    httpsOnly: true
+    siteConfig: {
+      linuxFxVersion: 'DOTNET-ISOLATED|10.0'
+      ftpsState: 'Disabled'
+      minTlsVersion: '1.2'
+    }
+  }
+}
+
+// Function App Settings
+resource functionAppSettings 'Microsoft.Web/sites/config@2023-01-01' = {
+  parent: functionApp
+  name: 'appsettings'
+  properties: {
+    AzureWebJobsStorage__accountName: storageAccountName
+    FUNCTIONS_EXTENSION_VERSION: '~4'
+    FUNCTIONS_WORKER_RUNTIME: 'dotnet-isolated'
+    StorageAccountName: storageAccountName
+    ContainerName: containerName
+    AppServiceUrl: 'https://${appServiceName}.azurewebsites.net'
+    InternalKey: internalApiKey
+  }
+}
+
+// Role Assignment: Grant Function App managed identity access to Blob Storage
+resource functionAppBlobRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, storageBlobDataContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Role Assignment: Grant Function App managed identity access to Queue Storage
+resource functionAppQueueRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, storageQueueDataContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageQueueDataContributorRoleId)
+    principalId: functionApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Role Assignment: Grant Function App managed identity access to Table Storage
+resource functionAppTableRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storageAccount.id, functionApp.id, storageTableDataContributorRoleId)
+  scope: storageAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageTableDataContributorRoleId)
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
 }
@@ -149,4 +285,7 @@ output appServiceId string = appService.id
 output appServiceName string = appService.name
 output appServiceDefaultHostname string = appService.properties.defaultHostName
 output appServicePrincipalId string = appService.identity.principalId
-output roleAssignmentId string = roleAssignment.id
+output functionAppId string = functionApp.id
+output functionAppName string = functionApp.name
+output functionAppDefaultHostname string = functionApp.properties.defaultHostName
+output functionAppPrincipalId string = functionApp.identity.principalId
