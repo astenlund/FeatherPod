@@ -35,6 +35,7 @@ builder.Services.AddSingleton<FFmpegBinaryManager>();
 builder.Services.AddSingleton<IAudioNormalizationService, AudioNormalizationService>();
 builder.Services.AddSingleton<EpisodeService>();
 builder.Services.AddSingleton<IUserService, UserService>();
+builder.Services.AddSingleton<IJobService, JobService>();
 
 // Add background service for periodic blob storage sync
 builder.Services.AddHostedService<BlobSyncBackgroundService>();
@@ -58,6 +59,7 @@ app.UseMiddleware<ApiKeyAuthMiddleware>();
 await app.Services.GetRequiredService<IBlobStorageService>().InitializeAsync();
 await app.Services.GetRequiredService<EpisodeService>().InitializeAsync();
 await app.Services.GetRequiredService<IUserService>().LoadUsersAsync();
+await app.Services.GetRequiredService<IJobService>().InitializeAsync();
 
 // Get base URL from configuration
 var baseUrl = app.Configuration.GetSection("Podcast")["BaseUrl"]

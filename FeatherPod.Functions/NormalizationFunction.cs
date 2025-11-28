@@ -20,6 +20,7 @@ public class NormalizationFunction
     private readonly BlobServiceClient _blobClient;
     private readonly TableServiceClient _tableClient;
     private readonly IAudioNormalizationService _normalizationService;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly FunctionSettings _settings;
     private readonly ILogger<NormalizationFunction> _logger;
 
@@ -31,12 +32,14 @@ public class NormalizationFunction
         BlobServiceClient blobClient,
         TableServiceClient tableClient,
         IAudioNormalizationService normalizationService,
+        IHttpClientFactory httpClientFactory,
         IOptions<FunctionSettings> settings,
         ILogger<NormalizationFunction> logger)
     {
         _blobClient = blobClient;
         _tableClient = tableClient;
         _normalizationService = normalizationService;
+        _httpClientFactory = httpClientFactory;
         _settings = settings.Value;
         _logger = logger;
     }
@@ -296,7 +299,7 @@ public class NormalizationFunction
 
         try
         {
-            using var client = new HttpClient();
+            using var client = _httpClientFactory.CreateClient();
             client.Timeout = TimeSpan.FromSeconds(30);
 
             if (!string.IsNullOrEmpty(_settings.InternalKey))
@@ -304,10 +307,7 @@ public class NormalizationFunction
                 client.DefaultRequestHeaders.Add("X-Internal-Key", _settings.InternalKey);
             }
 
-            var response = await client.PostAsync(
-                $"{_settings.AppServiceUrl}/api/internal/feeds/{feedId}/refresh",
-                null,
-                cancellationToken);
+            var response = await client.PostAsync($"{_settings.AppServiceUrl}/api/internal/feeds/{feedId}/refresh", null, cancellationToken);
 
             if (response.IsSuccessStatusCode)
             {
@@ -315,8 +315,7 @@ public class NormalizationFunction
             }
             else
             {
-                _logger.LogWarning("Cache refresh failed for feed {FeedId}: {StatusCode}",
-                    feedId, response.StatusCode);
+                _logger.LogWarning("Cache refresh failed for feed {FeedId}: {StatusCode}", feedId, response.StatusCode);
             }
         }
         catch (Exception ex)

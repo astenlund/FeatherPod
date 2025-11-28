@@ -62,4 +62,7 @@ builder.Services.AddSingleton(sp =>
 builder.Services.AddSingleton<FFmpegBinaryManager>();
 builder.Services.AddSingleton<IAudioNormalizationService, AudioNormalizationService>();
 
+// HttpClient for App Service cache refresh
+builder.Services.AddHttpClient();
+
 builder.Build().Run();
