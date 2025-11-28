@@ -50,6 +50,31 @@ public class JobStatusEntity : ITableEntity
     public DateTimeOffset? CompletedAt { get; set; }
 
     /// <summary>
+    /// Current processing stage (Queued, Downloading, Analyzing, Normalizing, Uploading, Finalizing, Completed, Failed).
+    /// </summary>
+    public string? Stage { get; set; }
+
+    /// <summary>
+    /// Progress percentage within current stage (0-100).
+    /// </summary>
+    public int? ProgressPercent { get; set; }
+
+    /// <summary>
+    /// Human-readable progress message.
+    /// </summary>
+    public string? ProgressMessage { get; set; }
+
+    /// <summary>
+    /// Current audio position in milliseconds (for progress display).
+    /// </summary>
+    public long? CurrentPositionMs { get; set; }
+
+    /// <summary>
+    /// Total audio duration in milliseconds (for progress display).
+    /// </summary>
+    public long? TotalDurationMs { get; set; }
+
+    /// <summary>
     /// Azure Table Storage timestamp (managed by the service).
     /// </summary>
     public DateTimeOffset? Timestamp { get; set; }
@@ -85,8 +110,11 @@ public class JobStatusEntity : ITableEntity
             PartitionKey = "jobs",
             RowKey = jobId,
             Status = nameof(JobStatus.Queued),
+            Stage = nameof(NormalizationStage.Queued),
             FeedId = feedId,
-            QueuedAt = DateTimeOffset.UtcNow
+            QueuedAt = DateTimeOffset.UtcNow,
+            ProgressPercent = 0,
+            ProgressMessage = "Waiting in queue"
         };
     }
 }

@@ -41,6 +41,31 @@ public record JobStatusResponse
     public DateTimeOffset? CompletedAt { get; init; }
 
     /// <summary>
+    /// Current processing stage.
+    /// </summary>
+    public string? Stage { get; init; }
+
+    /// <summary>
+    /// Progress percentage (0-100).
+    /// </summary>
+    public int? ProgressPercent { get; init; }
+
+    /// <summary>
+    /// Detailed progress message.
+    /// </summary>
+    public string? ProgressMessage { get; init; }
+
+    /// <summary>
+    /// Current audio position in milliseconds.
+    /// </summary>
+    public long? CurrentPositionMs { get; init; }
+
+    /// <summary>
+    /// Total audio duration in milliseconds.
+    /// </summary>
+    public long? TotalDurationMs { get; init; }
+
+    /// <summary>
     /// Time taken to process the job, or elapsed time if still processing.
     /// </summary>
     public TimeSpan? Duration => QueuedAt.HasValue
@@ -60,7 +85,12 @@ public record JobStatusResponse
             FeedId = entity.FeedId,
             Error = entity.Error,
             QueuedAt = entity.QueuedAt,
-            CompletedAt = entity.CompletedAt
+            CompletedAt = entity.CompletedAt,
+            Stage = entity.Stage,
+            ProgressPercent = entity.ProgressPercent,
+            ProgressMessage = entity.ProgressMessage,
+            CurrentPositionMs = entity.CurrentPositionMs,
+            TotalDurationMs = entity.TotalDurationMs
         };
     }
 }
