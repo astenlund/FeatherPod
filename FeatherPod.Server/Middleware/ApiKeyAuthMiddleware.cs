@@ -146,6 +146,13 @@ public class ApiKeyAuthMiddleware
             return true;
         }
 
+        // Job status polling - allow any authenticated user
+        // Note: Users can only get job IDs from their own upload responses
+        if (path.StartsWith("/api/jobs/"))
+        {
+            return true;
+        }
+
         // User management endpoints are admin-only, except /api/users/me and rotating own key
         if (path.StartsWith("/api/users"))
         {

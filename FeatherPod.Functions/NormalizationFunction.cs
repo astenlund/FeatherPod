@@ -135,9 +135,18 @@ public class NormalizationFunction
         {
             _logger.LogError(ex, "Normalization job {JobId} failed", job.JobId);
 
+            // Sanitize error message to avoid exposing internal details (file paths, connection strings, etc.)
+            var sanitizedError = ex switch
+            {
+                InvalidOperationException => ex.Message,
+                FileNotFoundException => "Input file not found",
+                IOException => "File processing error",
+                _ => "An internal error occurred during audio normalization"
+            };
+
             // Update job status to Failed
             await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Failed,
-                error: ex.Message, cancellationToken: cancellationToken);
+                error: sanitizedError, cancellationToken: cancellationToken);
 
             // Delete pending blob on failure
             var pendingBlob = containerClient.GetBlobClient(pendingBlobPath);
@@ -191,6 +200,19 @@ public class NormalizationFunction
         string? error = null,
         CancellationToken cancellationToken = default)
     {
+        // Read existing entity to preserve QueuedAt
+        DateTimeOffset? queuedAt = null;
+        try
+        {
+            var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+            queuedAt = existingResponse.Value.QueuedAt;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            // Entity doesn't exist yet, QueuedAt will be set to now
+            queuedAt = DateTimeOffset.UtcNow;
+        }
+
         var entity = new JobStatusEntity
         {
             PartitionKey = "jobs",
@@ -198,7 +220,8 @@ public class NormalizationFunction
             FeedId = feedId,
             Status = status.ToString(),
             EpisodeId = episodeId,
-            Error = error
+            Error = error,
+            QueuedAt = queuedAt
         };
 
         if (status is JobStatus.Completed or JobStatus.Failed)
@@ -206,7 +229,7 @@ public class NormalizationFunction
             entity.CompletedAt = DateTimeOffset.UtcNow;
         }
 
-        await tableClient.UpsertEntityAsync(entity, TableUpdateMode.Merge, cancellationToken);
+        await tableClient.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
     }
 
     /// <summary>

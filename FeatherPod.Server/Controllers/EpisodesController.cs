@@ -113,10 +113,8 @@ public class EpisodesController : ControllerBase
                 // Upload to pending location
                 await _blobStorageService.UploadPendingAudioAsync(feedId, jobId, file.FileName, tempPath);
 
-                // Create job status entry
-                await _jobService.CreateJobStatusAsync(jobId, feedId, HttpContext.RequestAborted);
-
-                // Queue the normalization job
+                // Queue the normalization job first, then create status entry
+                // This order prevents orphaned status entries if queue send fails
                 var job = new NormalizationJob
                 {
                     JobId = jobId,
@@ -132,6 +130,7 @@ public class EpisodesController : ControllerBase
                 };
 
                 await _jobService.QueueNormalizationJobAsync(job, HttpContext.RequestAborted);
+                await _jobService.CreateJobStatusAsync(jobId, feedId, HttpContext.RequestAborted);
 
                 var response = new JobStatusResponse
                 {

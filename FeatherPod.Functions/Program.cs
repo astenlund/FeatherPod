@@ -33,7 +33,7 @@ builder.Services.AddSingleton(sp =>
 
     if (!string.IsNullOrEmpty(connectionString))
     {
-        return new(connectionString);
+        return new BlobServiceClient(connectionString);
     }
 
     var credential = new DefaultAzureCredential();
@@ -49,7 +49,7 @@ builder.Services.AddSingleton(sp =>
 
     if (!string.IsNullOrEmpty(connectionString))
     {
-        return new(connectionString);
+        return new TableServiceClient(connectionString);
     }
 
     var credential = new DefaultAzureCredential();

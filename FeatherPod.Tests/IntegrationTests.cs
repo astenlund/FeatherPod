@@ -823,7 +823,7 @@ public class IntegrationTests : IDisposable
     }
 
     [AzuriteFact]
-    public async Task PostEpisode_WithNormalizeTrue_WhenFFmpegUnavailable_ShouldReturn500WithSuggestion()
+    public async Task PostEpisode_WithNormalizeTrue_ShouldReturn202WithJobStatus()
     {
         // Arrange
         await CreateTestFeedAsync();
@@ -835,7 +835,7 @@ public class IntegrationTests : IDisposable
         content.Add(fileContent, "file", "normalize-test.mp3");
         content.Add(new StringContent("Normalize Test Episode"), "title");
 
-        // Use ?normalize=true - will fail if FFmpeg not available
+        // Use ?normalize=true - queues job for async processing
         var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes?normalize=true");
         request.Content = content;
         request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
@@ -843,18 +843,14 @@ public class IntegrationTests : IDisposable
         // Act
         var response = await _client.SendAsync(request);
 
-        // Assert - Either succeeds (FFmpeg available) or fails with helpful error
-        if (response.StatusCode == HttpStatusCode.InternalServerError)
-        {
-            var errorContent = await response.Content.ReadAsStringAsync();
-            Assert.Contains("normalization", errorContent, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("normalize=false", errorContent);
-        }
-        else
-        {
-            // FFmpeg was available and normalization succeeded
-            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
-        }
+        // Assert - Async normalization returns 202 Accepted with job status
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+
+        var responseContent = await response.Content.ReadAsStringAsync();
+        Assert.Contains("jobId", responseContent);
+        Assert.Contains("feedId", responseContent);
+        Assert.Contains("Queued", responseContent);
+        Assert.Contains("episodeId", responseContent);
     }
 }
 
