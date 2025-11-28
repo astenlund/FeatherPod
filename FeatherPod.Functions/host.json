@@ -1,0 +1,21 @@
+{
+  "version": "2.0",
+  "logging": {
+    "applicationInsights": {
+      "samplingSettings": {
+        "isEnabled": true,
+        "excludedTypes": "Request"
+      },
+      "enableLiveMetricsFilters": true
+    }
+  },
+  "extensions": {
+    "queues": {
+      "maxPollingInterval": "00:00:05",
+      "visibilityTimeout": "00:15:00",
+      "batchSize": 1,
+      "maxDequeueCount": 3,
+      "newBatchThreshold": 0
+    }
+  }
+}
