@@ -22,7 +22,7 @@ public class IntegrationTests : IDisposable
 
     public IntegrationTests()
     {
-        _factory = new FeatherPodWebApplicationFactory();
+        _factory = new();
         _client = _factory.CreateClient();
     }
 
@@ -789,6 +789,72 @@ public class IntegrationTests : IDisposable
 
         Assert.Equal(string.Empty, description);
         Assert.Equal(string.Empty, itunesSummary);
+    }
+
+    // ============================================================================
+    // AUDIO NORMALIZATION TESTS
+    // ============================================================================
+
+    [AzuriteFact]
+    public async Task PostEpisode_WithNormalizeFalse_ShouldUploadWithoutNormalization()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        const string audioContent = "fake audio data";
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes(audioContent));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "no-normalize.mp3");
+        content.Add(new StringContent("No Normalize Episode"), "title");
+
+        // Use ?normalize=false explicitly
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes?normalize=false");
+        request.Content = content;
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert - Should succeed without normalization
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var createdEpisode = await response.Content.ReadAsStringAsync();
+        Assert.Contains("No Normalize Episode", createdEpisode);
+    }
+
+    [AzuriteFact]
+    public async Task PostEpisode_WithNormalizeTrue_WhenFFmpegUnavailable_ShouldReturn500WithSuggestion()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        const string audioContent = "fake audio data";
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes(audioContent));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "normalize-test.mp3");
+        content.Add(new StringContent("Normalize Test Episode"), "title");
+
+        // Use ?normalize=true - will fail if FFmpeg not available
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes?normalize=true");
+        request.Content = content;
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert - Either succeeds (FFmpeg available) or fails with helpful error
+        if (response.StatusCode == HttpStatusCode.InternalServerError)
+        {
+            var errorContent = await response.Content.ReadAsStringAsync();
+            Assert.Contains("normalization", errorContent, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("normalize=false", errorContent);
+        }
+        else
+        {
+            // FFmpeg was available and normalization succeeded
+            Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        }
     }
 }
 
