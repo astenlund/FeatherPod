@@ -81,9 +81,13 @@ internal static class EpisodeHelpers
             var userPref = PreferencesHelpers.GetNormalizationEnabled();
             normalizationConfig.Enabled = userPref ?? true;
 
-            // Check if normalization is enabled
+            // Check if normalization is enabled (skip client-side if server-side requested)
             var fileToUpload = filePath;
-            if (normalizationConfig.Enabled)
+            if (settings.ServerNormalize)
+            {
+                AnsiConsole.MarkupLine($"[cyan]{fileName}[/] will be normalized on server to -16 LUFS");
+            }
+            else if (normalizationConfig.Enabled)
             {
                 // Check if FFmpeg is available
                 if (!FFmpegService.IsFFmpegAvailable())
@@ -224,8 +228,13 @@ internal static class EpisodeHelpers
                         }
                         // Note: UseCurrentDate is the default behavior, no need to send anything
 
-                        // Upload
-                        var response = await httpClient.PostAsync($"/api/feeds/{feed.Id}/episodes", content);
+                        // Upload (add normalize query param if server-side normalization requested)
+                        var uploadUrl = $"/api/feeds/{feed.Id}/episodes";
+                        if (settings.ServerNormalize)
+                        {
+                            uploadUrl += "?normalize=true";
+                        }
+                        var response = await httpClient.PostAsync(uploadUrl, content);
 
                         if (response.IsSuccessStatusCode)
                         {

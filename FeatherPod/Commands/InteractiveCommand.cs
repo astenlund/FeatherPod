@@ -174,14 +174,14 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                     AnsiConsole.WriteLine();
 
-                    // Prompt for normalization (default to user preference)
-                    var currentNormPref = PreferencesHelpers.GetNormalizationEnabled() ?? true;
-                    var normalizeChoice = new MenuBuilder<bool?>()
-                        .WithTitle($"Normalize audio to -16 LUFS? [grey](current preference: {(currentNormPref ? "enabled" : "disabled")})[/]")
-                        .WithHint("(Y/N, Enter for default)")
-                        .AddOption("Y", "Yes - Normalize", true)
-                        .AddOption("N", "No - Keep original", false)
-                        .AllowCancel(true, currentNormPref)
+                    // Prompt for normalization (L=Local, S=Server, N=None)
+                    var normalizeChoice = new MenuBuilder<string?>()
+                        .WithTitle("Normalize audio to -16 LUFS?")
+                        .WithHint("(L/S/N, Esc to cancel)")
+                        .AddOption("L", "Local - Normalize on this machine", "local")
+                        .AddOption("S", "Server - Normalize on server", "server")
+                        .AddOption("N", "None - Keep original", "none")
+                        .AllowCancel()
                         .Show();
 
                     if (normalizeChoice == null)
@@ -193,9 +193,10 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                     AnsiConsole.WriteLine();
 
-                    // Temporarily set normalization preference for upload
+                    // Temporarily set normalization preference for upload (only for local normalization)
                     var originalNormPref = PreferencesHelpers.GetNormalizationEnabled();
-                    PreferencesHelpers.SetNormalizationEnabled(normalizeChoice.Value);
+                    var useServerNormalize = normalizeChoice == "server";
+                    PreferencesHelpers.SetNormalizationEnabled(normalizeChoice == "local");
 
                     try
                     {
@@ -206,7 +207,8 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             Title = string.IsNullOrWhiteSpace(pushTitle) ? null : pushTitle.Trim(),
                             Description = string.IsNullOrWhiteSpace(pushDescription) ? null : pushDescription.Trim(),
                             Summary = string.IsNullOrWhiteSpace(pushSummary) ? null : pushSummary.Trim(),
-                            ExtractDateFromFile = dateSource
+                            ExtractDateFromFile = dateSource,
+                            ServerNormalize = useServerNormalize
                         };
 
                         var successCount = 0;

@@ -7,7 +7,7 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 - **Multi-feed support** - Host multiple podcast feeds from a single instance
 - **Role-based access control** - Admin and FeedOwner roles with per-user API keys
 - **User management** - Create users, manage permissions, and assign feed ownership via API and CLI
-- **Audio normalization** - Automatic loudness normalization (-16 LUFS) via FFmpeg (auto-downloads binaries)
+- **Audio normalization** - Loudness normalization (-16 LUFS) via FFmpeg, locally or server-side (`-n` flag)
 - **Azure Blob Storage** - Scalable cloud storage for audio files
 - **RSS podcast feeds** - iTunes spec compatible with per-feed configuration
 - **CLI tool** - Command-line interface for episode, icon, feed, and user management
@@ -234,6 +234,7 @@ FeatherPod includes a command-line tool for managing feeds, episodes, icons, and
 ```bash
 # Episode management
 FeatherPod episode push *.mp3 -f my-podcast -x  # -x extracts date from file before normalization
+FeatherPod episode push *.mp3 -f my-podcast -n  # -n uses server-side normalization
 FeatherPod episode list -f my-podcast           # List episodes
 FeatherPod episode delete -f my-podcast         # Interactive delete
 FeatherPod episode delete abc123 -f my-podcast --force  # Delete by ID
@@ -285,7 +286,7 @@ FeatherPod -e Test feed list
 FeatherPod
 ```
 
-**Interactive mode** provides full feature parity with CLI commands - all operations (push, move, copy, delete, icon management, user management, etc.) are available through menus with arrow key navigation.
+**Interactive mode** provides full feature parity with CLI commands - all operations (push, move, copy, delete, icon management, user management, etc.) are available through menus with arrow key navigation. When pushing episodes, choose between Local (client-side), Server (server-side), or no normalization.
 
 **User preferences** are stored in `%APPDATA%\FeatherPod\preferences.json`:
 - API keys (per environment)
