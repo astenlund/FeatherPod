@@ -51,6 +51,7 @@ public class EpisodesController : ControllerBase
     [ProducesResponseType<Episode>(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status500InternalServerError)]
     [DisableRequestSizeLimit]
     [RequestFormLimits(MultipartBodyLengthLimit = 500 * 1024 * 1024)]
     public async Task<IActionResult> UploadEpisode(
@@ -59,7 +60,8 @@ public class EpisodesController : ControllerBase
         [FromForm] string? title,
         [FromForm] string? description,
         [FromForm] string? summary,
-        [FromForm] DateTime? publishedDate)
+        [FromForm] DateTime? publishedDate,
+        [FromQuery] bool normalize = false)
     {
         if (!InputValidation.IsValidFeedId(feedId))
         {
@@ -100,11 +102,20 @@ public class EpisodesController : ControllerBase
                 title,
                 description,
                 summary,
-                publishedDate);
+                publishedDate,
+                normalize);
 
             var episodeWithUrl = episode with { Url = episode.GetAudioUrl(_baseUrl) };
 
             return CreatedAtAction(nameof(ListEpisodes), new { feedId }, episodeWithUrl);
+        }
+        catch (InvalidOperationException ex) when (normalize && ex.Message.Contains("normalization"))
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                error = ex.Message,
+                suggestion = "Retry with ?normalize=false to upload without normalization"
+            });
         }
         finally
         {
