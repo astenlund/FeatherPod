@@ -36,9 +36,22 @@ public class FFmpegBinaryManager
             return Path.Combine(localAppData, "FeatherPod", "ffmpeg");
         }
 
-        // Linux (Azure App Service): Use /home for persistent storage
-        // /home is the only directory that persists across restarts on Azure App Service
-        return Path.Combine("/home", ".featherpod", "ffmpeg");
+        // Azure App Service: Use /home for persistent storage (only dir that persists across restarts)
+        if (Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME") != null)
+        {
+            return Path.Combine("/home", ".featherpod", "ffmpeg");
+        }
+
+        // Linux/macOS: Use XDG Base Directory spec ($XDG_DATA_HOME or ~/.local/share)
+        var xdgDataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
+        if (!string.IsNullOrEmpty(xdgDataHome))
+        {
+            return Path.Combine(xdgDataHome, "FeatherPod", "ffmpeg");
+        }
+
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        return Path.Combine(home, ".local", "share", "FeatherPod", "ffmpeg");
     }
 
     /// <summary>

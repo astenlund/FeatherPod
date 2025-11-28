@@ -13,7 +13,7 @@ namespace FeatherPod.Server.Services;
 /// Server-side audio normalization service using FFmpeg's loudnorm filter.
 /// Uses two-pass EBU R128 normalization for consistent podcast loudness.
 /// </summary>
-public partial class AudioNormalizationService
+public partial class AudioNormalizationService : IAudioNormalizationService
 {
     private readonly FFmpegBinaryManager _binaryManager;
     private readonly ILogger<AudioNormalizationService> _logger;
@@ -22,6 +22,9 @@ public partial class AudioNormalizationService
     private const double TargetLoudness = -16.0;  // LUFS
     private const double TruePeak = -1.5;         // dBTP
     private const double LoudnessRange = 11.0;    // LRA
+
+    // Timeout for Pass 1 analysis (protects against corrupted/extremely long files)
+    private static readonly TimeSpan AnalysisTimeout = TimeSpan.FromMinutes(10);
 
     public AudioNormalizationService(FFmpegBinaryManager binaryManager, ILogger<AudioNormalizationService> logger)
     {
@@ -156,7 +159,28 @@ public partial class AudioNormalizationService
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
-        await process.WaitForExitAsync(cancellationToken);
+        // Use linked token with timeout to protect against corrupted/extremely long files
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(AnalysisTimeout);
+
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // Kill the FFmpeg process to avoid orphaned processes
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // Process already exited
+            }
+
+            throw;
+        }
 
         // Parse JSON output from stderr
         var errorText = error.ToString();
@@ -250,6 +274,6 @@ public partial class AudioNormalizationService
         }
     }
 
-    [GeneratedRegex("""\{[^\}]*"input_i"[^\}]*\}""", RegexOptions.Singleline)]
+    [GeneratedRegex("""\{[^{}]*"input_i"[^{}]*\}""", RegexOptions.Singleline)]
     private static partial Regex JsonRegex();
 }

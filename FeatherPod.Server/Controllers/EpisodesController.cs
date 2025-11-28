@@ -103,7 +103,8 @@ public class EpisodesController : ControllerBase
                 description,
                 summary,
                 publishedDate,
-                normalize);
+                normalize,
+                HttpContext.RequestAborted);
 
             var episodeWithUrl = episode with { Url = episode.GetAudioUrl(_baseUrl) };
 

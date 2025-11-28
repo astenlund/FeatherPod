@@ -32,7 +32,7 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(optio
 // Add services
 builder.Services.AddSingleton<IBlobStorageService, BlobStorageService>();
 builder.Services.AddSingleton<FFmpegBinaryManager>();
-builder.Services.AddSingleton<AudioNormalizationService>();
+builder.Services.AddSingleton<IAudioNormalizationService, AudioNormalizationService>();
 builder.Services.AddSingleton<EpisodeService>();
 builder.Services.AddSingleton<IUserService, UserService>();
 

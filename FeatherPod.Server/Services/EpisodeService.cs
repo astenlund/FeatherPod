@@ -7,7 +7,7 @@ namespace FeatherPod.Server.Services;
 public sealed partial class EpisodeService : IDisposable
 {
     private readonly IBlobStorageService _blobStorage;
-    private readonly AudioNormalizationService _normalizationService;
+    private readonly IAudioNormalizationService _normalizationService;
     private readonly ILogger<EpisodeService> _logger;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
@@ -16,7 +16,7 @@ public sealed partial class EpisodeService : IDisposable
     private FeedsMetadata _feedsMetadata = new();
     private readonly JsonSerializerOptions _jsonSerializerOptions = new() { WriteIndented = true };
 
-    public EpisodeService(IBlobStorageService blobStorage, AudioNormalizationService normalizationService, ILogger<EpisodeService> logger)
+    public EpisodeService(IBlobStorageService blobStorage, IAudioNormalizationService normalizationService, ILogger<EpisodeService> logger)
     {
         _blobStorage = blobStorage;
         _normalizationService = normalizationService;
@@ -241,7 +241,8 @@ public sealed partial class EpisodeService : IDisposable
         string? description = null,
         string? summary = null,
         DateTime? publishedDate = null,
-        bool normalize = false)
+        bool normalize = false,
+        CancellationToken cancellationToken = default)
     {
         var fileInfo = new FileInfo(filePath);
         if (!fileInfo.Exists)
@@ -267,7 +268,7 @@ public sealed partial class EpisodeService : IDisposable
             {
                 _logger.LogInformation("Normalizing audio for {FileName}", fileName);
 
-                normalizedTempFile = await _normalizationService.NormalizeAudioAsync(filePath);
+                normalizedTempFile = await _normalizationService.NormalizeAudioAsync(filePath, cancellationToken);
 
                 fileToUpload = normalizedTempFile ?? throw new InvalidOperationException(
                     $"Audio normalization failed for '{fileName}'. " +
@@ -276,10 +277,12 @@ public sealed partial class EpisodeService : IDisposable
                 _logger.LogInformation("Audio normalized successfully for {FileName}", fileName);
             }
 
-            // Get file info from the file we're actually uploading (may be normalized)
+            // Use original file size for ID (ensures same source file → same ID regardless of normalization)
+            var id = Episode.GenerateId(feedId, fileName, fileInfo.Length);
+
+            // Use actual upload file size for Episode.FileSize (what will be downloaded)
             var uploadFileInfo = new FileInfo(fileToUpload);
             var fileSize = uploadFileInfo.Length;
-            var id = Episode.GenerateId(feedId, fileName, fileSize);
 
             await _lock.WaitAsync();
             try
