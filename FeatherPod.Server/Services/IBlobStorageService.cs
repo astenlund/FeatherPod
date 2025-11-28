@@ -14,6 +14,7 @@ public interface IBlobStorageService
 
     // Audio file operations (feed-aware)
     Task UploadAudioAsync(string feedId, string fileName, string filePath);
+    Task UploadPendingAudioAsync(string feedId, string jobId, string fileName, string filePath);
     Task<Stream> DownloadAudioAsync(string feedId, string fileName);
     Task<bool> AudioExistsAsync(string feedId, string fileName);
     Task DeleteAudioAsync(string feedId, string fileName);

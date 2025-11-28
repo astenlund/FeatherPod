@@ -63,6 +63,15 @@ public class TestBlobStorageService : IBlobStorageService
         await Task.CompletedTask;
     }
 
+    public async Task UploadPendingAudioAsync(string feedId, string jobId, string fileName, string filePath)
+    {
+        var pendingPath = Path.Combine(_rootPath, feedId, "pending", jobId);
+        Directory.CreateDirectory(pendingPath);
+        var destPath = Path.Combine(pendingPath, fileName);
+        File.Copy(filePath, destPath, overwrite: true);
+        await Task.CompletedTask;
+    }
+
     public async Task<Stream> DownloadAudioAsync(string feedId, string fileName)
     {
         var filePath = Path.Combine(_rootPath, feedId, "audio", fileName);

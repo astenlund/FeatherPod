@@ -1,4 +1,3 @@
-using Azure;
 using Azure.Identity;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
@@ -107,6 +106,18 @@ public class BlobStorageService : IBlobStorageService
         await blobClient.UploadAsync(fileStream, overwrite: true);
 
         _logger.LogInformation("Uploaded audio file to blob storage: {FeedId}/{FileName}", feedId, fileName);
+    }
+
+    public async Task UploadPendingAudioAsync(string feedId, string jobId, string fileName, string filePath)
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+        var blobPath = $"{feedId}/pending/{jobId}/{fileName}";
+        var blobClient = containerClient.GetBlobClient(blobPath);
+
+        await using var fileStream = File.OpenRead(filePath);
+        await blobClient.UploadAsync(fileStream, overwrite: true);
+
+        _logger.LogInformation("Uploaded pending audio file to blob storage: {BlobPath}", blobPath);
     }
 
     public async Task<Stream> DownloadAudioAsync(string feedId, string fileName)

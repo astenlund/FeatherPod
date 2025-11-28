@@ -11,11 +11,15 @@ namespace FeatherPod.Server.Controllers;
 public class EpisodesController : ControllerBase
 {
     private readonly EpisodeService _episodeService;
+    private readonly IBlobStorageService _blobStorageService;
+    private readonly IJobService _jobService;
     private readonly string _baseUrl;
 
-    public EpisodesController(EpisodeService episodeService, IConfiguration configuration)
+    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IConfiguration configuration)
     {
         _episodeService = episodeService;
+        _blobStorageService = blobStorageService;
+        _jobService = jobService;
         _baseUrl = configuration.GetSection("Podcast")["BaseUrl"]
             ?? throw new InvalidOperationException("Podcast.BaseUrl must be configured in appsettings.json");
     }
@@ -49,6 +53,7 @@ public class EpisodesController : ControllerBase
 
     [HttpPost]
     [ProducesResponseType<Episode>(StatusCodes.Status201Created)]
+    [ProducesResponseType<JobStatusResponse>(StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status500InternalServerError)]
@@ -96,27 +101,55 @@ public class EpisodesController : ControllerBase
 
         try
         {
-            var episode = await _episodeService.AddEpisodeAsync(
-                feedId,
-                tempPath,
-                title,
-                description,
-                summary,
-                publishedDate,
-                normalize,
-                HttpContext.RequestAborted);
+            // Async normalization flow - queue job and return 202
+            if (normalize)
+            {
+                var jobId = Guid.NewGuid().ToString("N");
+                var fileSize = new FileInfo(tempPath).Length;
+                var episodeId = Episode.GenerateId(feedId, file.FileName, fileSize);
+                var effectiveTitle = string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(file.FileName) : title;
+                var effectivePublishedDate = publishedDate ?? DateTime.UtcNow;
 
+                // Upload to pending location
+                await _blobStorageService.UploadPendingAudioAsync(feedId, jobId, file.FileName, tempPath);
+
+                // Create job status entry
+                await _jobService.CreateJobStatusAsync(jobId, feedId, HttpContext.RequestAborted);
+
+                // Queue the normalization job
+                var job = new NormalizationJob
+                {
+                    JobId = jobId,
+                    FeedId = feedId,
+                    FileName = file.FileName,
+                    OriginalFileSize = fileSize,
+                    EpisodeId = episodeId,
+                    Title = effectiveTitle,
+                    Description = description,
+                    Summary = summary,
+                    PublishedDate = effectivePublishedDate,
+                    QueuedAt = DateTime.UtcNow
+                };
+
+                await _jobService.QueueNormalizationJobAsync(job, HttpContext.RequestAborted);
+
+                var response = new JobStatusResponse
+                {
+                    JobId = jobId,
+                    FeedId = feedId,
+                    Status = nameof(JobStatus.Queued),
+                    EpisodeId = episodeId,
+                    QueuedAt = job.QueuedAt
+                };
+
+                return Accepted($"/api/jobs/{jobId}", response);
+            }
+
+            // Synchronous upload (no normalization)
+            var episode = await _episodeService.AddEpisodeAsync(feedId, tempPath, title, description, summary, publishedDate, normalize: false, HttpContext.RequestAborted);
             var episodeWithUrl = episode with { Url = episode.GetAudioUrl(_baseUrl) };
 
             return CreatedAtAction(nameof(ListEpisodes), new { feedId }, episodeWithUrl);
-        }
-        catch (InvalidOperationException ex) when (normalize && ex.Message.Contains("normalization"))
-        {
-            return StatusCode(StatusCodes.Status500InternalServerError, new
-            {
-                error = ex.Message,
-                suggestion = "Retry with ?normalize=false to upload without normalization"
-            });
         }
         finally
         {
