@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
 using FFMpegCore;
 using Spectre.Console;

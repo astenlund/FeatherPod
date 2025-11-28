@@ -1,12 +1,12 @@
 using System.Text.Json.Serialization;
 
-namespace FeatherPod.Infrastructure;
+namespace FeatherPod.Shared.Models;
 
 /// <summary>
 /// Result from FFmpeg loudnorm filter analysis (Pass 1).
 /// JSON output format from -af loudnorm=print_format=json
 /// </summary>
-internal class LoudnessAnalysis
+public class LoudnessAnalysis
 {
     [JsonPropertyName("input_i")]
     public string InputI { get; init; } = string.Empty;
