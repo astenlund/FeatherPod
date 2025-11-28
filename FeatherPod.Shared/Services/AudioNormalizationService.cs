@@ -4,13 +4,13 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using FeatherPod.Shared.Models;
-using FeatherPod.Shared.Services;
 using FFMpegCore;
+using Microsoft.Extensions.Logging;
 
-namespace FeatherPod.Server.Services;
+namespace FeatherPod.Shared.Services;
 
 /// <summary>
-/// Server-side audio normalization service using FFmpeg's loudnorm filter.
+/// Audio normalization service using FFmpeg's loudnorm filter.
 /// Uses two-pass EBU R128 normalization for consistent podcast loudness.
 /// </summary>
 public partial class AudioNormalizationService : IAudioNormalizationService
@@ -102,7 +102,7 @@ public partial class AudioNormalizationService : IAudioNormalizationService
                 return null;
             }
 
-            _logger.LogInformation("Audio normalization complete for {FileName}: {InputLufs} LUFS → {TargetLufs} LUFS",
+            _logger.LogInformation("Audio normalization complete for {FileName}: {InputLufs} LUFS -> {TargetLufs} LUFS",
                 fileName, analysis.InputI, TargetLoudness);
 
             return tempFile;

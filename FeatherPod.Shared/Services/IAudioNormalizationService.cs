@@ -1,4 +1,4 @@
-namespace FeatherPod.Server.Services;
+namespace FeatherPod.Shared.Services;
 
 /// <summary>
 /// Interface for audio normalization services.
