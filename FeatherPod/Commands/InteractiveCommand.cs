@@ -7,6 +7,8 @@ using FeatherPod.Settings.Episode;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 using EpisodeDeleteCommand = FeatherPod.Commands.Episode.DeleteCommand;
 using EpisodeListCommand = FeatherPod.Commands.Episode.ListCommand;
 using FeedUpdateCommand = FeatherPod.Commands.Feed.UpdateCommand;
@@ -50,12 +52,12 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.List:
                     if (!isConnected || httpClient == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        Out.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
                     }
                     else if (currentFeed == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
-                        AnsiConsole.WriteLine();
+                        Out.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
+                        Out.BlankLine();
                     }
                     else
                     {
@@ -67,7 +69,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.Push:
                     if (!isConnected || httpClient == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        Out.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
                         WaitForKeyPress();
                         break;
                     }
@@ -88,7 +90,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                     if (string.IsNullOrWhiteSpace(filePattern))
                     {
-                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        Out.Cancelled();
                         WaitForKeyPress();
                         break;
                     }
@@ -97,13 +99,13 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     var filesToUpload = EpisodeHelpers.ExpandFilePatterns(filePattern);
                     if (filesToUpload.Count == 0)
                     {
-                        AnsiConsole.MarkupLine($"[red]✗[/] No files found matching pattern: {Markup.Escape(filePattern)}");
+                        Out.Error($"No files found matching pattern: {Markup.Escape(filePattern)}");
                         WaitForKeyPress();
                         break;
                     }
 
-                    AnsiConsole.MarkupLine($"Found [bold]{filesToUpload.Count}[/] file(s)");
-                    AnsiConsole.WriteLine();
+                    Out.MarkupLine($"Found [bold]{filesToUpload.Count}[/] file(s)");
+                    Out.BlankLine();
 
                     // Confirm files
                     var fileListDisplay = filesToUpload.Count <= 5
@@ -120,12 +122,12 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                     if (confirmUpload != true)
                     {
-                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        Out.Cancelled();
                         WaitForKeyPress();
                         break;
                     }
 
-                    AnsiConsole.WriteLine();
+                    Out.BlankLine();
 
                     // For single file, offer optional metadata prompts
                     string? pushTitle = null;
@@ -149,7 +151,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                     .AllowEmpty());
                         }
 
-                        AnsiConsole.WriteLine();
+                        Out.BlankLine();
                     }
 
                     // Prompt for date source
@@ -163,12 +165,12 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                     if (dateSource == null)
                     {
-                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        Out.Cancelled();
                         WaitForKeyPress();
                         break;
                     }
 
-                    AnsiConsole.WriteLine();
+                    Out.BlankLine();
 
                     // Prompt for normalization (L=Local, S=Server, N=None)
                     var normalizeChoice = new MenuBuilder<string?>()
@@ -182,12 +184,12 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                     if (normalizeChoice == null)
                     {
-                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        Out.Cancelled();
                         WaitForKeyPress();
                         break;
                     }
 
-                    AnsiConsole.WriteLine();
+                    Out.BlankLine();
 
                     // Temporarily set normalization preference for upload (only for local normalization)
                     var originalNormPref = PreferencesHelpers.GetNormalizationEnabled(env);
@@ -218,17 +220,17 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             else
                                 failureCount++;
 
-                            AnsiConsole.WriteLine();
+                            Out.BlankLine();
                         }
 
                         // Summary
                         if (successCount > 0)
                         {
-                            AnsiConsole.MarkupLine($"[green]✓[/] Successfully uploaded: {successCount}");
+                            Out.Success($"Successfully uploaded: {successCount}");
                         }
                         if (failureCount > 0)
                         {
-                            AnsiConsole.MarkupLine($"[red]✗[/] Failed: {failureCount}");
+                            Out.Error($"Failed: {failureCount}");
                         }
                     }
                     finally
@@ -246,7 +248,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.MoveCopy:
                     if (!isConnected || httpClient == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        Out.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
                         WaitForKeyPress();
                         break;
                     }
@@ -279,7 +281,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     var sourceEpisodes = await EpisodeHelpers.GetEpisodesAsync(httpClient, sourceFeed.Id);
                     if (sourceEpisodes == null || sourceEpisodes.Count == 0)
                     {
-                        AnsiConsole.MarkupLine($"[yellow]Feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]' has no episodes.[/]");
+                        Out.MarkupLine($"[yellow]Feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]' has no episodes.[/]");
                         WaitForKeyPress();
                         break;
                     }
@@ -288,12 +290,12 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     var episodesToProcess = EpisodeHelpers.SelectEpisodesMulti(sourceEpisodes);
                     if (episodesToProcess.Count == 0)
                     {
-                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        Out.Cancelled();
                         WaitForKeyPress();
                         break;
                     }
 
-                    AnsiConsole.WriteLine();
+                    Out.BlankLine();
 
                     // Get target feeds (exclude source for move)
                     var allFeeds = await FeedHelpers.GetFeedsAsync(httpClient);
@@ -303,7 +305,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                     if (availableTargets.Count == 0)
                     {
-                        AnsiConsole.MarkupLine("[red]✗[/] No target feeds available.");
+                        Out.Error("No target feeds available.");
                         WaitForKeyPress();
                         break;
                     }
@@ -321,7 +323,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     var targetFeed = targetMenu.Show();
                     if (targetFeed == null)
                     {
-                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        Out.Cancelled();
                         WaitForKeyPress();
                         break;
                     }
@@ -329,12 +331,12 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     // Validate for copy: can't copy to same feed
                     if (!isMove && sourceFeed.Id == targetFeed.Id)
                     {
-                        AnsiConsole.MarkupLine("[red]✗[/] Cannot copy episodes within the same feed.");
+                        Out.Error("Cannot copy episodes within the same feed.");
                         WaitForKeyPress();
                         break;
                     }
 
-                    AnsiConsole.WriteLine();
+                    Out.BlankLine();
 
                     // Confirmation
                     var epWord = episodesToProcess.Count == 1 ? "episode" : "episodes";
@@ -348,12 +350,12 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                     if (confirmAction != true)
                     {
-                        AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                        Out.Cancelled();
                         WaitForKeyPress();
                         break;
                     }
 
-                    AnsiConsole.WriteLine();
+                    Out.BlankLine();
 
                     // Process episodes with progress bar
                     var mcSuccessCount = 0;
@@ -390,16 +392,16 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             }
                         });
 
-                    AnsiConsole.WriteLine();
+                    Out.BlankLine();
 
                     // Summary
                     if (mcSuccessCount > 0)
                     {
-                        AnsiConsole.MarkupLine($"[green]✓[/] {actionPast} {mcSuccessCount} of {episodesToProcess.Count} episode(s) successfully");
+                        Out.Success($"{actionPast} {mcSuccessCount} of {episodesToProcess.Count} episode(s) successfully");
                     }
                     if (mcFailureCount > 0)
                     {
-                        AnsiConsole.MarkupLine($"[red]✗[/] Failed to {actionVerb.ToLower()} {mcFailureCount} episode(s)");
+                        Out.Error($"Failed to {actionVerb.ToLower()} {mcFailureCount} episode(s)");
                     }
 
                     WaitForKeyPress();
@@ -408,7 +410,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.UserManagement:
                     if (!isConnected || httpClient == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        Out.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
                         WaitForKeyPress();
                         break;
                     }
@@ -441,7 +443,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                                     if (users.ValueKind == JsonValueKind.Array && users.GetArrayLength() == 0)
                                     {
-                                        AnsiConsole.MarkupLine("[yellow]No users found.[/]");
+                                        Out.MarkupLine("[yellow]No users found.[/]");
                                     }
                                     else
                                     {
@@ -473,17 +475,17 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                             );
                                         }
 
-                                        AnsiConsole.Write(table);
+                                        Out.Write(table);
                                     }
                                 }
                                 else
                                 {
-                                    AnsiConsole.MarkupLine($"[red]✗[/] Failed to list users: {listResponse.StatusCode}");
+                                    Out.Error($"Failed to list users: {listResponse.StatusCode}");
                                 }
                             }
                             catch (Exception ex)
                             {
-                                AnsiConsole.MarkupLine($"[red]✗[/] Error: {ex.Message}");
+                                Out.Error($"Error: {ex.Message}");
                             }
                             WaitForKeyPress();
                             break;
@@ -492,7 +494,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             var newUserId = AnsiConsole.Prompt(new TextPrompt<string>("User [bold]ID[/]:").AllowEmpty());
                             if (string.IsNullOrWhiteSpace(newUserId))
                             {
-                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                Out.Cancelled();
                                 WaitForKeyPress();
                                 break;
                             }
@@ -511,7 +513,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                             if (newRole == null)
                             {
-                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                Out.Cancelled();
                                 WaitForKeyPress();
                                 break;
                             }
@@ -545,28 +547,28 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                     var createJson = await createResponse.Content.ReadAsStringAsync(cancellationToken);
                                     var createData = JsonSerializer.Deserialize<JsonElement>(createJson);
 
-                                    AnsiConsole.MarkupLine("[green]✓[/] User created successfully");
-                                    AnsiConsole.WriteLine();
+                                    Out.Success("User created successfully");
+                                    Out.BlankLine();
 
                                     if (createData.TryGetProperty("apiKey", out var apiKeyEl))
                                     {
-                                        AnsiConsole.MarkupLine($"[yellow bold]API Key (save now, won't be shown again):[/]");
-                                        AnsiConsole.MarkupLine($"[cyan]{Markup.Escape(apiKeyEl.GetString() ?? "")}[/]");
+                                        Out.MarkupLine($"[yellow bold]API Key (save now, won't be shown again):[/]");
+                                        Out.MarkupLine($"[cyan]{Markup.Escape(apiKeyEl.GetString() ?? "")}[/]");
                                     }
                                 }
                                 else
                                 {
                                     var errorContent = await createResponse.Content.ReadAsStringAsync(cancellationToken);
-                                    AnsiConsole.MarkupLine($"[red]✗[/] Failed to create user: {createResponse.StatusCode}");
+                                    Out.Error($"Failed to create user: {createResponse.StatusCode}");
                                     if (!string.IsNullOrEmpty(errorContent))
                                     {
-                                        AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
+                                        Out.Error(Markup.Escape(errorContent));
                                     }
                                 }
                             }
                             catch (Exception ex)
                             {
-                                AnsiConsole.MarkupLine($"[red]✗[/] Error: {ex.Message}");
+                                Out.Error($"Error: {ex.Message}");
                             }
                             WaitForKeyPress();
                             break;
@@ -575,7 +577,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             var deleteUserId = AnsiConsole.Prompt(new TextPrompt<string>("User ID to delete:").AllowEmpty());
                             if (string.IsNullOrWhiteSpace(deleteUserId))
                             {
-                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                Out.Cancelled();
                                 WaitForKeyPress();
                                 break;
                             }
@@ -590,7 +592,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                             if (confirmDelete != true)
                             {
-                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                Out.Cancelled();
                                 WaitForKeyPress();
                                 break;
                             }
@@ -598,13 +600,18 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             try
                             {
                                 var deleteResponse = await httpClient.DeleteAsync($"/api/users/{Uri.EscapeDataString(deleteUserId.Trim())}", cancellationToken);
-                                AnsiConsole.MarkupLine(deleteResponse.IsSuccessStatusCode
-                                    ? $"[green]✓[/] User '{Markup.Escape(deleteUserId)}' deleted"
-                                    : $"[red]✗[/] Failed to delete user: {deleteResponse.StatusCode}");
+                                if (deleteResponse.IsSuccessStatusCode)
+                                {
+                                    Out.Success($"User '{Markup.Escape(deleteUserId)}' deleted");
+                                }
+                                else
+                                {
+                                    Out.Error($"Failed to delete user: {deleteResponse.StatusCode}");
+                                }
                             }
                             catch (Exception ex)
                             {
-                                AnsiConsole.MarkupLine($"[red]✗[/] Error: {ex.Message}");
+                                Out.Error($"Error: {ex.Message}");
                             }
                             WaitForKeyPress();
                             break;
@@ -613,7 +620,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             var grantUserId = AnsiConsole.Prompt(new TextPrompt<string>("User ID to grant ownership:").AllowEmpty());
                             if (string.IsNullOrWhiteSpace(grantUserId))
                             {
-                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                Out.Cancelled();
                                 WaitForKeyPress();
                                 break;
                             }
@@ -621,7 +628,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             var grantFeedId = AnsiConsole.Prompt(new TextPrompt<string>("Feed ID to grant:").AllowEmpty());
                             if (string.IsNullOrWhiteSpace(grantFeedId))
                             {
-                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                Out.Cancelled();
                                 WaitForKeyPress();
                                 break;
                             }
@@ -633,13 +640,18 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                     $"/api/users/{Uri.EscapeDataString(grantUserId.Trim())}/feeds",
                                     new StringContent(grantBody, System.Text.Encoding.UTF8, "application/json"), cancellationToken);
 
-                                AnsiConsole.MarkupLine(grantResponse.IsSuccessStatusCode
-                                    ? $"[green]✓[/] Feed '{Markup.Escape(grantFeedId)}' granted to '{Markup.Escape(grantUserId)}'"
-                                    : $"[red]✗[/] Failed to grant: {grantResponse.StatusCode}");
+                                if (grantResponse.IsSuccessStatusCode)
+                                {
+                                    Out.Success($"Feed '{Markup.Escape(grantFeedId)}' granted to '{Markup.Escape(grantUserId)}'");
+                                }
+                                else
+                                {
+                                    Out.Error($"Failed to grant: {grantResponse.StatusCode}");
+                                }
                             }
                             catch (Exception ex)
                             {
-                                AnsiConsole.MarkupLine($"[red]✗[/] Error: {ex.Message}");
+                                Out.Error($"Error: {ex.Message}");
                             }
                             WaitForKeyPress();
                             break;
@@ -648,7 +660,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             var revokeUserId = AnsiConsole.Prompt(new TextPrompt<string>("User ID to revoke from:").AllowEmpty());
                             if (string.IsNullOrWhiteSpace(revokeUserId))
                             {
-                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                Out.Cancelled();
                                 WaitForKeyPress();
                                 break;
                             }
@@ -656,7 +668,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             var revokeFeedId = AnsiConsole.Prompt(new TextPrompt<string>("Feed ID to revoke:").AllowEmpty());
                             if (string.IsNullOrWhiteSpace(revokeFeedId))
                             {
-                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                Out.Cancelled();
                                 WaitForKeyPress();
                                 break;
                             }
@@ -666,13 +678,18 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 var revokeResponse = await httpClient.DeleteAsync(
                                     $"/api/users/{Uri.EscapeDataString(revokeUserId.Trim())}/feeds/{Uri.EscapeDataString(revokeFeedId.Trim())}", cancellationToken);
 
-                                AnsiConsole.MarkupLine(revokeResponse.IsSuccessStatusCode
-                                    ? $"[green]✓[/] Feed '{Markup.Escape(revokeFeedId)}' revoked from '{Markup.Escape(revokeUserId)}'"
-                                    : $"[red]✗[/] Failed to revoke: {revokeResponse.StatusCode}");
+                                if (revokeResponse.IsSuccessStatusCode)
+                                {
+                                    Out.Success($"Feed '{Markup.Escape(revokeFeedId)}' revoked from '{Markup.Escape(revokeUserId)}'");
+                                }
+                                else
+                                {
+                                    Out.Error($"Failed to revoke: {revokeResponse.StatusCode}");
+                                }
                             }
                             catch (Exception ex)
                             {
-                                AnsiConsole.MarkupLine($"[red]✗[/] Error: {ex.Message}");
+                                Out.Error($"Error: {ex.Message}");
                             }
                             WaitForKeyPress();
                             break;
@@ -681,7 +698,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             var rotateUserId = AnsiConsole.Prompt(new TextPrompt<string>("User ID to rotate key for:").AllowEmpty());
                             if (string.IsNullOrWhiteSpace(rotateUserId))
                             {
-                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                Out.Cancelled();
                                 WaitForKeyPress();
                                 break;
                             }
@@ -696,7 +713,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                             if (confirmRotate != true)
                             {
-                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                Out.Cancelled();
                                 WaitForKeyPress();
                                 break;
                             }
@@ -711,23 +728,23 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                     var rotateJson = await rotateResponse.Content.ReadAsStringAsync(cancellationToken);
                                     var rotateData = JsonSerializer.Deserialize<JsonElement>(rotateJson);
 
-                                    AnsiConsole.MarkupLine("[green]✓[/] API key rotated");
-                                    AnsiConsole.WriteLine();
+                                    Out.Success("API key rotated");
+                                    Out.BlankLine();
 
                                     if (rotateData.TryGetProperty("apiKey", out var newKeyEl))
                                     {
-                                        AnsiConsole.MarkupLine($"[yellow bold]New API Key:[/]");
-                                        AnsiConsole.MarkupLine($"[cyan]{Markup.Escape(newKeyEl.GetString() ?? "")}[/]");
+                                        Out.MarkupLine($"[yellow bold]New API Key:[/]");
+                                        Out.MarkupLine($"[cyan]{Markup.Escape(newKeyEl.GetString() ?? "")}[/]");
                                     }
                                 }
                                 else
                                 {
-                                    AnsiConsole.MarkupLine($"[red]✗[/] Failed to rotate key: {rotateResponse.StatusCode}");
+                                    Out.Error($"Failed to rotate key: {rotateResponse.StatusCode}");
                                 }
                             }
                             catch (Exception ex)
                             {
-                                AnsiConsole.MarkupLine($"[red]✗[/] Error: {ex.Message}");
+                                Out.Error($"Error: {ex.Message}");
                             }
                             WaitForKeyPress();
                             break;
@@ -737,26 +754,26 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.Delete:
                     if (!isConnected || httpClient == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        Out.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
                     }
                     else if (currentFeed == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
-                        AnsiConsole.WriteLine();
+                        Out.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
+                        Out.BlankLine();
                     }
                     else
                     {
                         var episodes = await EpisodeHelpers.GetEpisodesAsync(httpClient, currentFeed.Id);
                         if (episodes == null || episodes.Count == 0)
                         {
-                            AnsiConsole.MarkupLine("[yellow]No episodes to delete.[/]");
+                            Out.MarkupLine("[yellow]No episodes to delete.[/]");
                         }
                         else
                         {
                             var selected = EpisodeHelpers.SelectEpisodesMulti(episodes);
                             if (selected.Count == 0)
                             {
-                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                Out.Cancelled();
                             }
                             else if (selected.Count == 1)
                             {
@@ -765,7 +782,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             else
                             {
                                 // Batch delete with confirmation
-                                AnsiConsole.WriteLine();
+                                Out.BlankLine();
                                 var confirmBatch = new MenuBuilder<bool?>()
                                     .WithTitle($"Delete [cyan]{selected.Count}[/] episodes from [cyan]{Markup.Escape(currentFeed.Title)}[/]?")
                                     .WithHint("(Y/N, Esc to cancel)")
@@ -776,11 +793,11 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                                 if (confirmBatch != true)
                                 {
-                                    AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                    Out.Cancelled();
                                 }
                                 else
                                 {
-                                    AnsiConsole.WriteLine();
+                                    Out.BlankLine();
 
                                     var delSuccessCount = 0;
                                     var delFailureCount = 0;
@@ -816,16 +833,16 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                             }
                                         });
 
-                                    AnsiConsole.WriteLine();
+                                    Out.BlankLine();
 
                                     if (delSuccessCount > 0)
                                     {
-                                        AnsiConsole.MarkupLine($"[green]✓[/] Deleted {delSuccessCount} of {selected.Count} episode(s)");
+                                        Out.Success($"Deleted {delSuccessCount} of {selected.Count} episode(s)");
                                     }
 
                                     if (delFailureCount > 0)
                                     {
-                                        AnsiConsole.MarkupLine($"[red]✗[/] Failed to delete {delFailureCount} episode(s)");
+                                        Out.Error($"Failed to delete {delFailureCount} episode(s)");
                                     }
                                 }
                             }
@@ -839,7 +856,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.SwitchFeed:
                     if (!isConnected || httpClient == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Preferences to connect.[/]");
+                        Out.MarkupLine("[yellow]Not connected. Use Preferences to connect.[/]");
                         WaitForKeyPress();
                     }
                     else
@@ -861,7 +878,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 case MenuChoice.ManageFeeds:
                     if (!isConnected || httpClient == null)
                     {
-                        AnsiConsole.MarkupLine("[yellow]Not connected. Use Preferences to connect.[/]");
+                        Out.MarkupLine("[yellow]Not connected. Use Preferences to connect.[/]");
                         WaitForKeyPress();
                         break;
                     }
@@ -907,7 +924,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             if (createResult.Success)
                             {
                                 currentFeed = createResult.Feed;
-                                AnsiConsole.MarkupLine($"Switched to feed: [cyan]{Markup.Escape(currentFeed!.Title)}[/]");
+                                Out.MarkupLine($"Switched to feed: [cyan]{Markup.Escape(currentFeed!.Title)}[/]");
                             }
                             WaitForKeyPress();
                             break;
@@ -936,7 +953,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 {
                                     // Follow the rename
                                     currentFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, renameResult.FeedId!);
-                                    AnsiConsole.MarkupLine($"Switched to renamed feed: [cyan]{Markup.Escape(currentFeed?.Title ?? renameResult.FeedId!)}[/]");
+                                    Out.MarkupLine($"Switched to renamed feed: [cyan]{Markup.Escape(currentFeed?.Title ?? renameResult.FeedId!)}[/]");
                                 }
                                 WaitForKeyPress();
                             }
@@ -972,7 +989,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                             if (string.IsNullOrWhiteSpace(iconPath))
                             {
-                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                Out.Cancelled();
                                 WaitForKeyPress();
                                 break;
                             }
@@ -983,7 +1000,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             // Validate file exists
                             if (!File.Exists(iconPath))
                             {
-                                AnsiConsole.MarkupLine($"[red]✗[/] File not found: {Markup.Escape(iconPath)}");
+                                Out.Error($"File not found: {Markup.Escape(iconPath)}");
                                 WaitForKeyPress();
                                 break;
                             }
@@ -992,7 +1009,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             var iconExt = Path.GetExtension(iconPath).ToLowerInvariant();
                             if (iconExt != ".png" && iconExt != ".jpg" && iconExt != ".jpeg")
                             {
-                                AnsiConsole.MarkupLine("[red]✗[/] Icon must be a PNG or JPEG file");
+                                Out.Error("Icon must be a PNG or JPEG file");
                                 WaitForKeyPress();
                                 break;
                             }
@@ -1022,12 +1039,12 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                             if (confirmRemove != true)
                             {
-                                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                Out.Cancelled();
                                 WaitForKeyPress();
                                 break;
                             }
 
-                            AnsiConsole.WriteLine();
+                            Out.BlankLine();
 
                             // Delete icon
                             await FeedHelpers.DeleteIconAsync(httpClient, feedToRemoveIcon.Id);
@@ -1055,7 +1072,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         }
                         else if (!autoConnect)
                         {
-                            AnsiConsole.MarkupLine("[yellow]Auto-connect disabled. Use Settings to connect manually.[/]");
+                            Out.MarkupLine("[yellow]Auto-connect disabled. Use Settings to connect manually.[/]");
                             WaitForKeyPress();
                         }
                     }
@@ -1090,12 +1107,12 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             if (autoConnectChoice.HasValue)
                             {
                                 PreferencesHelpers.SetAutoConnectEnabled(env, autoConnectChoice.Value);
-                                AnsiConsole.MarkupLine($"[green]✓[/] Auto-connect on startup {(autoConnectChoice.Value ? "enabled" : "disabled")}");
+                                Out.Success($"Auto-connect on startup {(autoConnectChoice.Value ? "enabled" : "disabled")}");
 
                                 // If enabling and not connected, offer to connect now
                                 if (autoConnectChoice.Value && !isConnected)
                                 {
-                                    AnsiConsole.WriteLine();
+                                    Out.BlankLine();
                                     if (await AnsiConsole.ConfirmAsync("Connect now?", defaultValue: true, cancellationToken: cancellationToken))
                                     {
                                         (httpClient, currentUser, isConnected, serverVersion) = await ShowHeader(
@@ -1113,7 +1130,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         case "connect":
                             if (isConnected)
                             {
-                                AnsiConsole.MarkupLine("[green]✓[/] Already connected.");
+                                Out.Success("Already connected.");
                                 WaitForKeyPress();
                             }
                             else
@@ -1141,7 +1158,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             if (normChoice.HasValue)
                             {
                                 PreferencesHelpers.SetNormalizationEnabled(env, normChoice.Value);
-                                AnsiConsole.MarkupLine($"[green]✓[/] Audio normalization {(normChoice.Value ? "enabled" : "disabled")}");
+                                Out.Success($"Audio normalization {(normChoice.Value ? "enabled" : "disabled")}");
                                 WaitForKeyPress();
                             }
                             break;
@@ -1149,21 +1166,21 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         case "apikey-local":
                             var currentKey = PreferencesHelpers.GetApiKey(env);
 
-                            AnsiConsole.MarkupLine(!string.IsNullOrEmpty(currentKey)
+                            Out.MarkupLine(!string.IsNullOrEmpty(currentKey)
                                 ? $"Current API key: [cyan]{PreferencesHelpers.MaskApiKey(currentKey)}[/]"
                                 : "[yellow]No API key currently configured.[/]");
 
-                            AnsiConsole.WriteLine();
+                            Out.BlankLine();
 
                             var newApiKey = AnsiConsole.Prompt(new TextPrompt<string>("Enter new API key (or press Enter to cancel):").AllowEmpty());
 
                             if (!string.IsNullOrWhiteSpace(newApiKey))
                             {
                                 PreferencesHelpers.SaveApiKey(env, newApiKey.Trim());
-                                AnsiConsole.MarkupLine($"[green]✓[/] API key saved for {env}");
+                                Out.Success($"API key saved for {env}");
 
                                 // Offer to reconnect with new key
-                                AnsiConsole.WriteLine();
+                                Out.BlankLine();
                                 if (await AnsiConsole.ConfirmAsync("Reconnect with new API key?", true, cancellationToken))
                                 {
                                     (httpClient, currentUser, isConnected, serverVersion) = await ShowHeader(
@@ -1188,7 +1205,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         case "apikey-rotate":
                             if (!isConnected || httpClient == null)
                             {
-                                AnsiConsole.MarkupLine("[yellow]Not connected. Connect first to rotate your API key on the server.[/]");
+                                Out.MarkupLine("[yellow]Not connected. Connect first to rotate your API key on the server.[/]");
                                 WaitForKeyPress();
                                 break;
                             }
@@ -1199,7 +1216,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 var meResponse = await httpClient.GetAsync("/api/users/me", cancellationToken);
                                 if (!meResponse.IsSuccessStatusCode)
                                 {
-                                    AnsiConsole.MarkupLine($"[red]✗[/] Failed to get current user: {meResponse.StatusCode}");
+                                    Out.Error($"Failed to get current user: {meResponse.StatusCode}");
                                     WaitForKeyPress();
                                     break;
                                 }
@@ -1209,19 +1226,19 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                                 if (!meData.TryGetProperty("id", out var idElement))
                                 {
-                                    AnsiConsole.MarkupLine("[red]✗[/] Could not determine current user ID");
+                                    Out.Error("Could not determine current user ID");
                                     WaitForKeyPress();
                                     break;
                                 }
 
                                 var userId = idElement.GetString();
-                                AnsiConsole.MarkupLine($"Current user: [cyan]{Markup.Escape(userId ?? "")}[/]");
-                                AnsiConsole.WriteLine();
+                                Out.MarkupLine($"Current user: [cyan]{Markup.Escape(userId ?? "")}[/]");
+                                Out.BlankLine();
 
                                 var confirmRotate = await AnsiConsole.ConfirmAsync("Are you sure you want to rotate your API key? The current key will stop working.", false, cancellationToken);
                                 if (!confirmRotate)
                                 {
-                                    AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                                    Out.Cancelled();
                                     WaitForKeyPress();
                                     break;
                                 }
@@ -1233,21 +1250,21 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                     var rotateJson = await rotateResponse.Content.ReadAsStringAsync(cancellationToken);
                                     var rotateData = JsonSerializer.Deserialize<JsonElement>(rotateJson);
 
-                                    AnsiConsole.MarkupLine("[green]✓[/] API key rotated successfully");
-                                    AnsiConsole.WriteLine();
+                                    Out.Success("API key rotated successfully");
+                                    Out.BlankLine();
 
                                     if (rotateData.TryGetProperty("apiKey", out var apiKeyElement))
                                     {
                                         var rotatedKey = apiKeyElement.GetString();
-                                        AnsiConsole.MarkupLine($"[yellow bold]New API Key:[/] [cyan]{Markup.Escape(rotatedKey ?? "")}[/]");
-                                        AnsiConsole.WriteLine();
+                                        Out.MarkupLine($"[yellow bold]New API Key:[/] [cyan]{Markup.Escape(rotatedKey ?? "")}[/]");
+                                        Out.BlankLine();
 
                                         // Save and reconnect
                                         var saveRotatedKey = await AnsiConsole.ConfirmAsync($"Save this key and reconnect?", true, cancellationToken);
                                         if (saveRotatedKey && !string.IsNullOrEmpty(rotatedKey))
                                         {
                                             PreferencesHelpers.SaveApiKey(env, rotatedKey);
-                                            AnsiConsole.MarkupLine($"[green]✓[/] API key saved for {env}");
+                                            Out.Success($"API key saved for {env}");
 
                                             // Reconnect with new key
                                             (httpClient, currentUser, isConnected, serverVersion) = await ShowHeader(
@@ -1264,8 +1281,8 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                         }
                                         else
                                         {
-                                            AnsiConsole.MarkupLine("[yellow]Δ[/] API key was NOT saved. Copy it now - it will NOT be shown again!");
-                                            AnsiConsole.MarkupLine("[yellow]You will need to manually update your API key to reconnect.[/]");
+                                            Out.Warning("API key was NOT saved. Copy it now - it will NOT be shown again!");
+                                            Out.MarkupLine("[yellow]You will need to manually update your API key to reconnect.[/]");
                                             isConnected = false;
                                             httpClient = null;
                                             currentUser = null;
@@ -1277,17 +1294,17 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 else
                                 {
                                     var errorContent = await rotateResponse.Content.ReadAsStringAsync(cancellationToken);
-                                    AnsiConsole.MarkupLine($"[red]✗[/] Failed to rotate API key: {rotateResponse.StatusCode}");
+                                    Out.Error($"Failed to rotate API key: {rotateResponse.StatusCode}");
                                     if (!string.IsNullOrEmpty(errorContent))
                                     {
-                                        AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
+                                        Out.Error(Markup.Escape(errorContent));
                                     }
                                     WaitForKeyPress();
                                 }
                             }
                             catch (Exception ex)
                             {
-                                AnsiConsole.MarkupLine($"[red]✗[/] Error rotating API key: {ex.Message}");
+                                Out.Error($"Error rotating API key: {ex.Message}");
                                 WaitForKeyPress();
                             }
                             break;
@@ -1296,20 +1313,20 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             var showApiKey = PreferencesHelpers.GetApiKey(env);
                             var showFilePath = PreferencesHelpers.GetPreferencesPath();
 
-                            AnsiConsole.MarkupLine(string.IsNullOrEmpty(showApiKey)
+                            Out.MarkupLine(string.IsNullOrEmpty(showApiKey)
                                 ? $"[yellow]API key ({env}):[/] (not configured)"
                                 : $"[bold]API key ({env}):[/] {PreferencesHelpers.MaskApiKey(showApiKey)}");
 
                             var showNormPref = PreferencesHelpers.GetNormalizationEnabled(env);
                             var showNormEnabled = showNormPref ?? true;
-                            AnsiConsole.MarkupLine($"[bold]Audio normalization ({env}):[/] {(showNormEnabled ? "enabled" : "disabled")}{(showNormPref.HasValue ? "" : " (default)")}");
+                            Out.MarkupLine($"[bold]Audio normalization ({env}):[/] {(showNormEnabled ? "enabled" : "disabled")}{(showNormPref.HasValue ? "" : " (default)")}");
 
                             var showAutoConnectPref = PreferencesHelpers.GetAutoConnectEnabled(env);
                             var showAutoConnectEnabled = showAutoConnectPref ?? true;
-                            AnsiConsole.MarkupLine($"[bold]Auto-connect ({env}):[/] {(showAutoConnectEnabled ? "enabled" : "disabled")}{(showAutoConnectPref.HasValue ? "" : " (default)")}");
+                            Out.MarkupLine($"[bold]Auto-connect ({env}):[/] {(showAutoConnectEnabled ? "enabled" : "disabled")}{(showAutoConnectPref.HasValue ? "" : " (default)")}");
 
-                            AnsiConsole.WriteLine();
-                            AnsiConsole.MarkupLine($"[grey]Preferences: {Markup.Escape(showFilePath)}[/]");
+                            Out.BlankLine();
+                            Out.MarkupLine($"[grey]Preferences: {Markup.Escape(showFilePath)}[/]");
                             WaitForKeyPress();
                             break;
 
@@ -1326,7 +1343,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                             if (selectedFiles.Count == 0)
                             {
-                                AnsiConsole.MarkupLine("[grey]No files selected.[/]");
+                                Out.MarkupLine("[grey]No files selected.[/]");
                                 WaitForKeyPress();
                                 break;
                             }
@@ -1345,7 +1362,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                     var overwrite = await AnsiConsole.ConfirmAsync($"[yellow]{fileName}[/] already exists. Overwrite?", defaultValue: false, cancellationToken: cancellationToken);
                                     if (!overwrite)
                                     {
-                                        AnsiConsole.MarkupLine($"[grey]Skipped {fileName}[/]");
+                                        Out.MarkupLine($"[grey]Skipped {fileName}[/]");
                                         continue;
                                     }
                                 }
@@ -1353,7 +1370,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 await using var stream = genAssembly.GetManifestResourceStream(resourceName);
                                 if (stream == null)
                                 {
-                                    AnsiConsole.MarkupLine($"[red]✗[/] Could not find embedded resource: {resourceName}");
+                                    Out.Error($"Could not find embedded resource: {resourceName}");
                                     continue;
                                 }
 
@@ -1361,14 +1378,14 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 var content = await reader.ReadToEndAsync(cancellationToken);
                                 await File.WriteAllTextAsync(targetPath, content, cancellationToken);
 
-                                AnsiConsole.MarkupLine($"[green]✓[/] Generated [cyan]{fileName}[/]");
+                                Out.Success($"Generated [cyan]{fileName}[/]");
                                 generatedCount++;
                             }
 
                             if (generatedCount > 0)
                             {
-                                AnsiConsole.WriteLine();
-                                AnsiConsole.MarkupLine($"Generated {generatedCount} file(s) to [cyan]{outputPath}[/]");
+                                Out.BlankLine();
+                                Out.MarkupLine($"Generated {generatedCount} file(s) to [cyan]{outputPath}[/]");
                             }
                             WaitForKeyPress();
                             break;
@@ -1376,8 +1393,8 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     break;
 
                 case MenuChoice.Quit:
-                    AnsiConsole.MarkupLine("[grey]Bye.[/]");
-                    AnsiConsole.WriteLine();
+                    Out.MarkupLine("[grey]Bye.[/]");
+                    Out.BlankLine().Flush();
                     return 0;
             }
         }
@@ -1385,7 +1402,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
     private static void WaitForKeyPress()
     {
-        AnsiConsole.Markup("[grey]Press any key to continue...[/]");
+        Out.Markup("[grey]Press any key to continue...[/]");
         Console.ReadKey(true);
     }
 
@@ -1397,8 +1414,8 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         bool currentlyConnected = false,
         string? existingServerVersion = null)
     {
-        Console.Write("\e[2J\e[H");
-        AnsiConsole.WriteLine();
+        Out.WriteRaw("\e[2J\e[H");
+        Out.BlankLine();
 
         // Get CLI version
         var versionAttr = Assembly.GetExecutingAssembly()
@@ -1406,19 +1423,19 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         var version = versionAttr?.InformationalVersion ?? "unknown";
 
         // Show title with server version if available
-        AnsiConsole.MarkupLine(!string.IsNullOrEmpty(existingServerVersion)
+        Out.MarkupLine(!string.IsNullOrEmpty(existingServerVersion)
             ? $"[bold]FeatherPod Episode Manager[/] [grey]v{version} (server: {existingServerVersion})[/]"
             : $"[bold]FeatherPod Episode Manager[/] [grey]v{version}[/]");
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"Environment: [cyan]{env}[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine($"Environment: [cyan]{env}[/]");
+        Out.BlankLine();
 
         if (!string.IsNullOrEmpty(apiUrl))
         {
-            AnsiConsole.MarkupLine($"API: [cyan]{apiUrl}[/]");
+            Out.MarkupLine($"API: [cyan]{apiUrl}[/]");
             if (!shouldConnect)
             {
-                AnsiConsole.WriteLine();
+                Out.BlankLine();
             }
         }
 
@@ -1435,8 +1452,8 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             {
                 if (!PreferencesHelpers.PromptAndSaveApiKey(env))
                 {
-                    AnsiConsole.MarkupLine("[red]✗[/] Disconnected (no API key)");
-                    AnsiConsole.WriteLine();
+                    Out.Error("Disconnected (no API key)");
+                    Out.BlankLine();
                     ShowFeedStatus(currentFeed, false);
                     return (null, null, false, null);
                 }
@@ -1445,8 +1462,8 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
             if (string.IsNullOrEmpty(apiKey))
             {
-                AnsiConsole.MarkupLine("[red]✗[/] Disconnected (no API key)");
-                AnsiConsole.WriteLine();
+                Out.Error("Disconnected (no API key)");
+                Out.BlankLine();
                 ShowFeedStatus(currentFeed, false);
                 return (null, null, false, null);
             }
@@ -1505,38 +1522,45 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     });
 
                 isConnected = true;
-                Console.WriteLine();
-                AnsiConsole.MarkupLine("[green]✓[/] Connected");
+                Out.BlankLine();
+                Out.Success("Connected");
 
                 // Update title line with server version immediately
                 if (!string.IsNullOrEmpty(serverVersion))
                 {
-                    Console.Write($"\e[s\e[2;1H\e[2K");
-                    AnsiConsole.Markup($"[bold]FeatherPod Episode Manager[/] [grey]v{version} (server: {serverVersion})[/]");
-                    Console.Write("\e[u");
+                    Out.WriteRaw("\e[s\e[2;1H\e[2K");
+                    Out.Markup($"[bold]FeatherPod Episode Manager[/] [grey]v{version} (server: {serverVersion})[/]");
+                    Out.WriteRaw("\e[u");
                 }
             }
             catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Unauthorized)
             {
-                Console.WriteLine();
-                AnsiConsole.MarkupLine("[red]✗[/] Authentication failed (invalid API key)");
+                Out.BlankLine();
+                Out.Error("Authentication failed (invalid API key)");
                 httpClient = null;
                 isConnected = false;
             }
             catch (Exception ex)
             {
-                Console.WriteLine();
-                AnsiConsole.MarkupLine($"[red]✗[/] Connection failed: {Markup.Escape(ex.Message)}");
+                Out.BlankLine();
+                Out.Error($"Connection failed: {Markup.Escape(ex.Message)}");
                 httpClient = null;
                 isConnected = false;
             }
         }
         else
         {
-            AnsiConsole.MarkupLine(isConnected ? "[green]✓[/] Connected" : "[red]✗[/] Disconnected");
+            if (isConnected)
+            {
+                Out.Success("Connected");
+            }
+            else
+            {
+                Out.Error("Disconnected");
+            }
         }
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
         ShowFeedStatus(currentFeed, isConnected);
 
         return (httpClient, userInfo, isConnected, serverVersion);
@@ -1546,22 +1570,24 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
     {
         if (currentFeed != null)
         {
-            AnsiConsole.MarkupLine($"Feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
+            Out.MarkupLine($"Feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
         }
         else if (!isConnected)
         {
-            AnsiConsole.MarkupLine("[grey]No feed selected (not connected)[/]");
+            Out.MarkupLine("[grey]No feed selected (not connected)[/]");
         }
         else
         {
-            AnsiConsole.MarkupLine("[yellow]No feed selected[/]");
+            Out.MarkupLine("[yellow]No feed selected[/]");
         }
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
     }
 
     private static MenuChoice ShowMenu(FeedConfig? currentFeed, bool isConnected, CurrentUserInfo? currentUser)
     {
+        Out.BlankLine().Flush();
+
         var menu = new MenuBuilder<MenuChoice>()
             .WithTitle("What would you like to do?")
             .WithHint("(arrow keys or highlighted letter)")

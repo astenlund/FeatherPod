@@ -4,15 +4,17 @@ using FeatherPod.Settings.Episode;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.Episode;
 
 internal sealed class PushCommand : AsyncCommand<PushSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, PushSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Episode Upload[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Episode Upload[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
@@ -29,7 +31,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
             feed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FeedId);
             if (feed == null)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Feed '{settings.FeedId}' not found.");
+                Out.Error($"Feed '{settings.FeedId}' not found.");
                 return 1;
             }
         }
@@ -38,7 +40,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
             feed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
             if (feed == null)
             {
-                AnsiConsole.MarkupLine("[red]✗[/] No feeds available. Create a feed first.");
+                Out.Error("No feeds available. Create a feed first.");
                 return 1;
             }
         }
@@ -48,7 +50,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
 
         if (files.Count == 0)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] No files found matching pattern: {settings.Files}");
+            Out.Error($"No files found matching pattern: {settings.Files}");
             return 1;
         }
 
@@ -57,20 +59,20 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         {
             if (!string.IsNullOrEmpty(settings.Title))
             {
-                AnsiConsole.MarkupLine("[red]✗[/] Cannot use -t/--title with multiple files (all episodes would get the same title)");
+                Out.Error("Cannot use -t/--title with multiple files (all episodes would get the same title)");
                 return 1;
             }
 
             if (!string.IsNullOrEmpty(settings.Description))
             {
-                AnsiConsole.MarkupLine("[red]✗[/] Cannot use -d/--description with multiple files (all episodes would get the same description)");
+                Out.Error("Cannot use -d/--description with multiple files (all episodes would get the same description)");
                 return 1;
             }
 
             if (!string.IsNullOrEmpty(settings.PublishedDate))
             {
-                AnsiConsole.WriteLine();
-                AnsiConsole.MarkupLine("[yellow]Δ[/] Using -p/--published-date with multiple files will set the same date for all episodes.");
+                Out.BlankLine();
+                Out.Warning("Using -p/--published-date with multiple files will set the same date for all episodes.");
                 var continueAnyway = new MenuBuilder<bool?>()
                     .WithTitle("Continue anyway?")
                     .WithHint("(arrow keys or Y/N)")
@@ -81,15 +83,15 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
 
                 if (continueAnyway != true)
                 {
-                    AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                    Out.Cancelled();
                     return 1;
                 }
-                AnsiConsole.WriteLine();
+                Out.BlankLine();
             }
         }
 
-        AnsiConsole.MarkupLine($"Found [bold]{files.Count}[/] file(s) to upload");
-        AnsiConsole.WriteLine();
+        Out.MarkupLine($"Found [bold]{files.Count}[/] file(s) to upload");
+        Out.BlankLine();
 
         // Confirm upload
         var fileList = files.Count <= 5
@@ -106,11 +108,12 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
 
         if (confirmed != true)
         {
-            AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+            Out.Cancelled();
+
             return 1;
         }
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
 
         // Prompt for date source if neither -p nor -x was provided
         var effectiveSettings = settings;
@@ -126,7 +129,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
 
             if (dateSource == null)
             {
-                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                Out.Cancelled();
                 return 1;
             }
 
@@ -152,21 +155,21 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
             else
                 failureCount++;
 
-            AnsiConsole.WriteLine();
+            Out.BlankLine();
         }
 
         // Summary
         if (successCount > 0)
         {
-            AnsiConsole.MarkupLine($"[green]✓[/] Successfully uploaded: {successCount}");
+            Out.Success($"Successfully uploaded: {successCount}");
         }
 
         if (failureCount > 0)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed: {failureCount}");
+            Out.Error($"Failed: {failureCount}");
         }
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine().Flush();
 
         return failureCount == 0 ? 0 : 1;
     }

@@ -7,6 +7,8 @@ using FeatherPod.Settings.Episode;
 using Microsoft.Extensions.Configuration;
 using Spectre.Console;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Infrastructure;
 
 internal static class EpisodeHelpers
@@ -86,15 +88,15 @@ internal static class EpisodeHelpers
             var fileToUpload = filePath;
             if (settings.ServerNormalize)
             {
-                AnsiConsole.MarkupLine($"[cyan]{fileName}[/] will be normalized on server to -16 LUFS");
+                Out.MarkupLine($"[cyan]{fileName}[/] will be normalized on server to -16 LUFS");
             }
             else if (normalizationConfig.Enabled)
             {
                 // Check if FFmpeg is available
                 if (!FFmpegService.IsFFmpegAvailable())
                 {
-                    AnsiConsole.WriteLine();
-                    AnsiConsole.MarkupLine("[yellow]Δ[/] FFmpeg is not installed or not found.");
+                    Out.BlankLine();
+                    Out.Warning("FFmpeg is not installed or not found.");
 
                     // Offer to download FFmpeg automatically
                     var downloadChoice = new MenuBuilder<bool?>()
@@ -107,13 +109,13 @@ internal static class EpisodeHelpers
 
                     if (downloadChoice == true)
                     {
-                        AnsiConsole.WriteLine();
+                        Out.BlankLine();
                         var downloadSuccess = await DownloadFFmpegWithProgressAsync();
 
                         if (!downloadSuccess)
                         {
-                            AnsiConsole.MarkupLine("[red]✗[/] Failed to download FFmpeg.");
-                            AnsiConsole.WriteLine();
+                            Out.Error("Failed to download FFmpeg.");
+                            Out.BlankLine();
 
                             var continueAfterFailure = new MenuBuilder<bool?>()
                                 .WithTitle("Continue upload without normalization?")
@@ -125,26 +127,28 @@ internal static class EpisodeHelpers
 
                             if (continueAfterFailure != true)
                             {
-                                AnsiConsole.MarkupLine("[grey]Upload cancelled.[/]");
+                                Out.Cancelled();
+
                                 return false;
                             }
                         }
                         else
                         {
-                            AnsiConsole.MarkupLine("[green]✓[/] FFmpeg downloaded successfully");
+                            Out.Success("FFmpeg downloaded successfully");
                         }
 
-                        AnsiConsole.WriteLine();
+                        Out.BlankLine();
                     }
                     else if (downloadChoice == false)
                     {
                         // User chose not to download, continue without normalization
-                        AnsiConsole.WriteLine();
+                        Out.BlankLine();
                     }
                     else
                     {
                         // User cancelled (Esc)
-                        AnsiConsole.MarkupLine("[grey]Upload cancelled.[/]");
+                        Out.Cancelled();
+
                         return false;
                     }
                 }
@@ -165,8 +169,8 @@ internal static class EpisodeHelpers
 
                     if (!normResult.Success)
                     {
-                        AnsiConsole.WriteLine();
-                        AnsiConsole.MarkupLine("[yellow]Δ[/] Audio normalization failed.");
+                        Out.BlankLine();
+                        Out.Warning("Audio normalization failed.");
 
                         var continueWithOriginal = new MenuBuilder<bool?>()
                             .WithTitle("Continue upload with original (unnormalized) file?")
@@ -178,7 +182,7 @@ internal static class EpisodeHelpers
 
                         if (continueWithOriginal != true)
                         {
-                            AnsiConsole.MarkupLine("[grey]Upload cancelled.[/]");
+                            Out.Cancelled();
 
                             return false;
                         }
@@ -189,7 +193,7 @@ internal static class EpisodeHelpers
                         NormalizationProgressRenderer.DisplayResult(normResult);
                     }
 
-                    AnsiConsole.WriteLine();
+                    Out.BlankLine();
                 }
             }
 
@@ -261,8 +265,8 @@ internal static class EpisodeHelpers
                             var responseContent = await response.Content.ReadAsStringAsync();
                             var episode = JsonSerializer.Deserialize<Episode>(responseContent, JsonOptions);
 
-                            AnsiConsole.MarkupLine($"[green]✓[/] Uploaded: [cyan]{fileName}[/]");
-                            AnsiConsole.WriteLine();
+                            Out.Success($"Uploaded: [cyan]{fileName}[/]");
+                            Out.BlankLine();
 
                             if (episode != null)
                             {
@@ -271,28 +275,28 @@ internal static class EpisodeHelpers
                         }
                         else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                         {
-                            AnsiConsole.MarkupLine($"[red]✗[/] Unauthorized: Check your API key configuration");
+                            Out.Error("Unauthorized: Check your API key configuration");
                         }
                         else
                         {
                             var errorContent = await response.Content.ReadAsStringAsync();
-                            AnsiConsole.MarkupLine($"[red]✗[/] Failed to upload [cyan]{fileName}[/]: {response.StatusCode}");
+                            Out.Error($"Failed to upload [cyan]{fileName}[/]: {response.StatusCode}");
                             if (!string.IsNullOrEmpty(errorContent))
                             {
-                                AnsiConsole.MarkupLine($"  [red]✗[/] {errorContent}");
+                                Out.Error(errorContent, indent: 2);
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        AnsiConsole.MarkupLine($"[red]✗[/] Error uploading [cyan]{fileName}[/]: {ex.Message}");
+                        Out.Error($"Error uploading [cyan]{fileName}[/]: {ex.Message}");
                     }
                 });
 
             // Poll for async normalization completion (outside Status block to avoid nesting)
             if (pendingJobId != null)
             {
-                AnsiConsole.MarkupLine($"[green]✓[/] Uploaded: [cyan]{fileName}[/] (normalizing on server...)");
+                Out.Success($"Uploaded: [cyan]{fileName}[/] (normalizing on server...)");
                 success = await PollJobCompletionAsync(httpClient, pendingJobId, fileName);
             }
 
@@ -345,7 +349,8 @@ internal static class EpisodeHelpers
 
             if (!response.IsSuccessStatusCode)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Failed to fetch episodes from feed '{feedId}'");
+                Out.Error($"Failed to fetch episodes from feed '{feedId}'");
+
                 return null;
             }
 
@@ -355,7 +360,8 @@ internal static class EpisodeHelpers
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error fetching episodes: {ex.Message}");
+            Out.Error($"Error fetching episodes: {ex.Message}");
+
             return null;
         }
     }
@@ -375,7 +381,8 @@ internal static class EpisodeHelpers
                 var errorJson = await response.Content.ReadAsStringAsync();
                 var errorObj = JsonSerializer.Deserialize<JsonElement>(errorJson);
                 var errorMsg = errorObj.TryGetProperty("error", out var err) ? err.GetString() : "Unknown error";
-                AnsiConsole.MarkupLine($"[red]✗[/] {errorMsg}");
+                Out.Error(errorMsg ?? "Unknown error");
+
                 return false;
             }
 
@@ -383,7 +390,8 @@ internal static class EpisodeHelpers
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error moving episode: {ex.Message}");
+            Out.Error($"Error moving episode: {ex.Message}");
+
             return false;
         }
     }
@@ -403,7 +411,8 @@ internal static class EpisodeHelpers
                 var errorJson = await response.Content.ReadAsStringAsync();
                 var errorObj = JsonSerializer.Deserialize<JsonElement>(errorJson);
                 var errorMsg = errorObj.TryGetProperty("error", out var err) ? err.GetString() : "Unknown error";
-                AnsiConsole.MarkupLine($"[red]✗[/] {errorMsg}");
+                Out.Error(errorMsg ?? "Unknown error");
+
                 return false;
             }
 
@@ -411,7 +420,8 @@ internal static class EpisodeHelpers
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error copying episode: {ex.Message}");
+            Out.Error($"Error copying episode: {ex.Message}");
+
             return false;
         }
     }
@@ -504,15 +514,15 @@ internal static class EpisodeHelpers
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException)
         {
-            AnsiConsole.MarkupLine($"[yellow]Δ[/] SSE connection failed, falling back to polling...");
+            Out.Warning("SSE connection failed, falling back to polling...");
 
             return await FallbackPollJobCompletionAsync(httpClient, jobId, fileName, cts.Token);
         }
         catch (OperationCanceledException)
         {
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine($"[yellow]Δ[/] Normalization timed out after {maxWaitMs / 1000} seconds");
-            AnsiConsole.MarkupLine($"  Job ID: [grey]{jobId}[/] - check status manually");
+            Out.BlankLine();
+            Out.Warning($"Normalization timed out after {maxWaitMs / 1000} seconds");
+            Out.MarkupLine($"  Job ID: [grey]{jobId}[/] - check status manually");
 
             return false;
         }
@@ -642,7 +652,8 @@ internal static class EpisodeHelpers
                         var response = await httpClient.GetAsync($"/api/jobs/{jobId}", cancellationToken);
                         if (!response.IsSuccessStatusCode)
                         {
-                            AnsiConsole.MarkupLine($"\n[red]✗[/] Failed to check job status: {response.StatusCode}");
+                            Out.BlankLine();
+                            Out.Error($"Failed to check job status: {response.StatusCode}");
 
                             return false;
                         }
@@ -657,18 +668,18 @@ internal static class EpisodeHelpers
 
                         if (status.Status == nameof(JobStatus.Completed))
                         {
-                            AnsiConsole.WriteLine();
-                            AnsiConsole.MarkupLine($"[green]✓[/] Normalization complete");
-                            AnsiConsole.WriteLine();
-                            AnsiConsole.MarkupLine($"  Episode ID: [grey]{status.EpisodeId}[/]");
+                            Out.BlankLine();
+                            Out.Success("Normalization complete");
+                            Out.BlankLine();
+                            Out.MarkupLine($"  Episode ID: [grey]{status.EpisodeId}[/]");
 
                             return true;
                         }
 
                         if (status.Status == nameof(JobStatus.Failed))
                         {
-                            AnsiConsole.WriteLine();
-                            AnsiConsole.MarkupLine($"[red]✗[/] Normalization failed: {Markup.Escape(status.Error ?? "Unknown error")}");
+                            Out.BlankLine();
+                            Out.Error($"Normalization failed: {Markup.Escape(status.Error ?? "Unknown error")}");
 
                             return false;
                         }
@@ -681,7 +692,8 @@ internal static class EpisodeHelpers
                     }
                     catch (Exception ex)
                     {
-                        AnsiConsole.MarkupLine($"\n[red]✗[/] Error checking job status: {ex.Message}");
+                        Out.BlankLine();
+                        Out.Error($"Error checking job status: {ex.Message}");
 
                         return false;
                     }
@@ -693,10 +705,10 @@ internal static class EpisodeHelpers
 
     private static void DisplayEpisodeDetails(Episode episode)
     {
-        AnsiConsole.MarkupLine($"  ID: [grey]{episode.Id}[/]");
-        AnsiConsole.MarkupLine($"  Title: {Markup.Escape(episode.Title)}");
-        AnsiConsole.MarkupLine($"  Published: [grey]{episode.PublishedDate:yyyy-MM-dd HH:mm:ss}[/]");
-        AnsiConsole.MarkupLine($"  Duration: [grey]{FormatDuration(episode.Duration)}[/]");
-        AnsiConsole.MarkupLine($"  Size: [grey]{FormatFileSize(episode.FileSize)}[/]");
+        Out.MarkupLine($"  ID: [grey]{episode.Id}[/]");
+        Out.MarkupLine($"  Title: {Markup.Escape(episode.Title)}");
+        Out.MarkupLine($"  Published: [grey]{episode.PublishedDate:yyyy-MM-dd HH:mm:ss}[/]");
+        Out.MarkupLine($"  Duration: [grey]{FormatDuration(episode.Duration)}[/]");
+        Out.MarkupLine($"  Size: [grey]{FormatFileSize(episode.FileSize)}[/]");
     }
 }

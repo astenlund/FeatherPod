@@ -3,15 +3,17 @@ using FeatherPod.Settings.Feed;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.Feed;
 
 internal sealed class ListCommand : AsyncCommand<ListSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, ListSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Feed Management - List Feeds[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Feed Management - List Feeds[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
@@ -23,7 +25,7 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
 
         if (feeds.Count == 0)
         {
-            AnsiConsole.MarkupLine("[yellow]No feeds found.[/]");
+            Out.MarkupLine("[yellow]No feeds found.[/]");
             return 0;
         }
 
@@ -46,10 +48,10 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
             );
         }
 
-        AnsiConsole.Write(table);
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"[grey]Total: {feeds.Count} feed(s)[/]");
-        AnsiConsole.WriteLine();
+        Out.Write(table);
+        Out.BlankLine();
+        Out.MarkupLine($"[grey]Total: {feeds.Count} feed(s)[/]");
+        Out.BlankLine().Flush();
 
         return 0;
     }

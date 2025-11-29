@@ -3,15 +3,17 @@ using FeatherPod.Settings.User;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.User;
 
 internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, DeleteSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod User Management - Delete User[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod User Management - Delete User[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null)
@@ -28,7 +30,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
         var userId = settings.UserId.Trim();
         if (string.IsNullOrWhiteSpace(userId))
         {
-            AnsiConsole.MarkupLine("[red]✗[/] User ID cannot be empty");
+            Out.Error("User ID cannot be empty");
 
             return 1;
         }
@@ -36,7 +38,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
         var confirm = await AnsiConsole.ConfirmAsync($"Are you sure you want to delete user [cyan]{Markup.Escape(userId)}[/]?", false, cancellationToken);
         if (!confirm)
         {
-            AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+            Out.Cancelled();
 
             return 0;
         }
@@ -47,28 +49,28 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 
             if (response.IsSuccessStatusCode)
             {
-                AnsiConsole.WriteLine();
-                AnsiConsole.MarkupLine("[green]✓[/] User deleted successfully");
-                AnsiConsole.WriteLine();
+                Out.BlankLine();
+                Out.Success("User deleted successfully");
+                Out.BlankLine().Flush();
 
                 return 0;
             }
 
             var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
 
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed to delete user: {response.StatusCode}");
+            Out.Error($"Failed to delete user: {response.StatusCode}");
 
             if (!string.IsNullOrEmpty(errorContent))
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
+                Out.Error(Markup.Escape(errorContent));
             }
 
             return 1;
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error deleting user: {ex.Message}");
-            AnsiConsole.WriteLine();
+            Out.Error($"Error deleting user: {ex.Message}");
+            Out.BlankLine().Flush();
 
             return 1;
         }

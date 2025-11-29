@@ -3,6 +3,8 @@ using FeatherPod.Settings;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.Config;
 
 internal sealed class GenerateCommand : Command<ConfigGenerateSettings>
@@ -17,15 +19,15 @@ internal sealed class GenerateCommand : Command<ConfigGenerateSettings>
 
     public override int Execute(CommandContext context, ConfigGenerateSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]Generate Configuration Files[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]Generate Configuration Files[/]");
+        Out.BlankLine();
 
         var outputPath = settings.OutputPath ?? Directory.GetCurrentDirectory();
 
         if (!Directory.Exists(outputPath))
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Output directory does not exist: {outputPath}");
+            Out.Error($"Output directory does not exist: {outputPath}");
 
             return 1;
         }
@@ -34,7 +36,7 @@ internal sealed class GenerateCommand : Command<ConfigGenerateSettings>
 
         if (filesToGenerate.Count == 0)
         {
-            AnsiConsole.MarkupLine("[grey]No files selected.[/]");
+            Out.MarkupLine("[grey]No files selected.[/]");
 
             return 0;
         }
@@ -53,7 +55,7 @@ internal sealed class GenerateCommand : Command<ConfigGenerateSettings>
                 var overwrite = AnsiConsole.Confirm($"[yellow]{fileName}[/] already exists. Overwrite?", defaultValue: false);
                 if (!overwrite)
                 {
-                    AnsiConsole.MarkupLine($"[grey]Skipped {fileName}[/]");
+                    Out.MarkupLine($"[grey]Skipped {fileName}[/]");
                     continue;
                 }
             }
@@ -61,7 +63,7 @@ internal sealed class GenerateCommand : Command<ConfigGenerateSettings>
             using var stream = assembly.GetManifestResourceStream(resourceName);
             if (stream == null)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Could not find embedded resource: {resourceName}");
+                Out.Error($"Could not find embedded resource: {resourceName}");
                 continue;
             }
 
@@ -69,20 +71,20 @@ internal sealed class GenerateCommand : Command<ConfigGenerateSettings>
             var content = reader.ReadToEnd();
             File.WriteAllText(targetPath, content);
 
-            AnsiConsole.MarkupLine($"[green]✓[/] Generated [cyan]{fileName}[/]");
+            Out.Success($"Generated [cyan]{fileName}[/]");
             generatedCount++;
         }
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
 
         if (generatedCount > 0)
         {
-            AnsiConsole.MarkupLine($"Generated {generatedCount} file(s) to [cyan]{outputPath}[/]");
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("[grey]Edit these files to customize configuration, then run FeatherPod from this directory.[/]");
+            Out.MarkupLine($"Generated {generatedCount} file(s) to [cyan]{outputPath}[/]");
+            Out.BlankLine();
+            Out.MarkupLine("[grey]Edit these files to customize configuration, then run FeatherPod from this directory.[/]");
         }
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine().Flush();
 
         return 0;
     }

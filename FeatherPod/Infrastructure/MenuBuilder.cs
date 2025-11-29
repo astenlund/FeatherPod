@@ -1,6 +1,5 @@
-using Spectre.Console;
-
 using static System.StringComparison;
+using static FeatherPod.Infrastructure.ConsoleWriter;
 
 namespace FeatherPod.Infrastructure;
 
@@ -57,24 +56,24 @@ internal class MenuBuilder<T>
         try
         {
             // Render title and hint once (they don't change)
-            AnsiConsole.Markup($"[bold]{_title}[/] ");
-            AnsiConsole.MarkupLine($"[grey]{_hint}[/]");
+            Out.MarkupRaw($"[bold]{_title}[/] ");
+            Out.MarkupLineRaw($"[grey]{_hint}[/]");
 
             // Print blank line before options (reduces flicker on redraw)
-            Console.WriteLine();
+            Out.WriteLineRaw();
 
             while (true)
             {
                 if (!isFirstRender)
                 {
                     // Move cursor up to the start of options using ANSI escape code
-                    Console.Write($"\e[{_options.Count}A");
+                    Out.WriteRaw($"\e[{_options.Count}A");
                 }
 
                 // Render options
                 for (var i = 0; i < _options.Count; i++)
                 {
-                    Console.Write("\r"); // Return to start of line
+                    Out.WriteRaw("\r"); // Return to start of line
 
                     var option = _options[i];
                     var prefix = i == selected ? "[cyan]>[/] " : "  ";
@@ -82,9 +81,9 @@ internal class MenuBuilder<T>
                     var label = option.Formatter?.Invoke(i) ?? option.Label;
                     var formattedLabel = FormatLabelWithShortcut(label, option.Shortcut, i == selected);
 
-                    AnsiConsole.Markup($"{prefix}{formattedLabel}");
-                    Console.Write("\e[K"); // Clear from cursor to end of line
-                    Console.WriteLine();
+                    Out.MarkupRaw($"{prefix}{formattedLabel}");
+                    Out.WriteRaw("\e[K"); // Clear from cursor to end of line
+                    Out.WriteLineRaw();
                 }
 
                 isFirstRender = false;
@@ -97,7 +96,7 @@ internal class MenuBuilder<T>
                     if (!string.IsNullOrEmpty(option.Shortcut) && keyInfo.Key.ToString().Equals(option.Shortcut, OrdinalIgnoreCase))
                     {
                         Console.CursorVisible = true;
-                        AnsiConsole.WriteLine();
+                        Out.WriteLineRaw();
 
                         return option.Value;
                     }
@@ -116,14 +115,16 @@ internal class MenuBuilder<T>
 
                     case ConsoleKey.Enter:
                         Console.CursorVisible = true;
-                        AnsiConsole.WriteLine();
+                        Out.WriteLineRaw();
+
                         return _options[selected].Value;
 
                     case ConsoleKey.Escape:
                         if (_allowCancel)
                         {
                             Console.CursorVisible = true;
-                            AnsiConsole.WriteLine();
+                            Out.WriteLineRaw();
+
                             return _cancelValue;
                         }
                         break;

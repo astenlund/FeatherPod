@@ -3,15 +3,17 @@ using FeatherPod.Settings.Feed;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.Feed;
 
 internal sealed class UnsetIconCommand : AsyncCommand<UnsetIconSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, UnsetIconSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Icon Removal[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Icon Removal[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null)
@@ -32,9 +34,9 @@ internal sealed class UnsetIconCommand : AsyncCommand<UnsetIconSettings>
 
         if (feed == null)
         {
-            AnsiConsole.MarkupLine(!string.IsNullOrEmpty(settings.FeedId)
-                ? $"[red]✗[/] Feed '{settings.FeedId}' not found."
-                : "[red]✗[/] No feeds available. Create a feed first.");
+            Out.Error(!string.IsNullOrEmpty(settings.FeedId)
+                ? $"Feed '{settings.FeedId}' not found."
+                : "No feeds available. Create a feed first.");
 
             return 1;
         }
@@ -50,17 +52,17 @@ internal sealed class UnsetIconCommand : AsyncCommand<UnsetIconSettings>
 
         if (confirmed != true)
         {
-            AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+            Out.Cancelled();
 
             return 1;
         }
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
 
         // Delete icon
         var success = await FeedHelpers.DeleteIconAsync(httpClient, feed.Id);
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine().Flush();
 
         return success ? 0 : 1;
     }

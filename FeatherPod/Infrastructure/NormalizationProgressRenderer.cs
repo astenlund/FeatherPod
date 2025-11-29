@@ -1,6 +1,8 @@
 using FeatherPod.Shared.Models;
 using Spectre.Console;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Infrastructure;
 
 /// <summary>
@@ -117,16 +119,16 @@ public static class NormalizationProgressRenderer
     {
         if (result.Success)
         {
-            AnsiConsole.MarkupLine($"[green]✓[/] Normalization complete");
+            Out.Success("Normalization complete");
 
             if (!string.IsNullOrEmpty(result.EpisodeId))
             {
-                AnsiConsole.MarkupLine($"  Episode ID: [grey]{result.EpisodeId}[/]");
+                Out.MarkupLine($"  Episode ID: [grey]{result.EpisodeId}[/]");
             }
         }
         else
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Normalization failed: {Markup.Escape(result.Error ?? "Unknown error")}");
+            Out.Error($"Normalization failed: {Markup.Escape(result.Error ?? "Unknown error")}");
         }
     }
 }

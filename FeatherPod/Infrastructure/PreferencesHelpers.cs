@@ -2,6 +2,8 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Spectre.Console;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Infrastructure;
 
 internal static class PreferencesHelpers
@@ -92,14 +94,14 @@ internal static class PreferencesHelpers
     /// </summary>
     internal static bool PromptAndSaveApiKey(string environment)
     {
-        AnsiConsole.MarkupLine($"[yellow]No API key configured for {environment} environment.[/]");
-        AnsiConsole.WriteLine();
+        Out.MarkupLine($"[yellow]No API key configured for {environment} environment.[/]");
+        Out.BlankLine();
 
         var apiKey = AnsiConsole.Prompt(new TextPrompt<string>("Enter your API key:").Secret().AllowEmpty());
 
         if (string.IsNullOrWhiteSpace(apiKey))
         {
-            AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+            Out.Cancelled();
 
             return false;
         }
@@ -108,8 +110,8 @@ internal static class PreferencesHelpers
 
         var filePath = GetPreferencesPath();
 
-        AnsiConsole.MarkupLine($"[green]✓[/] API key saved to [cyan]{filePath}[/]");
-        AnsiConsole.WriteLine();
+        Out.Success($"API key saved to [cyan]{filePath}[/]");
+        Out.BlankLine().Flush();
 
         return true;
     }

@@ -5,6 +5,8 @@ using FeatherPod.Shared.Models;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.Feed;
 
 internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
@@ -17,8 +19,8 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
         FeedConfig currentFeed,
         CancellationToken cancellationToken = default)
     {
-        AnsiConsole.MarkupLine($"Editing feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
-        AnsiConsole.WriteLine();
+        Out.MarkupLine($"Editing feed: [cyan]{Markup.Escape(currentFeed.Title)}[/]");
+        Out.BlankLine();
 
         // Let user select which fields to edit
         var fieldOptions = new List<string>
@@ -42,12 +44,12 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
 
         if (selectedFields.Count == 0)
         {
-            AnsiConsole.MarkupLine("[grey]No fields selected.[/]");
+            Out.MarkupLine("[grey]No fields selected.[/]");
 
             return new() { Success = true, FeedId = currentFeed.Id };
         }
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
 
         var updateFields = new Dictionary<string, object>();
 
@@ -103,8 +105,8 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
 
         if (updateFields.Count == 0)
         {
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("[grey]No changes made.[/]");
+            Out.BlankLine();
+            Out.MarkupLine("[grey]No changes made.[/]");
 
             return new() { Success = true, FeedId = currentFeed.Id };
         }
@@ -118,13 +120,13 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
 
             if (response.IsSuccessStatusCode)
             {
-                AnsiConsole.MarkupLine($"[green]✓[/] Updated feed: [cyan]{Markup.Escape(currentFeed.Id)}[/]");
-                AnsiConsole.WriteLine();
+                Out.Success($"Updated feed: [cyan]{Markup.Escape(currentFeed.Id)}[/]");
+                Out.BlankLine();
 
                 // Show updated fields
                 foreach (var field in updateFields)
                 {
-                    AnsiConsole.MarkupLine($"  {field.Key}: [cyan]{Markup.Escape(field.Value?.ToString() ?? "")}[/]");
+                    Out.MarkupLine($"  {field.Key}: [cyan]{Markup.Escape(field.Value?.ToString() ?? "")}[/]");
                 }
 
                 return new() { Success = true, FeedId = currentFeed.Id };
@@ -132,18 +134,18 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
 
             var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
 
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed to update feed: {response.StatusCode}");
+            Out.Error($"Failed to update feed: {response.StatusCode}");
 
             if (!string.IsNullOrEmpty(errorContent))
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
+                Out.Error(Markup.Escape(errorContent));
             }
 
             return new() { Success = false, ErrorMessage = errorContent };
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error updating feed: {ex.Message}");
+            Out.Error($"Error updating feed: {ex.Message}");
 
             return new() { Success = false, ErrorMessage = ex.Message };
         }
@@ -151,9 +153,9 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, UpdateSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Feed Management - Update Feed[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Feed Management - Update Feed[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
@@ -168,7 +170,7 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
             var feed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
             if (feed == null)
             {
-                AnsiConsole.MarkupLine("[red]✗[/] No feeds available.");
+                Out.Error("No feeds available.");
                 return 1;
             }
             feedId = feed.Id;
@@ -178,7 +180,7 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
         var currentFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, feedId);
         if (currentFeed == null)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Feed '{feedId}' not found.");
+            Out.Error($"Feed '{feedId}' not found.");
             return 1;
         }
 
@@ -207,7 +209,7 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
 
             if (result.Success)
             {
-                AnsiConsole.WriteLine();
+                Out.BlankLine();
             }
 
             return result.Success ? 0 : 1;
@@ -222,32 +224,33 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
 
             if (response.IsSuccessStatusCode)
             {
-                AnsiConsole.MarkupLine($"[green]✓[/] Updated feed: [cyan]{Markup.Escape(feedId)}[/]");
-                AnsiConsole.WriteLine();
+                Out.Success($"Updated feed: [cyan]{Markup.Escape(feedId)}[/]");
+                Out.BlankLine();
 
                 // Show updated fields
                 foreach (var field in updateFields)
                 {
-                    AnsiConsole.MarkupLine($"  {field.Key}: [cyan]{Markup.Escape(field.Value.ToString() ?? "")}[/]");
+                    Out.MarkupLine($"  {field.Key}: [cyan]{Markup.Escape(field.Value.ToString() ?? "")}[/]");
                 }
-                AnsiConsole.WriteLine();
+                Out.BlankLine().Flush();
 
                 return 0;
             }
             else
             {
                 var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
-                AnsiConsole.MarkupLine($"[red]✗[/] Failed to update feed: {response.StatusCode}");
+                Out.Error($"Failed to update feed: {response.StatusCode}");
                 if (!string.IsNullOrEmpty(errorContent))
                 {
-                    AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
+                    Out.Error(Markup.Escape(errorContent));
                 }
+
                 return 1;
             }
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error updating feed: {ex.Message}");
+            Out.Error($"Error updating feed: {ex.Message}");
             return 1;
         }
     }

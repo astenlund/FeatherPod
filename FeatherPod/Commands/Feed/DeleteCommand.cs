@@ -3,6 +3,8 @@ using FeatherPod.Settings.Feed;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.Feed;
 
 internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
@@ -29,7 +31,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 
             if (confirmed != true)
             {
-                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                Out.Cancelled();
 
                 return new() { Success = false };
             }
@@ -41,25 +43,25 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 
             if (response.IsSuccessStatusCode)
             {
-                AnsiConsole.MarkupLine($"[green]✓[/] Deleted feed: [cyan]{Markup.Escape(feedId)}[/]");
+                Out.Success($"Deleted feed: [cyan]{Markup.Escape(feedId)}[/]");
 
                 return new() { Success = true, FeedId = feedId };
             }
 
             var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
 
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed to delete feed: {response.StatusCode}");
+            Out.Error($"Failed to delete feed: {response.StatusCode}");
 
             if (!string.IsNullOrEmpty(errorContent))
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
+                Out.Error(Markup.Escape(errorContent));
             }
 
             return new() { Success = false, ErrorMessage = errorContent };
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error deleting feed: {ex.Message}");
+            Out.Error($"Error deleting feed: {ex.Message}");
 
             return new() { Success = false, ErrorMessage = ex.Message };
         }
@@ -67,9 +69,9 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, DeleteSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Feed Management - Delete Feed[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Feed Management - Delete Feed[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
@@ -84,7 +86,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
             var feed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
             if (feed == null)
             {
-                AnsiConsole.MarkupLine("[red]✗[/] No feeds available.");
+                Out.Error("No feeds available.");
                 return 1;
             }
             feedId = feed.Id;
@@ -94,7 +96,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
         var currentFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, feedId);
         if (currentFeed == null)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Feed '{feedId}' not found.");
+            Out.Error($"Feed '{feedId}' not found.");
             return 1;
         }
 
@@ -102,7 +104,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 
         if (result.Success)
         {
-            AnsiConsole.WriteLine();
+            Out.BlankLine();
         }
 
         return result.Success ? 0 : 1;

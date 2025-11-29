@@ -1,7 +1,9 @@
 using FeatherPod.Infrastructure;
 using FeatherPod.Settings.Preferences;
-using Spectre.Console;
+
 using Spectre.Console.Cli;
+
+using static FeatherPod.Infrastructure.ConsoleWriter;
 
 namespace FeatherPod.Commands.Preferences.Normalization;
 
@@ -18,9 +20,9 @@ internal sealed class ShowCommand : Command<NormalizationSettings>
         var pref = PreferencesHelpers.GetNormalizationEnabled(env);
         var enabled = pref ?? true;
 
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"[bold]Audio normalization ({env}):[/] {(enabled ? "enabled" : "disabled")}{(pref.HasValue ? "" : " (default)")}");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine($"[bold]Audio normalization ({env}):[/] {(enabled ? "enabled" : "disabled")}{(pref.HasValue ? "" : " (default)")}");
+        Out.BlankLine().Flush();
 
         return 0;
     }

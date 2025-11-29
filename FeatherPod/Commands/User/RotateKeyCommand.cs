@@ -4,15 +4,17 @@ using FeatherPod.Settings.User;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.User;
 
 internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, RotateKeySettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod User Management - Rotate API Key[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod User Management - Rotate API Key[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
@@ -30,7 +32,7 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
                 var meResponse = await httpClient.GetAsync("/api/users/me", cancellationToken);
                 if (!meResponse.IsSuccessStatusCode)
                 {
-                    AnsiConsole.MarkupLine($"[red]✗[/] Failed to get current user: {meResponse.StatusCode}");
+                    Out.Error($"Failed to get current user: {meResponse.StatusCode}");
 
                     return 1;
                 }
@@ -40,19 +42,19 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
 
                 if (!meData.TryGetProperty("id", out var idElement))
                 {
-                    AnsiConsole.MarkupLine("[red]✗[/] Could not determine current user ID");
+                    Out.Error("Could not determine current user ID");
 
                     return 1;
                 }
 
                 userId = idElement.GetString();
 
-                AnsiConsole.MarkupLine($"[grey]Rotating API key for current user:[/] [cyan]{Markup.Escape(userId ?? "")}[/]");
-                AnsiConsole.WriteLine();
+                Out.MarkupLine($"[grey]Rotating API key for current user:[/] [cyan]{Markup.Escape(userId ?? "")}[/]");
+                Out.BlankLine();
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Failed to get current user: {ex.Message}");
+                Out.Error($"Failed to get current user: {ex.Message}");
 
                 return 1;
             }
@@ -62,7 +64,7 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
                                                      " The old key will stop working.", false, cancellationToken);
         if (!confirm)
         {
-            AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+            Out.Cancelled();
 
             return 0;
         }
@@ -76,15 +78,15 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
                 var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
                 var responseData = JsonSerializer.Deserialize<JsonElement>(responseJson);
 
-                AnsiConsole.MarkupLine($"[green]✓[/] API key regenerated successfully");
-                AnsiConsole.WriteLine();
+                Out.Success("API key regenerated successfully");
+                Out.BlankLine();
 
                 if (responseData.TryGetProperty("apiKey", out var apiKeyElement))
                 {
                     var apiKey = apiKeyElement.GetString();
 
-                    AnsiConsole.MarkupLine($"[yellow bold]New API Key:[/] [cyan]{Markup.Escape(apiKey ?? "")}[/]");
-                    AnsiConsole.WriteLine();
+                    Out.MarkupLine($"[yellow bold]New API Key:[/] [cyan]{Markup.Escape(apiKey ?? "")}[/]");
+                    Out.BlankLine();
 
                     // Prompt to save the new key
                     var saveKey = await AnsiConsole.ConfirmAsync($"Save this key to preferences for {env}?", true, cancellationToken);
@@ -92,14 +94,14 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
                     {
                         PreferencesHelpers.SaveApiKey(env, apiKey);
                         var prefsPath = PreferencesHelpers.GetPreferencesPath();
-                        AnsiConsole.MarkupLine($"[green]✓[/] API key saved to [grey]{Markup.Escape(prefsPath)}[/]");
+                        Out.Success($"API key saved to [grey]{Markup.Escape(prefsPath)}[/]");
                     }
                     else
                     {
-                        AnsiConsole.MarkupLine("[yellow]Δ[/] API key was NOT saved. Copy it now - it will NOT be shown again!");
+                        Out.Warning("API key was NOT saved. Copy it now - it will NOT be shown again!");
                     }
 
-                    AnsiConsole.WriteLine();
+                    Out.BlankLine();
                 }
 
                 return 0;
@@ -107,18 +109,18 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
 
             var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
 
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed to regenerate API key: {response.StatusCode}");
+            Out.Error($"Failed to regenerate API key: {response.StatusCode}");
 
             if (!string.IsNullOrEmpty(errorContent))
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
+                Out.Error(Markup.Escape(errorContent));
             }
 
             return 1;
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error regenerating API key: {ex.Message}");
+            Out.Error($"Error regenerating API key: {ex.Message}");
 
             return 1;
         }

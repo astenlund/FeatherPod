@@ -1,7 +1,9 @@
 using FeatherPod.Infrastructure;
 using FeatherPod.Settings.Preferences;
-using Spectre.Console;
+
 using Spectre.Console.Cli;
+
+using static FeatherPod.Infrastructure.ConsoleWriter;
 
 namespace FeatherPod.Commands.Preferences.Normalization;
 
@@ -17,9 +19,9 @@ internal sealed class DisableCommand : Command<NormalizationSettings>
 
         PreferencesHelpers.SetNormalizationEnabled(env, false);
 
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"[green]✓[/] Audio normalization disabled for {env}");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.Success($"Audio normalization disabled for {env}");
+        Out.BlankLine();
 
         return 0;
     }

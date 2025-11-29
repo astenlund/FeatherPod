@@ -3,6 +3,8 @@ using FeatherPod.Settings.Episode;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 using EpisodeModel = FeatherPod.Shared.Models.Episode;
 using FeedConfig = FeatherPod.Shared.Models.FeedConfig;
 
@@ -12,9 +14,9 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, MoveSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Episode Move[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Episode Move[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
@@ -29,7 +31,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
             sourceFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FromFeed);
             if (sourceFeed == null)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Source feed '{settings.FromFeed}' not found.");
+                Out.Error($"Source feed '{settings.FromFeed}' not found.");
                 return 1;
             }
         }
@@ -38,7 +40,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
             sourceFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, contextMessage: "Select source feed:");
             if (sourceFeed == null)
             {
-                AnsiConsole.MarkupLine("[red]✗[/] No feeds available.");
+                Out.Error("No feeds available.");
                 return 1;
             }
         }
@@ -47,7 +49,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
         var episodes = await EpisodeHelpers.GetEpisodesAsync(httpClient, sourceFeed.Id);
         if (episodes == null || episodes.Count == 0)
         {
-            AnsiConsole.MarkupLine($"[yellow]Feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]' has no episodes.[/]");
+            Out.MarkupLine($"[yellow]Feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]' has no episodes.[/]");
             return 1;
         }
 
@@ -59,12 +61,12 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
             episodesToMove = EpisodeHelpers.MatchEpisodesByPattern(episodes, settings.Episode);
             if (episodesToMove.Count == 0)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] No episodes match pattern '{settings.Episode}'");
+                Out.Error($"No episodes match pattern '{settings.Episode}'");
                 return 1;
             }
 
-            AnsiConsole.MarkupLine($"Matched [bold]{episodesToMove.Count}[/] episode(s) from feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]'");
-            AnsiConsole.WriteLine();
+            Out.MarkupLine($"Matched [bold]{episodesToMove.Count}[/] episode(s) from feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]'");
+            Out.BlankLine();
         }
         else
         {
@@ -72,10 +74,10 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
             episodesToMove = EpisodeHelpers.SelectEpisodesMulti(episodes);
             if (episodesToMove.Count == 0)
             {
-                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                Out.Cancelled();
                 return 1;
             }
-            AnsiConsole.WriteLine();
+            Out.BlankLine();
         }
 
         // Determine target feed
@@ -85,7 +87,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
             targetFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.ToFeed);
             if (targetFeed == null)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Target feed '{settings.ToFeed}' not found.");
+                Out.Error($"Target feed '{settings.ToFeed}' not found.");
                 return 1;
             }
         }
@@ -95,14 +97,14 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
             var allFeeds = await FeedHelpers.GetFeedsAsync(httpClient);
             if (allFeeds.Count <= 1)
             {
-                AnsiConsole.MarkupLine("[red]✗[/] No other feeds available. Create another feed first.");
+                Out.Error("No other feeds available. Create another feed first.");
                 return 1;
             }
 
             var targetFeeds = allFeeds.Where(f => f.Id != sourceFeed.Id).ToList();
             if (targetFeeds.Count == 0)
             {
-                AnsiConsole.MarkupLine("[red]✗[/] No other feeds available.");
+                Out.Error("No other feeds available.");
                 return 1;
             }
 
@@ -118,16 +120,16 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
             targetFeed = menu.Show();
             if (targetFeed == null)
             {
-                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                Out.Cancelled();
                 return 1;
             }
-            AnsiConsole.WriteLine();
+            Out.BlankLine();
         }
 
         // Validate: source != target
         if (sourceFeed.Id == targetFeed.Id)
         {
-            AnsiConsole.MarkupLine("[red]✗[/] Cannot move episodes within the same feed.");
+            Out.Error("Cannot move episodes within the same feed.");
             return 1;
         }
 
@@ -143,11 +145,11 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
 
         if (confirmed != true)
         {
-            AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+            Out.Cancelled();
             return 1;
         }
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
 
         // Move episodes
         var successCount = 0;
@@ -178,17 +180,17 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
                 }
             });
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
 
         // Summary
         if (successCount > 0)
         {
-            AnsiConsole.MarkupLine($"[green]✓[/] Moved {successCount} of {episodesToMove.Count} episode(s) successfully");
+            Out.Success($"Moved {successCount} of {episodesToMove.Count} episode(s) successfully");
         }
 
         if (failureCount > 0)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed to move {failureCount} episode(s)");
+            Out.Error($"Failed to move {failureCount} episode(s)");
         }
 
         return failureCount == 0 ? 0 : 1;

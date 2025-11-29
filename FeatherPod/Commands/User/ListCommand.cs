@@ -4,15 +4,17 @@ using FeatherPod.Settings.User;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.User;
 
 internal sealed class ListCommand : AsyncCommand<ListSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, ListSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod User Management - List Users[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod User Management - List Users[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
@@ -31,7 +33,7 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
 
                 if (users.ValueKind == JsonValueKind.Array && users.GetArrayLength() == 0)
                 {
-                    AnsiConsole.MarkupLine("[yellow]No users found.[/]");
+                    Out.MarkupLine("[yellow]No users found.[/]");
                     return 0;
                 }
 
@@ -81,25 +83,26 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
                     );
                 }
 
-                AnsiConsole.Write(table);
-                AnsiConsole.WriteLine();
+                Out.Write(table);
+                Out.BlankLine().Flush();
 
                 return 0;
             }
             else
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
-                AnsiConsole.MarkupLine($"[red]✗[/] Failed to list users: {response.StatusCode}");
+                Out.Error($"Failed to list users: {response.StatusCode}");
                 if (!string.IsNullOrEmpty(errorContent))
                 {
-                    AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
+                    Out.Error(Markup.Escape(errorContent));
                 }
+
                 return 1;
             }
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error listing users: {ex.Message}");
+            Out.Error($"Error listing users: {ex.Message}");
             return 1;
         }
     }

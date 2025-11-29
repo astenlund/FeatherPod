@@ -1,7 +1,9 @@
 using FeatherPod.Infrastructure;
 using FeatherPod.Settings.Preferences;
-using Spectre.Console;
+
 using Spectre.Console.Cli;
+
+using static FeatherPod.Infrastructure.ConsoleWriter;
 
 namespace FeatherPod.Commands.Preferences.ApiKey;
 
@@ -17,12 +19,12 @@ internal sealed class ShowCommand : Command<ApiKeyShowSettings>
 
         var apiKey = PreferencesHelpers.GetApiKey(env);
 
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine(
+        Out.BlankLine();
+        Out.MarkupLine(
             string.IsNullOrEmpty(apiKey)
                 ? $"[yellow]API key ({env}):[/] (not configured)"
                 : $"[bold]API key ({env}):[/] {PreferencesHelpers.MaskApiKey(apiKey)}");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
 
         return 0;
     }

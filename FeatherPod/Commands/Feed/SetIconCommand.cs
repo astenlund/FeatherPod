@@ -3,15 +3,17 @@ using FeatherPod.Settings.Feed;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.Feed;
 
 internal sealed class SetIconCommand : AsyncCommand<SetIconSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, SetIconSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Icon Upload[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Icon Upload[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null)
@@ -29,7 +31,7 @@ internal sealed class SetIconCommand : AsyncCommand<SetIconSettings>
         var iconPath = settings.IconPath.Trim().Trim('"', '\'');
         if (!File.Exists(iconPath))
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Icon file not found: {Markup.Escape(iconPath)}");
+            Out.Error($"Icon file not found: {Markup.Escape(iconPath)}");
 
             return 1;
         }
@@ -38,7 +40,7 @@ internal sealed class SetIconCommand : AsyncCommand<SetIconSettings>
         var extension = Path.GetExtension(iconPath).ToLowerInvariant();
         if (extension != ".png" && extension != ".jpg" && extension != ".jpeg")
         {
-            AnsiConsole.MarkupLine("[red]✗[/] Icon must be a PNG or JPEG file");
+            Out.Error("Icon must be a PNG or JPEG file");
 
             return 1;
         }
@@ -50,9 +52,9 @@ internal sealed class SetIconCommand : AsyncCommand<SetIconSettings>
 
         if (feed == null)
         {
-            AnsiConsole.MarkupLine(!string.IsNullOrEmpty(settings.FeedId)
-                ? $"[red]✗[/] Feed '{settings.FeedId}' not found."
-                : "[red]✗[/] No feeds available. Create a feed first.");
+            Out.Error(!string.IsNullOrEmpty(settings.FeedId)
+                ? $"Feed '{settings.FeedId}' not found."
+                : "No feeds available. Create a feed first.");
 
             return 1;
         }
@@ -60,7 +62,7 @@ internal sealed class SetIconCommand : AsyncCommand<SetIconSettings>
         // Upload icon
         var success = await FeedHelpers.UploadIconAsync(httpClient, feed.Id, iconPath);
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine().Flush();
 
         return success ? 0 : 1;
     }

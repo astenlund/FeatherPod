@@ -8,6 +8,8 @@ using FeatherPod.Shared.Services;
 using FFMpegCore;
 using Spectre.Console;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Infrastructure;
 
 /// <summary>
@@ -145,7 +147,7 @@ internal static partial class FFmpegService
 
                 if (success)
                 {
-                    AnsiConsole.MarkupLine($"[grey]Original: {analysis.InputI} LUFS → Normalized: {config.TargetLoudness} LUFS[/]");
+                    Out.MarkupLine($"[grey]Original: {analysis.InputI} LUFS → Normalized: {config.TargetLoudness} LUFS[/]");
                     return outputPath;
                 }
 

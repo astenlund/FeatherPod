@@ -5,6 +5,8 @@ using FeatherPod.Shared.Models;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 using EpisodeModel = FeatherPod.Shared.Models.Episode;
 
 namespace FeatherPod.Commands.Episode;
@@ -26,13 +28,13 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
             var json = await response.Content.ReadAsStringAsync();
             var episodes = JsonSerializer.Deserialize<List<EpisodeModel>>(json, JsonOptions) ?? [];
 
-            AnsiConsole.MarkupLine($"Feed: [cyan]{Markup.Escape(feed.Title)}[/]");
-            AnsiConsole.WriteLine();
+            Out.MarkupLine($"Feed: [cyan]{Markup.Escape(feed.Title)}[/]");
+            Out.BlankLine();
 
             if (episodes.Count == 0)
             {
-                AnsiConsole.MarkupLine("[yellow]No episodes found.[/]");
-                AnsiConsole.WriteLine();
+                Out.MarkupLine("[yellow]No episodes found.[/]");
+                Out.BlankLine().Flush();
 
                 return episodes;
             }
@@ -63,16 +65,16 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
                 );
             }
 
-            AnsiConsole.Write(table);
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine($"[grey]Total: {episodes.Count} episodes[/]");
-            AnsiConsole.WriteLine();
+            Out.Write(table);
+            Out.BlankLine();
+            Out.MarkupLine($"[grey]Total: {episodes.Count} episodes[/]");
+            Out.BlankLine().Flush();
 
             return episodes;
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error fetching episodes: {ex.Message}");
+            Out.Error($"Error fetching episodes: {ex.Message}");
 
             return [];
         }
@@ -80,9 +82,9 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, ListSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Episode List[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Episode List[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null)
@@ -103,9 +105,9 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
 
         if (feed == null)
         {
-            AnsiConsole.MarkupLine(!string.IsNullOrEmpty(settings.FeedId)
-                ? $"[red]✗[/] Feed '{settings.FeedId}' not found."
-                : "[red]✗[/] No feeds available.");
+            Out.Error(!string.IsNullOrEmpty(settings.FeedId)
+                ? $"Feed '{settings.FeedId}' not found."
+                : "No feeds available.");
 
             return 1;
         }

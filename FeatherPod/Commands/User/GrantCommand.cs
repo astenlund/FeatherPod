@@ -5,15 +5,17 @@ using FeatherPod.Settings.User;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.User;
 
 internal sealed class GrantCommand : AsyncCommand<GrantSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, GrantSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod User Management - Grant Feed Ownership[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod User Management - Grant Feed Ownership[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
@@ -26,13 +28,15 @@ internal sealed class GrantCommand : AsyncCommand<GrantSettings>
 
         if (string.IsNullOrWhiteSpace(userId))
         {
-            AnsiConsole.MarkupLine("[red]✗[/] User ID cannot be empty");
+            Out.Error("User ID cannot be empty");
+
             return 1;
         }
 
         if (string.IsNullOrWhiteSpace(feedId))
         {
-            AnsiConsole.MarkupLine("[red]✗[/] Feed ID cannot be empty");
+            Out.Error("Feed ID cannot be empty");
+
             return 1;
         }
 
@@ -46,23 +50,25 @@ internal sealed class GrantCommand : AsyncCommand<GrantSettings>
 
             if (response.IsSuccessStatusCode)
             {
-                AnsiConsole.MarkupLine($"[green]✓[/] Granted feed [cyan]{Markup.Escape(feedId)}[/] ownership to user [cyan]{Markup.Escape(userId)}[/]");
+                Out.Success($"Granted feed [cyan]{Markup.Escape(feedId)}[/] ownership to user [cyan]{Markup.Escape(userId)}[/]");
+
                 return 0;
             }
             else
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
-                AnsiConsole.MarkupLine($"[red]✗[/] Failed to grant feed ownership: {response.StatusCode}");
+                Out.Error($"Failed to grant feed ownership: {response.StatusCode}");
                 if (!string.IsNullOrEmpty(errorContent))
                 {
-                    AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
+                    Out.Error(Markup.Escape(errorContent));
                 }
+
                 return 1;
             }
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error granting feed ownership: {ex.Message}");
+            Out.Error($"Error granting feed ownership: {ex.Message}");
             return 1;
         }
     }

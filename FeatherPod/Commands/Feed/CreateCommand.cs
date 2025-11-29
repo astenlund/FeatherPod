@@ -5,6 +5,8 @@ using FeatherPod.Settings.Feed;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.Feed;
 
 internal sealed class CreateCommand : AsyncCommand<CreateSettings>
@@ -27,14 +29,14 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
 
             if (response.IsSuccessStatusCode)
             {
-                AnsiConsole.MarkupLine($"[green]✓[/] Created feed: [cyan]{Markup.Escape(feedConfig.Id)}[/]");
+                Out.Success($"Created feed: [cyan]{Markup.Escape(feedConfig.Id)}[/]");
 
                 // Upload icon if provided
                 if (!string.IsNullOrEmpty(iconPath))
                 {
                     if (!File.Exists(iconPath))
                     {
-                        AnsiConsole.MarkupLine($"[red]✗[/] Icon file not found: {Markup.Escape(iconPath)}");
+                        Out.Error($"Icon file not found: {Markup.Escape(iconPath)}");
                     }
                     else
                     {
@@ -47,18 +49,18 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
 
             var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
 
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed to create feed: {response.StatusCode}");
+            Out.Error($"Failed to create feed: {response.StatusCode}");
 
             if (!string.IsNullOrEmpty(errorContent))
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
+                Out.Error(Markup.Escape(errorContent));
             }
 
             return new() { Success = false, ErrorMessage = errorContent };
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error creating feed: {ex.Message}");
+            Out.Error($"Error creating feed: {ex.Message}");
 
             return new() { Success = false, ErrorMessage = ex.Message };
         }
@@ -66,9 +68,9 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, CreateSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Feed Management - Create Feed[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Feed Management - Create Feed[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
@@ -119,7 +121,7 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
 
         if (result.Success)
         {
-            AnsiConsole.WriteLine();
+            Out.BlankLine();
         }
 
         return result.Success ? 0 : 1;

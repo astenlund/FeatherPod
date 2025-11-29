@@ -2,6 +2,9 @@ using FeatherPod.Infrastructure;
 using FeatherPod.Settings.Episode;
 using Spectre.Console;
 using Spectre.Console.Cli;
+
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 using EpisodeModel = FeatherPod.Shared.Models.Episode;
 
 namespace FeatherPod.Commands.Episode;
@@ -31,7 +34,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 
             if (confirmed != true)
             {
-                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                Out.Cancelled();
 
                 return new() { Success = false };
             }
@@ -43,32 +46,32 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 
             if (response.IsSuccessStatusCode)
             {
-                AnsiConsole.MarkupLine($"[green]✓[/] Deleted: {Markup.Escape(episode.Title)}");
+                Out.Success($"Deleted: {Markup.Escape(episode.Title)}");
 
                 return new() { Success = true, EpisodeId = episode.Id };
             }
 
             if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
-                AnsiConsole.MarkupLine("[yellow]Episode not found (may have already been deleted).[/]");
+                Out.MarkupLine("[yellow]Episode not found (may have already been deleted).[/]");
 
                 return new() { Success = false, ErrorMessage = "Episode not found" };
             }
 
             var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
 
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed to delete episode: {response.StatusCode}");
+            Out.Error($"Failed to delete episode: {response.StatusCode}");
 
             if (!string.IsNullOrEmpty(errorContent))
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
+                Out.Error(Markup.Escape(errorContent));
             }
 
             return new() { Success = false, ErrorMessage = errorContent };
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error deleting episode: {ex.Message}");
+            Out.Error($"Error deleting episode: {ex.Message}");
 
             return new() { Success = false, ErrorMessage = ex.Message };
         }
@@ -76,9 +79,9 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, DeleteSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Episode Delete[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Episode Delete[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null)
@@ -99,10 +102,10 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 
         if (feed == null)
         {
-            AnsiConsole.MarkupLine(!string.IsNullOrEmpty(settings.FeedId)
-                ? $"[red]✗[/] Feed '{settings.FeedId}' not found."
-                : "[red]✗[/] No feeds available.");
-            AnsiConsole.WriteLine();
+            Out.Error(!string.IsNullOrEmpty(settings.FeedId)
+                ? $"Feed '{settings.FeedId}' not found."
+                : "No feeds available.");
+            Out.BlankLine().Flush();
 
             return 1;
         }
@@ -111,8 +114,8 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
         var episodes = await EpisodeHelpers.GetEpisodesAsync(httpClient, feed.Id);
         if (episodes == null || episodes.Count == 0)
         {
-            AnsiConsole.MarkupLine($"[yellow]Feed '[cyan]{Markup.Escape(feed.Title)}[/]' has no episodes.[/]");
-            AnsiConsole.WriteLine();
+            Out.MarkupLine($"[yellow]Feed '[cyan]{Markup.Escape(feed.Title)}[/]' has no episodes.[/]");
+            Out.BlankLine().Flush();
 
             return 1;
         }
@@ -125,8 +128,8 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
             var episode = episodes.FirstOrDefault(e => e.Id == settings.EpisodeId);
             if (episode == null)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Episode '{settings.EpisodeId}' not found in feed '{feed.Id}'.");
-                AnsiConsole.WriteLine();
+                Out.Error($"Episode '{settings.EpisodeId}' not found in feed '{feed.Id}'.");
+                Out.BlankLine().Flush();
 
                 return 1;
             }
@@ -139,8 +142,8 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
             episodesToDelete = EpisodeHelpers.SelectEpisodesMulti(episodes);
             if (episodesToDelete.Count == 0)
             {
-                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
-                AnsiConsole.WriteLine();
+                Out.Cancelled();
+                Out.BlankLine().Flush();
 
                 return 1;
             }
@@ -153,7 +156,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 
             if (result.Success)
             {
-                AnsiConsole.WriteLine();
+                Out.BlankLine().Flush();
             }
 
             return result.Success ? 0 : 1;
@@ -162,12 +165,12 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
         // Multiple episodes - confirm once for all
         if (!settings.Force)
         {
-            AnsiConsole.MarkupLine($"[yellow]About to delete {episodesToDelete.Count} episodes:[/]");
+            Out.MarkupLine($"[yellow]About to delete {episodesToDelete.Count} episodes:[/]");
             foreach (var ep in episodesToDelete)
             {
-                AnsiConsole.MarkupLine($"  • {Markup.Escape(ep.Title)}");
+                Out.MarkupLine($"  • {Markup.Escape(ep.Title)}");
             }
-            AnsiConsole.WriteLine();
+            Out.BlankLine();
 
             var confirmed = new MenuBuilder<bool?>()
                 .WithTitle($"[red]Delete all {episodesToDelete.Count} episodes?[/]")
@@ -179,7 +182,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 
             if (confirmed != true)
             {
-                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                Out.Cancelled();
 
                 return 1;
             }
@@ -195,9 +198,9 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
             }
         }
 
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"[green]✓[/] Deleted {successCount}/{episodesToDelete.Count} episodes.");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.Success($"Deleted {successCount}/{episodesToDelete.Count} episodes.");
+        Out.BlankLine().Flush();
 
         return successCount == episodesToDelete.Count ? 0 : 1;
     }

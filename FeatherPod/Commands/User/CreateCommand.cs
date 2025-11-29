@@ -5,15 +5,17 @@ using FeatherPod.Settings.User;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.User;
 
 internal sealed class CreateCommand : AsyncCommand<CreateSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, CreateSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod User Management - Create User[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod User Management - Create User[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
@@ -24,7 +26,7 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
         var userId = settings.UserId.Trim();
         if (string.IsNullOrWhiteSpace(userId))
         {
-            AnsiConsole.MarkupLine("[red]✗[/] User ID cannot be empty");
+            Out.Error("User ID cannot be empty");
             return 1;
         }
 
@@ -54,7 +56,7 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
 
         if (role != "Admin" && role != "FeedOwner")
         {
-            AnsiConsole.MarkupLine("[red]✗[/] Role must be either 'Admin' or 'FeedOwner'");
+            Out.Error("Role must be either 'Admin' or 'FeedOwner'");
 
             return 1;
         }
@@ -97,14 +99,14 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
                 var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
                 var responseData = JsonSerializer.Deserialize<JsonElement>(responseJson);
 
-                AnsiConsole.MarkupLine($"[green]✓[/] User created successfully");
-                AnsiConsole.WriteLine();
+                Out.Success("User created successfully");
+                Out.BlankLine();
 
                 if (responseData.TryGetProperty("apiKey", out var apiKeyElement))
                 {
                     var apiKey = apiKeyElement.GetString();
-                    AnsiConsole.MarkupLine($"[yellow bold]API Key (save this now, it will NOT be shown again):[/] [cyan]{Markup.Escape(apiKey ?? "")}[/]");
-                    AnsiConsole.WriteLine();
+                    Out.MarkupLine($"[yellow bold]API Key (save this now, it will NOT be shown again):[/] [cyan]{Markup.Escape(apiKey ?? "")}[/]");
+                    Out.BlankLine();
                 }
 
                 return 0;
@@ -112,7 +114,7 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
 
             var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
 
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed to create user: {response.StatusCode}");
+            Out.Error($"Failed to create user: {response.StatusCode}");
 
             if (!string.IsNullOrEmpty(errorContent))
             {
@@ -121,12 +123,12 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
                     var errorData = JsonSerializer.Deserialize<JsonElement>(errorContent);
                     if (errorData.TryGetProperty("error", out var errorMsg))
                     {
-                        AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorMsg.GetString() ?? "")}");
+                        Out.Error(Markup.Escape(errorMsg.GetString() ?? ""));
                     }
                 }
                 catch
                 {
-                    AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
+                    Out.Error(Markup.Escape(errorContent));
                 }
             }
 
@@ -134,7 +136,7 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error creating user: {ex.Message}");
+            Out.Error($"Error creating user: {ex.Message}");
 
             return 1;
         }

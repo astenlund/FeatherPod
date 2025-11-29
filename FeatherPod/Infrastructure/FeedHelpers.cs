@@ -3,6 +3,8 @@ using System.Text.Json;
 using FeatherPod.Shared.Models;
 using Spectre.Console;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Infrastructure;
 
 internal static class FeedHelpers
@@ -24,7 +26,8 @@ internal static class FeedHelpers
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error fetching feeds: {ex.Message}");
+            Out.Error($"Error fetching feeds: {ex.Message}");
+
             return [];
         }
     }
@@ -41,7 +44,8 @@ internal static class FeedHelpers
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error fetching feed: {ex.Message}");
+            Out.Error($"Error fetching feed: {ex.Message}");
+
             return null;
         }
     }
@@ -63,8 +67,8 @@ internal static class FeedHelpers
                 var message = currentUser?.Role == "FeedOwner"
                     ? "[yellow]No feeds available.[/] You don't own any feeds."
                     : "[yellow]No feeds found.[/] Use [cyan]'M: Manage Feeds'[/] to create one.";
-                AnsiConsole.MarkupLine(message);
-                AnsiConsole.WriteLine();
+                Out.MarkupLine(message);
+                Out.BlankLine();
             }
 
             return null;
@@ -121,8 +125,8 @@ internal static class FeedHelpers
         try
         {
             var url = $"/api/feeds/{feedId}/icon";
-            AnsiConsole.MarkupLine($"[grey]Uploading icon to: {Markup.Escape(url)}[/]");
-            AnsiConsole.MarkupLine($"[grey]Base URL: {Markup.Escape(httpClient.BaseAddress?.ToString() ?? "null")}[/]");
+            Out.MarkupLine($"[grey]Uploading icon to: {Markup.Escape(url)}[/]");
+            Out.MarkupLine($"[grey]Base URL: {Markup.Escape(httpClient.BaseAddress?.ToString() ?? "null")}[/]");
 
             await using var fileStream = File.OpenRead(iconPath);
             using var formData = new MultipartFormDataContent();
@@ -133,27 +137,30 @@ internal static class FeedHelpers
 
             var response = await httpClient.PostAsync(url, formData);
 
-            AnsiConsole.MarkupLine($"[grey]Response status: {response.StatusCode}[/]");
+            Out.MarkupLine($"[grey]Response status: {response.StatusCode}[/]");
 
             if (response.IsSuccessStatusCode)
             {
-                AnsiConsole.MarkupLine($"[green]✓[/] Uploaded icon");
+                Out.Success("Uploaded icon");
+
                 return true;
             }
             else
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
-                AnsiConsole.MarkupLine($"[red]✗[/] Failed to upload icon: {response.StatusCode}");
+                Out.Error($"Failed to upload icon: {response.StatusCode}");
                 if (!string.IsNullOrEmpty(errorContent))
                 {
-                    AnsiConsole.MarkupLine($"[red]✗[/] {errorContent}");
+                    Out.Error(errorContent);
                 }
+
                 return false;
             }
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error uploading icon: {ex.Message}");
+            Out.Error($"Error uploading icon: {ex.Message}");
+
             return false;
         }
     }
@@ -167,29 +174,33 @@ internal static class FeedHelpers
 
             if (response.IsSuccessStatusCode)
             {
-                AnsiConsole.MarkupLine($"[green]✓[/] Removed icon");
+                Out.Success("Removed icon");
+
                 return true;
             }
             else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
-                AnsiConsole.MarkupLine($"[yellow]Δ[/] {errorContent}");
+                Out.Warning(errorContent);
+
                 return false;
             }
             else
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
-                AnsiConsole.MarkupLine($"[red]✗[/] Failed to delete icon: {response.StatusCode}");
+                Out.Error($"Failed to delete icon: {response.StatusCode}");
                 if (!string.IsNullOrEmpty(errorContent))
                 {
-                    AnsiConsole.MarkupLine($"[red]✗[/] {errorContent}");
+                    Out.Error(errorContent);
                 }
+
                 return false;
             }
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error deleting icon: {ex.Message}");
+            Out.Error($"Error deleting icon: {ex.Message}");
+
             return false;
         }
     }

@@ -3,6 +3,8 @@ using FeatherPod.Settings.Feed;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.Feed;
 
 internal sealed class RenameCommand : AsyncCommand<RenameSettings>
@@ -22,25 +24,25 @@ internal sealed class RenameCommand : AsyncCommand<RenameSettings>
 
             if (response.IsSuccessStatusCode)
             {
-                AnsiConsole.MarkupLine($"[green]✓[/] Renamed feed from [cyan]{Markup.Escape(oldId)}[/] to [cyan]{Markup.Escape(newId)}[/]");
+                Out.Success($"Renamed feed from [cyan]{Markup.Escape(oldId)}[/] to [cyan]{Markup.Escape(newId)}[/]");
 
                 return new() { Success = true, FeedId = newId, OldFeedId = oldId };
             }
 
             var errorContent = await response.Content.ReadAsStringAsync(cancellationToken);
 
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed to rename feed: {response.StatusCode}");
+            Out.Error($"Failed to rename feed: {response.StatusCode}");
 
             if (!string.IsNullOrEmpty(errorContent))
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Error: {Markup.Escape(errorContent)}");
+                Out.Error($"Error: {Markup.Escape(errorContent)}");
             }
 
             return new() { Success = false, ErrorMessage = errorContent };
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Error renaming feed: {ex.Message}");
+            Out.Error($"Error renaming feed: {ex.Message}");
 
             return new() { Success = false, ErrorMessage = ex.Message };
         }
@@ -48,9 +50,9 @@ internal sealed class RenameCommand : AsyncCommand<RenameSettings>
 
     public override async Task<int> ExecuteAsync(CommandContext context, RenameSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Feed Management - Rename Feed[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Feed Management - Rename Feed[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
@@ -65,7 +67,7 @@ internal sealed class RenameCommand : AsyncCommand<RenameSettings>
             var feed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
             if (feed == null)
             {
-                AnsiConsole.MarkupLine("[red]✗[/] No feeds available.");
+                Out.Error("No feeds available.");
                 return 1;
             }
             feedId = feed.Id;
@@ -75,7 +77,7 @@ internal sealed class RenameCommand : AsyncCommand<RenameSettings>
         var currentFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, feedId);
         if (currentFeed == null)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Feed '{feedId}' not found.");
+            Out.Error($"Feed '{feedId}' not found.");
             return 1;
         }
 
@@ -90,7 +92,7 @@ internal sealed class RenameCommand : AsyncCommand<RenameSettings>
 
         if (result.Success)
         {
-            AnsiConsole.WriteLine();
+            Out.BlankLine();
         }
 
         return result.Success ? 0 : 1;

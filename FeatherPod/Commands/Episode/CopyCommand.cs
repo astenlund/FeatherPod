@@ -3,6 +3,8 @@ using FeatherPod.Settings.Episode;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 using EpisodeModel = FeatherPod.Shared.Models.Episode;
 using FeedConfig = FeatherPod.Shared.Models.FeedConfig;
 
@@ -12,9 +14,9 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, CopySettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Episode Copy[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Episode Copy[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
@@ -29,7 +31,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
             sourceFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FromFeed);
             if (sourceFeed == null)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Source feed '{settings.FromFeed}' not found.");
+                Out.Error($"Source feed '{settings.FromFeed}' not found.");
                 return 1;
             }
         }
@@ -38,7 +40,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
             sourceFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, contextMessage: "Select source feed:");
             if (sourceFeed == null)
             {
-                AnsiConsole.MarkupLine("[red]✗[/] No feeds available.");
+                Out.Error("No feeds available.");
                 return 1;
             }
         }
@@ -47,7 +49,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
         var episodes = await EpisodeHelpers.GetEpisodesAsync(httpClient, sourceFeed.Id);
         if (episodes == null || episodes.Count == 0)
         {
-            AnsiConsole.MarkupLine($"[yellow]Feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]' has no episodes.[/]");
+            Out.MarkupLine($"[yellow]Feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]' has no episodes.[/]");
             return 1;
         }
 
@@ -59,12 +61,12 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
             episodesToCopy = EpisodeHelpers.MatchEpisodesByPattern(episodes, settings.Episode);
             if (episodesToCopy.Count == 0)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] No episodes match pattern '{settings.Episode}'");
+                Out.Error($"No episodes match pattern '{settings.Episode}'");
                 return 1;
             }
 
-            AnsiConsole.MarkupLine($"Matched [bold]{episodesToCopy.Count}[/] episode(s) from feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]'");
-            AnsiConsole.WriteLine();
+            Out.MarkupLine($"Matched [bold]{episodesToCopy.Count}[/] episode(s) from feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]'");
+            Out.BlankLine();
         }
         else
         {
@@ -72,10 +74,10 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
             episodesToCopy = EpisodeHelpers.SelectEpisodesMulti(episodes);
             if (episodesToCopy.Count == 0)
             {
-                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                Out.Cancelled();
                 return 1;
             }
-            AnsiConsole.WriteLine();
+            Out.BlankLine();
         }
 
         // Determine target feed
@@ -85,7 +87,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
             targetFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.ToFeed);
             if (targetFeed == null)
             {
-                AnsiConsole.MarkupLine($"[red]✗[/] Target feed '{settings.ToFeed}' not found.");
+                Out.Error($"Target feed '{settings.ToFeed}' not found.");
                 return 1;
             }
         }
@@ -95,7 +97,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
             var allFeeds = await FeedHelpers.GetFeedsAsync(httpClient);
             if (allFeeds.Count == 0)
             {
-                AnsiConsole.MarkupLine("[red]✗[/] No feeds available.");
+                Out.Error("No feeds available.");
                 return 1;
             }
 
@@ -111,10 +113,10 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
             targetFeed = menu.Show();
             if (targetFeed == null)
             {
-                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+                Out.Cancelled();
                 return 1;
             }
-            AnsiConsole.WriteLine();
+            Out.BlankLine();
         }
 
         // Confirmation
@@ -133,11 +135,11 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
 
         if (confirmed != true)
         {
-            AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
+            Out.Cancelled();
             return 1;
         }
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
 
         // Copy episodes
         var successCount = 0;
@@ -168,17 +170,17 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
                 }
             });
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
 
         // Summary
         if (successCount > 0)
         {
-            AnsiConsole.MarkupLine($"[green]✓[/] Copied {successCount} of {episodesToCopy.Count} episode(s) successfully");
+            Out.Success($"Copied {successCount} of {episodesToCopy.Count} episode(s) successfully");
         }
 
         if (failureCount > 0)
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Failed to copy {failureCount} episode(s)");
+            Out.Error($"Failed to copy {failureCount} episode(s)");
         }
 
         return failureCount == 0 ? 0 : 1;

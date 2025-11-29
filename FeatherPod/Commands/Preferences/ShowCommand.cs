@@ -3,15 +3,17 @@ using FeatherPod.Settings.Preferences;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
+using static FeatherPod.Infrastructure.ConsoleWriter;
+
 namespace FeatherPod.Commands.Preferences;
 
 internal sealed class ShowCommand : Command<PreferencesShowSettings>
 {
     public override int Execute(CommandContext context, PreferencesShowSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Preferences[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Preferences[/]");
+        Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
@@ -20,7 +22,7 @@ internal sealed class ShowCommand : Command<PreferencesShowSettings>
         var filePath = PreferencesHelpers.GetPreferencesPath();
 
         // Show API key status
-        AnsiConsole.MarkupLine(string.IsNullOrEmpty(apiKey)
+        Out.MarkupLine(string.IsNullOrEmpty(apiKey)
             ? $"[yellow]API key ({env}):[/] (not configured)"
             : $"[bold]API key ({env}):[/] {PreferencesHelpers.MaskApiKey(apiKey)}");
 
@@ -28,16 +30,16 @@ internal sealed class ShowCommand : Command<PreferencesShowSettings>
         var normPref = PreferencesHelpers.GetNormalizationEnabled(env);
         var normEnabled = normPref ?? true;
 
-        AnsiConsole.MarkupLine($"[bold]Audio normalization ({env}):[/] {(normEnabled ? "enabled" : "disabled")}{(normPref.HasValue ? "" : " (default)")}");
+        Out.MarkupLine($"[bold]Audio normalization ({env}):[/] {(normEnabled ? "enabled" : "disabled")}{(normPref.HasValue ? "" : " (default)")}");
 
         // Show auto-connect preference (defaults to enabled)
         var autoConnectPref = PreferencesHelpers.GetAutoConnectEnabled(env);
         var autoConnectEnabled = autoConnectPref ?? true;
 
-        AnsiConsole.MarkupLine($"[bold]Auto-connect ({env}):[/] {(autoConnectEnabled ? "enabled" : "disabled")}{(autoConnectPref.HasValue ? "" : " (default)")}");
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"[grey]Preferences: {Markup.Escape(filePath)}[/]");
-        AnsiConsole.WriteLine();
+        Out.MarkupLine($"[bold]Auto-connect ({env}):[/] {(autoConnectEnabled ? "enabled" : "disabled")}{(autoConnectPref.HasValue ? "" : " (default)")}");
+        Out.BlankLine();
+        Out.MarkupLine($"[grey]Preferences: {Markup.Escape(filePath)}[/]");
+        Out.BlankLine().Flush();
 
         return 0;
     }

@@ -1,7 +1,9 @@
 using FeatherPod.Infrastructure;
 using FeatherPod.Settings.Preferences;
-using Spectre.Console;
+
 using Spectre.Console.Cli;
+
+using static FeatherPod.Infrastructure.ConsoleWriter;
 
 namespace FeatherPod.Commands.Preferences.AutoConnect;
 
@@ -17,9 +19,9 @@ internal sealed class DisableCommand : Command<AutoConnectSettings>
 
         PreferencesHelpers.SetAutoConnectEnabled(env, false);
 
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"[green]✓[/] Auto-connect disabled for {env}");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.Success($"Auto-connect disabled for {env}");
+        Out.BlankLine();
 
         return 0;
     }

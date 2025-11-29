@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Spectre.Console;
 
 using static System.Net.HttpStatusCode;
+using static FeatherPod.Infrastructure.ConsoleWriter;
 
 namespace FeatherPod.Infrastructure;
 
@@ -31,13 +32,14 @@ internal static class EnvironmentHelpers
 
         if (environment != "Dev" && environment != "Test" && environment != "Prod")
         {
-            AnsiConsole.MarkupLine($"[red]✗[/] Invalid environment: {environment}");
-            AnsiConsole.MarkupLine("Valid options: Dev, Test, Prod");
+            Out.Error($"Invalid environment: {environment}");
+            Out.MarkupLine("Valid options: Dev, Test, Prod");
+
             return null;
         }
 
-        AnsiConsole.MarkupLine($"Environment: [cyan]{environment}[/]");
-        AnsiConsole.WriteLine();
+        Out.MarkupLine($"Environment: [cyan]{environment}[/]");
+        Out.BlankLine();
 
         return environment;
     }
@@ -103,13 +105,13 @@ internal static class EnvironmentHelpers
             apiKey = PreferencesHelpers.GetApiKey(environment);
             if (string.IsNullOrEmpty(apiKey))
             {
-                AnsiConsole.MarkupLine("[red]✗[/] Failed to load API key after saving.");
+                Out.Error("Failed to load API key after saving.");
 
                 return (null, null);
             }
         }
 
-        AnsiConsole.MarkupLine($"API: [cyan]{apiBaseUrl}/api[/]");
+        Out.MarkupLine($"API: [cyan]{apiBaseUrl}/api[/]");
 
         var httpClient = new HttpClient
         {
@@ -147,25 +149,25 @@ internal static class EnvironmentHelpers
                     userInfo = new(id, role, ownedFeeds);
                 });
 
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("[green]✓[/] Connected");
-            AnsiConsole.WriteLine();
+            Out.BlankLine();
+            Out.Success("Connected");
+            Out.BlankLine();
         }
         catch (HttpRequestException ex) when (ex.StatusCode == Unauthorized)
         {
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("[red]✗[/] Authentication failed: invalid API key.");
-            AnsiConsole.WriteLine();
+            Out.BlankLine();
+            Out.Error("Authentication failed: invalid API key.");
+            Out.BlankLine().Flush();
 
             return (null, null);
         }
         catch (Exception ex)
         {
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine($"[red]✗[/] Connection failed: {ex.Message}");
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("Make sure the FeatherPod server is running and accessible.");
-            AnsiConsole.WriteLine();
+            Out.BlankLine();
+            Out.Error($"Connection failed: {ex.Message}");
+            Out.BlankLine();
+            Out.MarkupLine("Make sure the FeatherPod server is running and accessible.");
+            Out.BlankLine().Flush();
 
             return (null, null);
         }

@@ -2,8 +2,10 @@ using System.Reflection;
 using System.Text.Json;
 using FeatherPod.Infrastructure;
 using FeatherPod.Settings;
-using Spectre.Console;
+
 using Spectre.Console.Cli;
+
+using static FeatherPod.Infrastructure.ConsoleWriter;
 
 namespace FeatherPod.Commands;
 
@@ -11,15 +13,15 @@ internal sealed class VersionCommand : AsyncCommand<VersionSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, VersionSettings settings, CancellationToken cancellationToken)
     {
-        AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine("[bold]FeatherPod Version[/]");
-        AnsiConsole.WriteLine();
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Version[/]");
+        Out.BlankLine();
 
         // Show CLI version
         var versionAttribute = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>();
         var cliVersion = versionAttribute?.InformationalVersion ?? "unknown";
-        AnsiConsole.MarkupLine($"[bold]CLI Version:[/] {cliVersion}");
-        AnsiConsole.WriteLine();
+        Out.MarkupLine($"[bold]CLI Version:[/] {cliVersion}");
+        Out.BlankLine();
 
         // Always show server version (default to Prod like other commands)
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
@@ -45,20 +47,20 @@ internal sealed class VersionCommand : AsyncCommand<VersionSettings>
 
                 if (versionInfo.TryGetProperty("version", out var version))
                 {
-                    AnsiConsole.MarkupLine($"[bold]Server Version:[/] {version.GetString()}");
+                    Out.MarkupLine($"[bold]Server Version:[/] {version.GetString()}");
                 }
             }
             else
             {
-                AnsiConsole.MarkupLine($"[yellow]Could not fetch server version: {response.StatusCode}[/]");
+                Out.MarkupLine($"[yellow]Could not fetch server version: {response.StatusCode}[/]");
             }
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[yellow]Could not fetch server version: {ex.Message}[/]");
+            Out.MarkupLine($"[yellow]Could not fetch server version: {ex.Message}[/]");
         }
 
-        AnsiConsole.WriteLine();
+        Out.BlankLine().Flush();
 
         return 0;
     }
