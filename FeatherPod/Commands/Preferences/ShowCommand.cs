@@ -25,16 +25,16 @@ internal sealed class ShowCommand : Command<PreferencesShowSettings>
             : $"[cyan]API key ({env}):[/] {PreferencesHelpers.MaskApiKey(apiKey)}");
 
         // Show normalization preference (defaults to enabled)
-        var normPref = PreferencesHelpers.GetNormalizationEnabled();
+        var normPref = PreferencesHelpers.GetNormalizationEnabled(env);
         var normEnabled = normPref ?? true;
 
-        AnsiConsole.MarkupLine($"[cyan]Audio normalization:[/] {(normEnabled ? "enabled" : "disabled")}{(normPref.HasValue ? "" : " (default)")}");
+        AnsiConsole.MarkupLine($"[cyan]Audio normalization ({env}):[/] {(normEnabled ? "enabled" : "disabled")}{(normPref.HasValue ? "" : " (default)")}");
 
         // Show auto-connect preference (defaults to enabled)
-        var autoConnectPref = PreferencesHelpers.GetAutoConnectEnabled();
+        var autoConnectPref = PreferencesHelpers.GetAutoConnectEnabled(env);
         var autoConnectEnabled = autoConnectPref ?? true;
 
-        AnsiConsole.MarkupLine($"[cyan]Auto-connect:[/] {(autoConnectEnabled ? "enabled" : "disabled")}{(autoConnectPref.HasValue ? "" : " (default)")}");
+        AnsiConsole.MarkupLine($"[cyan]Auto-connect ({env}):[/] {(autoConnectEnabled ? "enabled" : "disabled")}{(autoConnectPref.HasValue ? "" : " (default)")}");
         AnsiConsole.WriteLine();
         AnsiConsole.MarkupLine($"[grey]Preferences: {Markup.Escape(filePath)}[/]");
         AnsiConsole.WriteLine();

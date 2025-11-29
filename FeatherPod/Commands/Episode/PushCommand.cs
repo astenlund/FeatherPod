@@ -146,7 +146,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
 
         foreach (var file in files)
         {
-            var success = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, feed, file, effectiveSettings);
+            var success = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, env, feed, file, effectiveSettings);
             if (success)
                 successCount++;
             else

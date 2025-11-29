@@ -130,10 +130,10 @@ internal static class PreferencesHelpers
     }
 
     /// <summary>
-    /// Gets the audio normalization preference from user preferences.
+    /// Gets the audio normalization preference for the given environment.
     /// Returns null if not set (will use appsettings default).
     /// </summary>
-    internal static bool? GetNormalizationEnabled()
+    internal static bool? GetNormalizationEnabled(string environment)
     {
         var preferencesPath = GetPreferencesPath();
         if (!File.Exists(preferencesPath))
@@ -145,9 +145,8 @@ internal static class PreferencesHelpers
         {
             var content = File.ReadAllText(preferencesPath);
             var root = JsonNode.Parse(content);
-            var enabled = root?["AudioNormalization"]?["Enabled"];
 
-            return enabled?.GetValue<bool>();
+            return root?["Environments"]?[environment]?["NormalizationEnabled"]?.GetValue<bool>();
         }
         catch
         {
@@ -156,9 +155,9 @@ internal static class PreferencesHelpers
     }
 
     /// <summary>
-    /// Sets the audio normalization preference in user preferences.
+    /// Sets the audio normalization preference for the given environment.
     /// </summary>
-    internal static void SetNormalizationEnabled(bool enabled)
+    internal static void SetNormalizationEnabled(string environment, bool enabled)
     {
         var filePath = GetPreferencesPath();
         var directory = Path.GetDirectoryName(filePath)!;
@@ -180,23 +179,30 @@ internal static class PreferencesHelpers
             root = new();
         }
 
-        // Ensure AudioNormalization section exists
-        if (!root.ContainsKey("AudioNormalization"))
+        // Ensure Environments section exists
+        if (!root.ContainsKey("Environments"))
         {
-            root["AudioNormalization"] = new JsonObject();
+            root["Environments"] = new JsonObject();
         }
 
-        root["AudioNormalization"]!["Enabled"] = enabled;
+        // Ensure environment section exists
+        var environments = root["Environments"]!.AsObject();
+        if (!environments.ContainsKey(environment))
+        {
+            environments[environment] = new JsonObject();
+        }
+
+        environments[environment]!["NormalizationEnabled"] = enabled;
 
         // Write back with nice formatting
         File.WriteAllText(filePath, root.ToJsonString(JsonWriteOptions));
     }
 
     /// <summary>
-    /// Gets the auto-connect preference from user preferences.
+    /// Gets the auto-connect preference for the given environment.
     /// Returns null if not set (defaults to true - auto-connect enabled).
     /// </summary>
-    internal static bool? GetAutoConnectEnabled()
+    internal static bool? GetAutoConnectEnabled(string environment)
     {
         var preferencesPath = GetPreferencesPath();
         if (!File.Exists(preferencesPath))
@@ -208,9 +214,8 @@ internal static class PreferencesHelpers
         {
             var content = File.ReadAllText(preferencesPath);
             var root = JsonNode.Parse(content);
-            var enabled = root?["AutoConnect"]?["Enabled"];
 
-            return enabled?.GetValue<bool>();
+            return root?["Environments"]?[environment]?["AutoConnectEnabled"]?.GetValue<bool>();
         }
         catch
         {
@@ -219,9 +224,9 @@ internal static class PreferencesHelpers
     }
 
     /// <summary>
-    /// Sets the auto-connect preference in user preferences.
+    /// Sets the auto-connect preference for the given environment.
     /// </summary>
-    internal static void SetAutoConnectEnabled(bool enabled)
+    internal static void SetAutoConnectEnabled(string environment, bool enabled)
     {
         var filePath = GetPreferencesPath();
         var directory = Path.GetDirectoryName(filePath)!;
@@ -243,13 +248,20 @@ internal static class PreferencesHelpers
             root = new();
         }
 
-        // Ensure AutoConnect section exists
-        if (!root.ContainsKey("AutoConnect"))
+        // Ensure Environments section exists
+        if (!root.ContainsKey("Environments"))
         {
-            root["AutoConnect"] = new JsonObject();
+            root["Environments"] = new JsonObject();
         }
 
-        root["AutoConnect"]!["Enabled"] = enabled;
+        // Ensure environment section exists
+        var environments = root["Environments"]!.AsObject();
+        if (!environments.ContainsKey(environment))
+        {
+            environments[environment] = new JsonObject();
+        }
+
+        environments[environment]!["AutoConnectEnabled"] = enabled;
 
         // Write back with nice formatting
         File.WriteAllText(filePath, root.ToJsonString(JsonWriteOptions));

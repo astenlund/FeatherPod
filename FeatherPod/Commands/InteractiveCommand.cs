@@ -23,7 +23,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment, useDefault: true);
         if (env == null) return 1;
 
-        var autoConnect = PreferencesHelpers.GetAutoConnectEnabled() ?? true;
+        var autoConnect = PreferencesHelpers.GetAutoConnectEnabled(env) ?? true;
         var apiUrl = EnvironmentHelpers.BuildConfiguration(env)["Api:BaseUrl"]?.TrimEnd('/') + "/api";
 
         // Show header and optionally connect
@@ -190,9 +190,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     AnsiConsole.WriteLine();
 
                     // Temporarily set normalization preference for upload (only for local normalization)
-                    var originalNormPref = PreferencesHelpers.GetNormalizationEnabled();
+                    var originalNormPref = PreferencesHelpers.GetNormalizationEnabled(env);
                     var useServerNormalize = normalizeChoice == "server";
-                    PreferencesHelpers.SetNormalizationEnabled(normalizeChoice == "local");
+                    PreferencesHelpers.SetNormalizationEnabled(env, normalizeChoice == "local");
 
                     try
                     {
@@ -212,7 +212,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                         foreach (var file in filesToUpload)
                         {
-                            var success = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, pushFeed, file, uploadSettings);
+                            var success = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, env, pushFeed, file, uploadSettings);
                             if (success)
                                 successCount++;
                             else
@@ -236,7 +236,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         // Restore original normalization preference
                         if (originalNormPref.HasValue)
                         {
-                            PreferencesHelpers.SetNormalizationEnabled(originalNormPref.Value);
+                            PreferencesHelpers.SetNormalizationEnabled(env, originalNormPref.Value);
                         }
                     }
 
@@ -1041,7 +1041,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     if (newEnv != null && newEnv != env)
                     {
                         env = newEnv;
-                        autoConnect = PreferencesHelpers.GetAutoConnectEnabled() ?? true;
+                        autoConnect = PreferencesHelpers.GetAutoConnectEnabled(env) ?? true;
                         apiUrl = EnvironmentHelpers.BuildConfiguration(env)["Api:BaseUrl"]?.TrimEnd('/') + "/api";
 
                         // Reset and reconnect for new environment
@@ -1078,7 +1078,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     switch (preferencesChoice)
                     {
                         case "autoconnect":
-                            var currentAutoConnect = PreferencesHelpers.GetAutoConnectEnabled() ?? true;
+                            var currentAutoConnect = PreferencesHelpers.GetAutoConnectEnabled(env) ?? true;
                             var autoConnectChoice = new MenuBuilder<bool?>()
                                 .WithTitle($"Auto-connect on startup is currently {(currentAutoConnect ? "enabled" : "disabled")}:")
                                 .WithHint("(arrow keys or E/D, Esc to cancel)")
@@ -1089,7 +1089,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                             if (autoConnectChoice.HasValue)
                             {
-                                PreferencesHelpers.SetAutoConnectEnabled(autoConnectChoice.Value);
+                                PreferencesHelpers.SetAutoConnectEnabled(env, autoConnectChoice.Value);
                                 AnsiConsole.MarkupLine($"[green]✓[/] Auto-connect on startup {(autoConnectChoice.Value ? "enabled" : "disabled")}");
 
                                 // If enabling and not connected, offer to connect now
@@ -1129,7 +1129,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             break;
 
                         case "normalization":
-                            var currentNorm = PreferencesHelpers.GetNormalizationEnabled() ?? true;
+                            var currentNorm = PreferencesHelpers.GetNormalizationEnabled(env) ?? true;
                             var normChoice = new MenuBuilder<bool?>()
                                 .WithTitle($"Audio normalization is currently {(currentNorm ? "enabled" : "disabled")}:")
                                 .WithHint("(arrow keys or E/D, Esc to cancel)")
@@ -1140,7 +1140,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                             if (normChoice.HasValue)
                             {
-                                PreferencesHelpers.SetNormalizationEnabled(normChoice.Value);
+                                PreferencesHelpers.SetNormalizationEnabled(env, normChoice.Value);
                                 AnsiConsole.MarkupLine($"[green]✓[/] Audio normalization {(normChoice.Value ? "enabled" : "disabled")}");
                                 WaitForKeyPress();
                             }
@@ -1300,13 +1300,13 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 ? $"[yellow]API key ({env}):[/] (not configured)"
                                 : $"[cyan]API key ({env}):[/] {PreferencesHelpers.MaskApiKey(showApiKey)}");
 
-                            var showNormPref = PreferencesHelpers.GetNormalizationEnabled();
+                            var showNormPref = PreferencesHelpers.GetNormalizationEnabled(env);
                             var showNormEnabled = showNormPref ?? true;
-                            AnsiConsole.MarkupLine($"[cyan]Audio normalization:[/] {(showNormEnabled ? "enabled" : "disabled")}{(showNormPref.HasValue ? "" : " (default)")}");
+                            AnsiConsole.MarkupLine($"[cyan]Audio normalization ({env}):[/] {(showNormEnabled ? "enabled" : "disabled")}{(showNormPref.HasValue ? "" : " (default)")}");
 
-                            var showAutoConnectPref = PreferencesHelpers.GetAutoConnectEnabled();
+                            var showAutoConnectPref = PreferencesHelpers.GetAutoConnectEnabled(env);
                             var showAutoConnectEnabled = showAutoConnectPref ?? true;
-                            AnsiConsole.MarkupLine($"[cyan]Auto-connect:[/] {(showAutoConnectEnabled ? "enabled" : "disabled")}{(showAutoConnectPref.HasValue ? "" : " (default)")}");
+                            AnsiConsole.MarkupLine($"[cyan]Auto-connect ({env}):[/] {(showAutoConnectEnabled ? "enabled" : "disabled")}{(showAutoConnectPref.HasValue ? "" : " (default)")}");
 
                             AnsiConsole.WriteLine();
                             AnsiConsole.MarkupLine($"[grey]Preferences: {Markup.Escape(showFilePath)}[/]");

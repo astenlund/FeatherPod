@@ -297,8 +297,8 @@ FeatherPod
 
 **User preferences** are stored in `%APPDATA%\FeatherPod\preferences.json`:
 - API keys (per environment)
-- Audio normalization enabled/disabled (defaults to enabled)
-- Auto-connect on startup enabled/disabled (defaults to enabled)
+- Audio normalization enabled/disabled (per environment, defaults to enabled)
+- Auto-connect on startup enabled/disabled (per environment, defaults to enabled)
 
 The CLI prompts for the API key on first use and saves it automatically. If auto-connect is disabled, interactive mode starts in disconnected mode and you can connect manually via Preferences.
 

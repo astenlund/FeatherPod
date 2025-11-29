@@ -55,7 +55,7 @@ internal static class EpisodeHelpers
         return result;
     }
 
-    internal static async Task<bool> UploadEpisodeAsync(HttpClient httpClient, IConfiguration configuration, FeedConfig feed, string filePath, PushSettings settings)
+    internal static async Task<bool> UploadEpisodeAsync(HttpClient httpClient, IConfiguration configuration, string environment, FeedConfig feed, string filePath, PushSettings settings)
     {
         var fileName = Path.GetFileName(filePath);
         var success = false;
@@ -79,7 +79,7 @@ internal static class EpisodeHelpers
             configuration.GetSection("AudioNormalization").Bind(normalizationConfig);
 
             // Get normalization enabled from user preferences (defaults to true)
-            var userPref = PreferencesHelpers.GetNormalizationEnabled();
+            var userPref = PreferencesHelpers.GetNormalizationEnabled(environment);
             normalizationConfig.Enabled = userPref ?? true;
 
             // Check if normalization is enabled (skip client-side if server-side requested)
