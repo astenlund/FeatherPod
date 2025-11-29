@@ -1,3 +1,5 @@
+using FeatherPod.Shared.Models;
+
 namespace FeatherPod.Infrastructure;
 
 /// <summary>
@@ -5,6 +7,8 @@ namespace FeatherPod.Infrastructure;
 /// </summary>
 public static class NormalizationProgressHelper
 {
+    private static readonly int MaxStageNameLength = Enum.GetNames<NormalizationStage>().Max(s => s.Length);
+
     public static string FormatPosition(TimeSpan? current, TimeSpan? total)
     {
         if (current == null || total == null || total.Value.TotalSeconds <= 0)
@@ -17,27 +21,18 @@ public static class NormalizationProgressHelper
 
     public static string FormatTime(TimeSpan time)
     {
-        if (time.TotalHours >= 1)
-        {
-            return time.ToString(@"h\:mm\:ss");
-        }
-
-        return time.ToString(@"mm\:ss");
+        return time.ToString(time.TotalHours >= 1
+            ? @"h\:mm\:ss"
+            : @"mm\:ss");
     }
 
+    /// <summary>
+    /// Get a fixed-width stage description for consistent progress bar alignment.
+    /// </summary>
     public static string GetStageDescription(string? stage)
     {
-        return stage switch
-        {
-            "Queued" => "Queued",
-            "Downloading" => "Downloading",
-            "Analyzing" => "Analyzing",
-            "Normalizing" => "Normalizing",
-            "Uploading" => "Uploading",
-            "Finalizing" => "Finalizing",
-            "Completed" => "Complete",
-            "Failed" => "Failed",
-            _ => "Processing"
-        };
+        var isValidStage = Enum.TryParse<NormalizationStage>(stage, out _);
+
+        return (isValidStage ? stage! : "Processing").PadRight(MaxStageNameLength);
     }
 }

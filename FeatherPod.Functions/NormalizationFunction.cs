@@ -271,29 +271,27 @@ public class NormalizationFunction
         string? error = null,
         CancellationToken cancellationToken = default)
     {
-        // Read existing entity to preserve QueuedAt
-        DateTimeOffset? queuedAt;
+        // Read existing entity to preserve progress fields
+        JobStatusEntity entity;
         try
         {
             var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
-            queuedAt = existingResponse.Value.QueuedAt;
+            entity = existingResponse.Value;
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
-            // Entity doesn't exist yet, QueuedAt will be set to now
-            queuedAt = DateTimeOffset.UtcNow;
+            entity = new JobStatusEntity
+            {
+                PartitionKey = "jobs",
+                RowKey = jobId,
+                FeedId = feedId,
+                QueuedAt = DateTimeOffset.UtcNow
+            };
         }
 
-        var entity = new JobStatusEntity
-        {
-            PartitionKey = "jobs",
-            RowKey = jobId,
-            FeedId = feedId,
-            Status = status.ToString(),
-            EpisodeId = episodeId,
-            Error = error,
-            QueuedAt = queuedAt
-        };
+        entity.Status = status.ToString();
+        entity.EpisodeId = episodeId;
+        entity.Error = error;
 
         if (status is JobStatus.Completed or JobStatus.Failed)
         {

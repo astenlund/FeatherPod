@@ -152,11 +152,18 @@ internal static class EpisodeHelpers
                 // Re-check availability after potential download
                 if (FFmpegService.IsFFmpegAvailable())
                 {
-                    // Normalize audio
-                    AnsiConsole.MarkupLine($"Normalizing [cyan]{fileName}[/] to -16 LUFS...");
-                    normalizedTempFile = await FFmpegService.NormalizeAudioAsync(filePath, normalizationConfig);
+                    // Normalize audio using shared progress renderer
+                    var normResult = await NormalizationProgressRenderer.RunWithProgressAsync(
+                        fileName,
+                        async (updateProgress, _) =>
+                        {
+                            normalizedTempFile = await FFmpegService.NormalizeAudioAsync(filePath, normalizationConfig, updateProgress);
 
-                    if (normalizedTempFile == null)
+                            return new(normalizedTempFile != null);
+                        },
+                        CancellationToken.None);
+
+                    if (!normResult.Success)
                     {
                         AnsiConsole.WriteLine();
                         AnsiConsole.MarkupLine("[yellow]Warning:[/] Audio normalization failed.");
@@ -172,13 +179,14 @@ internal static class EpisodeHelpers
                         if (continueWithOriginal != true)
                         {
                             AnsiConsole.MarkupLine("[grey]Upload cancelled.[/]");
+
                             return false;
                         }
                     }
                     else
                     {
-                        fileToUpload = normalizedTempFile;
-                        AnsiConsole.MarkupLine("[green]✓[/] Audio normalized successfully");
+                        fileToUpload = normalizedTempFile!;
+                        NormalizationProgressRenderer.DisplayResult(normResult);
                     }
 
                     AnsiConsole.WriteLine();
@@ -485,7 +493,14 @@ internal static class EpisodeHelpers
 
         try
         {
-            return await StreamJobProgressAsync(httpClient, jobId, fileName, cts.Token);
+            var result = await NormalizationProgressRenderer.RunWithProgressAsync(
+                fileName,
+                async (updateProgress, ct) => await StreamSSEProgressAsync(httpClient, jobId, updateProgress, ct),
+                cts.Token);
+
+            NormalizationProgressRenderer.DisplayResult(result);
+
+            return result.Success;
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException)
         {
@@ -503,7 +518,11 @@ internal static class EpisodeHelpers
         }
     }
 
-    private static async Task<bool> StreamJobProgressAsync(HttpClient httpClient, string jobId, string fileName, CancellationToken cancellationToken)
+    private static async Task<NormalizationProgressRenderer.NormalizationResult> StreamSSEProgressAsync(
+        HttpClient httpClient,
+        string jobId,
+        Action<ProgressUpdate> updateProgress,
+        CancellationToken cancellationToken)
     {
         var request = new HttpRequestMessage(HttpMethod.Get, $"/api/jobs/{jobId}/progress");
         var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
@@ -517,99 +536,75 @@ internal static class EpisodeHelpers
         using var reader = new StreamReader(stream);
 
         JobStatusResponse? finalStatus = null;
+        string? currentEvent = null;
+        var dataBuilder = new StringBuilder();
 
-        await AnsiConsole.Progress()
-            .AutoClear(false)
-            .Columns(
-                new TaskDescriptionColumn(),
-                new ProgressBarColumn(),
-                new PercentageColumn(),
-                new SpinnerColumn())
-            .StartAsync(async ctx =>
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var line = await reader.ReadLineAsync(cancellationToken);
+            if (line == null)
             {
-                var task = ctx.AddTask($"[cyan]{Markup.Escape(fileName)}[/]", maxValue: 100);
+                break;
+            }
 
-                string? currentEvent = null;
-                var dataBuilder = new StringBuilder();
-
-                while (!cancellationToken.IsCancellationRequested)
+            if (line.StartsWith("event:"))
+            {
+                currentEvent = line[6..].Trim();
+            }
+            else if (line.StartsWith("data:"))
+            {
+                dataBuilder.AppendLine(line[5..].Trim());
+            }
+            else if (line.StartsWith(':'))
+            {
+                // Comment/heartbeat - ignore
+            }
+            else if (string.IsNullOrWhiteSpace(line) && currentEvent != null)
+            {
+                if (currentEvent == "progress")
                 {
-                    var line = await reader.ReadLineAsync(cancellationToken);
-                    if (line == null)
+                    var data = dataBuilder.ToString().Trim();
+                    var status = JsonSerializer.Deserialize<JobStatusResponse>(data, JsonOptions)!;
+                    finalStatus = status;
+
+                    var stage = Enum.TryParse<NormalizationStage>(status.Stage, out var s)
+                        ? s
+                        : NormalizationStage.Queued;
+
+                    updateProgress(new()
                     {
-                        break;
-                    }
-
-                    if (line.StartsWith("event:"))
-                    {
-                        currentEvent = line[6..].Trim();
-                    }
-                    else if (line.StartsWith("data:"))
-                    {
-                        dataBuilder.AppendLine(line[5..].Trim());
-                    }
-                    else if (line.StartsWith(':'))
-                    {
-                        // Comment/heartbeat - ignore
-                    }
-                    else if (string.IsNullOrWhiteSpace(line) && currentEvent != null)
-                    {
-                        var data = dataBuilder.ToString().Trim();
-                        dataBuilder.Clear();
-
-                        if (currentEvent == "progress")
-                        {
-                            var status = JsonSerializer.Deserialize<JobStatusResponse>(data, JsonOptions);
-                            if (status != null)
-                            {
-                                task.Value = status.ProgressPercent ?? 0;
-
-                                var stageDesc = NormalizationProgressHelper.GetStageDescription(status.Stage);
-                                var position = FormatPositionFromMs(status.CurrentPositionMs, status.TotalDurationMs);
-                                var desc = string.IsNullOrEmpty(position)
-                                    ? $"[cyan]{stageDesc}[/]"
-                                    : $"[cyan]{stageDesc}[/] [grey]{position}[/]";
-                                task.Description = desc;
-
-                                finalStatus = status;
-                            }
-                        }
-                        else if (currentEvent == "done")
-                        {
-                            task.Value = 100;
-                            task.StopTask();
-
-                            break;
-                        }
-                        else if (currentEvent == "error")
-                        {
-                            task.StopTask();
-
-                            break;
-                        }
-
-                        currentEvent = null;
-                    }
+                        Stage = stage,
+                        ProgressPercent = status.ProgressPercent ?? 0,
+                        Message = status.ProgressMessage ?? "",
+                        CurrentPosition = status.CurrentPositionMs.HasValue
+                            ? TimeSpan.FromMilliseconds(status.CurrentPositionMs.Value)
+                            : null,
+                        TotalDuration = status.TotalDurationMs.HasValue
+                            ? TimeSpan.FromMilliseconds(status.TotalDurationMs.Value)
+                            : null
+                    });
                 }
-            });
+                else if (currentEvent is "done" or "error")
+                {
+                    break;
+                }
+
+                dataBuilder.Clear();
+                currentEvent = null;
+            }
+        }
 
         if (finalStatus?.Status == nameof(JobStatus.Completed))
         {
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine($"[green]✓[/] Normalization complete");
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine($"  Episode ID: [grey]{finalStatus.EpisodeId}[/]");
-
-            return true;
+            return new(true, EpisodeId: finalStatus.EpisodeId);
         }
 
         if (finalStatus?.Status == nameof(JobStatus.Failed))
         {
-            AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine($"[red]✗[/] Normalization failed: {Markup.Escape(finalStatus.Error ?? "Unknown error")}");
+            return new(false, Error: finalStatus.Error ?? "Unknown error");
         }
 
-        return false;
+        return new(false, Error: "Connection closed unexpectedly");
     }
 
     private static async Task<bool> FallbackPollJobCompletionAsync(HttpClient httpClient, string jobId, string fileName, CancellationToken cancellationToken)
@@ -678,19 +673,6 @@ internal static class EpisodeHelpers
 
                 return false;
             });
-    }
-
-    private static string FormatPositionFromMs(long? currentMs, long? totalMs)
-    {
-        if (currentMs == null || totalMs == null || totalMs <= 0)
-        {
-            return string.Empty;
-        }
-
-        var current = TimeSpan.FromMilliseconds(currentMs.Value);
-        var total = TimeSpan.FromMilliseconds(totalMs.Value);
-
-        return NormalizationProgressHelper.FormatPosition(current, total);
     }
 
     private static void DisplayEpisodeDetails(Episode episode)

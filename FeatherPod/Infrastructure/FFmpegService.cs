@@ -41,8 +41,9 @@ internal static partial class FFmpegService
     /// </summary>
     /// <param name="inputPath">Path to the input audio file</param>
     /// <param name="config">Normalization configuration</param>
+    /// <param name="progressCallback">Optional callback for progress updates (caller handles UI)</param>
     /// <returns>Path to the normalized temporary file, or null if normalization fails</returns>
-    public static async Task<string?> NormalizeAudioAsync(string inputPath, AudioNormalizationConfig config)
+    public static async Task<string?> NormalizeAudioAsync(string inputPath, AudioNormalizationConfig config, Action<ProgressUpdate>? progressCallback = null)
     {
         if (!IsFFmpegAvailable())
         {
@@ -61,14 +62,14 @@ internal static partial class FFmpegService
 
         try
         {
-            if (duration > TimeSpan.Zero)
+            if (progressCallback != null && duration > TimeSpan.Zero)
             {
-                // Use two progress bars when duration is known
-                return await NormalizeWithProgressAsync(inputPath, tempFile, config, duration);
+                // Use callback-based progress (caller handles UI)
+                return await NormalizeWithCallbackAsync(inputPath, tempFile, config, duration, progressCallback);
             }
             else
             {
-                // Fall back to spinner when duration unknown
+                // Fall back to spinner when no callback or duration unknown
                 return await NormalizeWithSpinnerAsync(inputPath, tempFile, config);
             }
         }
@@ -80,58 +81,44 @@ internal static partial class FFmpegService
                 try { File.Delete(tempFile); }
                 catch { /* Ignore cleanup errors */ }
             }
+
             return null;
         }
     }
 
     /// <summary>
-    /// Normalize with two progress bars (when duration is known).
+    /// Normalize with callback-based progress (caller handles UI).
     /// </summary>
-    private static async Task<string?> NormalizeWithProgressAsync(
+    private static async Task<string?> NormalizeWithCallbackAsync(
         string inputPath,
         string outputPath,
         AudioNormalizationConfig config,
-        TimeSpan duration)
+        TimeSpan duration,
+        Action<ProgressUpdate> progressCallback)
     {
-        return await AnsiConsole.Progress()
-            .AutoClear(false)
-            .Columns(
-                new TaskDescriptionColumn(),
-                new ProgressBarColumn(),
-                new PercentageColumn())
-            .StartAsync(async ctx =>
+        // Pass 1: Analyze with progress callback
+        var analysis = await AnalyzeLoudnessWithCallbackAsync(inputPath, config, duration, progressCallback);
+
+        if (analysis == null)
+        {
+            return null;
+        }
+
+        // Pass 2: Apply normalization with progress callback
+        var success = await ApplyNormalizationWithCallbackAsync(inputPath, outputPath, config, analysis, duration, progressCallback);
+
+        if (success)
+        {
+            progressCallback(new ProgressUpdate
             {
-                var analyzeTask = ctx.AddTask("[cyan]Analyzing audio...[/]", maxValue: 100);
-                var normalizeTask = ctx.AddTask("[grey]Normalizing audio...[/]", maxValue: 100);
-
-                // Pass 1: Analyze with progress
-                var analysis = await AnalyzeLoudnessWithProgressAsync(inputPath, config, duration, analyzeTask);
-                analyzeTask.Value = 100;
-                analyzeTask.StopTask();
-
-                if (analysis == null)
-                {
-                    AnsiConsole.MarkupLine("[red]Audio analysis failed[/]");
-                    normalizeTask.StopTask();
-                    return null;
-                }
-
-                // Update normalize task to active state
-                normalizeTask.Description = "[cyan]Normalizing audio...[/]";
-
-                // Pass 2: Apply with progress
-                var success = await ApplyNormalizationWithProgressAsync(inputPath, outputPath, config, analysis, duration, normalizeTask);
-                normalizeTask.Value = 100;
-                normalizeTask.StopTask();
-
-                if (success)
-                {
-                    AnsiConsole.MarkupLine($"[grey]Original: {analysis.InputI} LUFS → Normalized: {config.TargetLoudness} LUFS[/]");
-                    return outputPath;
-                }
-
-                return null;
+                Stage = NormalizationStage.Completed,
+                ProgressPercent = 100,
+                Message = "Normalization complete",
+                TotalDuration = duration
             });
+        }
+
+        return success ? outputPath : null;
     }
 
     /// <summary>
@@ -167,13 +154,13 @@ internal static partial class FFmpegService
     }
 
     /// <summary>
-    /// Pass 1: Analyze audio loudness with progress tracking.
+    /// Pass 1: Analyze audio loudness with callback-based progress.
     /// </summary>
-    private static async Task<LoudnessAnalysis?> AnalyzeLoudnessWithProgressAsync(
+    private static async Task<LoudnessAnalysis?> AnalyzeLoudnessWithCallbackAsync(
         string inputPath,
         AudioNormalizationConfig config,
         TimeSpan duration,
-        ProgressTask progressTask)
+        Action<ProgressUpdate> progressCallback)
     {
         var error = new StringBuilder();
         var durationSeconds = duration.TotalSeconds;
@@ -208,12 +195,17 @@ internal static partial class FFmpegService
                     var hours = double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
                     var minutes = double.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
                     var seconds = double.Parse(match.Groups[3].Value, CultureInfo.InvariantCulture);
-                    var currentTime = hours * 3600 + minutes * 60 + seconds;
-                    var percent = Math.Min(100, (currentTime / durationSeconds) * 100);
-                    progressTask.Value = percent;
+                    var currentSeconds = hours * 3600 + minutes * 60 + seconds;
+                    var percent = (int)Math.Min(100, (currentSeconds / durationSeconds) * 100);
 
-                    var position = NormalizationProgressHelper.FormatPosition(TimeSpan.FromSeconds(currentTime), duration);
-                    progressTask.Description = $"[cyan]Analyzing[/] [grey]{position}[/]";
+                    progressCallback(new()
+                    {
+                        Stage = NormalizationStage.Analyzing,
+                        ProgressPercent = percent,
+                        Message = "Analyzing audio loudness",
+                        CurrentPosition = TimeSpan.FromSeconds(currentSeconds),
+                        TotalDuration = duration
+                    });
                 }
             }
         };
@@ -294,15 +286,15 @@ internal static partial class FFmpegService
     }
 
     /// <summary>
-    /// Pass 2: Apply normalization with progress tracking.
+    /// Pass 2: Apply normalization with callback-based progress.
     /// </summary>
-    private static async Task<bool> ApplyNormalizationWithProgressAsync(
+    private static async Task<bool> ApplyNormalizationWithCallbackAsync(
         string inputPath,
         string outputPath,
         AudioNormalizationConfig config,
         LoudnessAnalysis analysis,
         TimeSpan duration,
-        ProgressTask progressTask)
+        Action<ProgressUpdate> progressCallback)
     {
         var loudnormFilter = BuildLoudnormFilter(config, analysis);
 
@@ -315,10 +307,15 @@ internal static partial class FFmpegService
                     .WithAudioSamplingRate())
                 .NotifyOnProgress(percent =>
                 {
-                    progressTask.Value = percent;
                     var currentPosition = TimeSpan.FromSeconds(duration.TotalSeconds * percent / 100);
-                    var position = NormalizationProgressHelper.FormatPosition(currentPosition, duration);
-                    progressTask.Description = $"[cyan]Normalizing[/] [grey]{position}[/]";
+                    progressCallback(new()
+                    {
+                        Stage = NormalizationStage.Normalizing,
+                        ProgressPercent = (int)percent,
+                        Message = "Applying normalization",
+                        CurrentPosition = currentPosition,
+                        TotalDuration = duration
+                    });
                 }, duration)
                 .ProcessAsynchronously();
 

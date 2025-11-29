@@ -32,6 +32,7 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
             if (episodes.Count == 0)
             {
                 AnsiConsole.MarkupLine("[yellow]No episodes found.[/]");
+                AnsiConsole.WriteLine();
 
                 return episodes;
             }
@@ -65,6 +66,7 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
             AnsiConsole.Write(table);
             AnsiConsole.WriteLine();
             AnsiConsole.MarkupLine($"[grey]Total: {episodes.Count} episodes[/]");
+            AnsiConsole.WriteLine();
 
             return episodes;
         }

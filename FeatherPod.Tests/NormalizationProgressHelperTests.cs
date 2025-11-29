@@ -100,37 +100,40 @@ public class NormalizationProgressHelperTests
     }
 
     [Theory]
-    [InlineData("Queued", "Queued")]
-    [InlineData("Downloading", "Downloading")]
-    [InlineData("Analyzing", "Analyzing")]
-    [InlineData("Normalizing", "Normalizing")]
-    [InlineData("Uploading", "Uploading")]
-    [InlineData("Finalizing", "Finalizing")]
-    [InlineData("Completed", "Complete")]
-    [InlineData("Failed", "Failed")]
-    public void GetStageDescription_ShouldMapKnownStagesCorrectly(string stage, string expected)
+    [InlineData("Queued")]
+    [InlineData("Downloading")]
+    [InlineData("Analyzing")]
+    [InlineData("Normalizing")]
+    [InlineData("Uploading")]
+    [InlineData("Finalizing")]
+    [InlineData("Completed")]
+    [InlineData("Failed")]
+    public void GetStageDescription_ShouldReturnPaddedStageName(string stage)
     {
         var result = NormalizationProgressHelper.GetStageDescription(stage);
 
-        Assert.Equal(expected, result);
+        Assert.StartsWith(stage, result);
+        Assert.Equal(stage, result.TrimEnd());
+    }
+
+    [Fact]
+    public void GetStageDescription_ShouldReturnConsistentWidth()
+    {
+        var stages = new[] { "Queued", "Downloading", "Analyzing", "Normalizing", "Uploading", "Finalizing", "Completed", "Failed", null, "Unknown" };
+        var lengths = stages.Select(s => NormalizationProgressHelper.GetStageDescription(s).Length).Distinct().ToList();
+
+        Assert.Single(lengths);
     }
 
     [Theory]
     [InlineData("Unknown")]
     [InlineData("")]
     [InlineData("RandomStage")]
-    public void GetStageDescription_ShouldReturnProcessingForUnknownStages(string stage)
+    [InlineData(null)]
+    public void GetStageDescription_ShouldReturnProcessingForInvalidStages(string? stage)
     {
         var result = NormalizationProgressHelper.GetStageDescription(stage);
 
-        Assert.Equal("Processing", result);
-    }
-
-    [Fact]
-    public void GetStageDescription_ShouldReturnProcessingForNull()
-    {
-        var result = NormalizationProgressHelper.GetStageDescription(null);
-
-        Assert.Equal("Processing", result);
+        Assert.StartsWith("Processing", result);
     }
 }
