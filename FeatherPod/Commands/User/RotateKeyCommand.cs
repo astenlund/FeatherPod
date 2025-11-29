@@ -30,7 +30,7 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
                 var meResponse = await httpClient.GetAsync("/api/users/me", cancellationToken);
                 if (!meResponse.IsSuccessStatusCode)
                 {
-                    AnsiConsole.MarkupLine($"[red]Error:[/] Failed to get current user: {meResponse.StatusCode}");
+                    AnsiConsole.MarkupLine($"[red]✗[/] Failed to get current user: {meResponse.StatusCode}");
 
                     return 1;
                 }
@@ -40,7 +40,7 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
 
                 if (!meData.TryGetProperty("id", out var idElement))
                 {
-                    AnsiConsole.MarkupLine("[red]Error:[/] Could not determine current user ID");
+                    AnsiConsole.MarkupLine("[red]✗[/] Could not determine current user ID");
 
                     return 1;
                 }
@@ -52,7 +52,7 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
             }
             catch (Exception ex)
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] Failed to get current user: {ex.Message}");
+                AnsiConsole.MarkupLine($"[red]✗[/] Failed to get current user: {ex.Message}");
 
                 return 1;
             }
@@ -96,7 +96,7 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
                     }
                     else
                     {
-                        AnsiConsole.MarkupLine("[yellow]Warning:[/] API key was NOT saved. Copy it now - it will NOT be shown again!");
+                        AnsiConsole.MarkupLine("[yellow]Δ[/] API key was NOT saved. Copy it now - it will NOT be shown again!");
                     }
 
                     AnsiConsole.WriteLine();
@@ -111,7 +111,7 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
 
             if (!string.IsNullOrEmpty(errorContent))
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
             }
 
             return 1;

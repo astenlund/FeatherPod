@@ -28,7 +28,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
         var userId = settings.UserId.Trim();
         if (string.IsNullOrWhiteSpace(userId))
         {
-            AnsiConsole.MarkupLine("[red]Error:[/] User ID cannot be empty");
+            AnsiConsole.MarkupLine("[red]✗[/] User ID cannot be empty");
 
             return 1;
         }
@@ -60,7 +60,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 
             if (!string.IsNullOrEmpty(errorContent))
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
             }
 
             return 1;

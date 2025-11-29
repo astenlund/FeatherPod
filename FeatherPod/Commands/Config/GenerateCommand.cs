@@ -25,7 +25,7 @@ internal sealed class GenerateCommand : Command<ConfigGenerateSettings>
 
         if (!Directory.Exists(outputPath))
         {
-            AnsiConsole.MarkupLine($"[red]Output directory does not exist:[/] {outputPath}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Output directory does not exist: {outputPath}");
 
             return 1;
         }
@@ -61,7 +61,7 @@ internal sealed class GenerateCommand : Command<ConfigGenerateSettings>
             using var stream = assembly.GetManifestResourceStream(resourceName);
             if (stream == null)
             {
-                AnsiConsole.MarkupLine($"[red]Could not find embedded resource:[/] {resourceName}");
+                AnsiConsole.MarkupLine($"[red]✗[/] Could not find embedded resource: {resourceName}");
                 continue;
             }
 

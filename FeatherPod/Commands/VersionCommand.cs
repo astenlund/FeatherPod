@@ -18,7 +18,7 @@ internal sealed class VersionCommand : AsyncCommand<VersionSettings>
         // Show CLI version
         var versionAttribute = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>();
         var cliVersion = versionAttribute?.InformationalVersion ?? "unknown";
-        AnsiConsole.MarkupLine($"[cyan]CLI Version:[/] {cliVersion}");
+        AnsiConsole.MarkupLine($"[bold]CLI Version:[/] {cliVersion}");
         AnsiConsole.WriteLine();
 
         // Always show server version (default to Prod like other commands)
@@ -45,7 +45,7 @@ internal sealed class VersionCommand : AsyncCommand<VersionSettings>
 
                 if (versionInfo.TryGetProperty("version", out var version))
                 {
-                    AnsiConsole.MarkupLine($"[cyan]Server Version:[/] {version.GetString()}");
+                    AnsiConsole.MarkupLine($"[bold]Server Version:[/] {version.GetString()}");
                 }
             }
             else

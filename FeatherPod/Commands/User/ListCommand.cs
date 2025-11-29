@@ -37,12 +37,12 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
 
                 var table = new Table();
                 table.Border(TableBorder.Rounded);
-                table.AddColumn("[cyan]User ID[/]");
-                table.AddColumn("[cyan]Name[/]");
-                table.AddColumn("[cyan]Email[/]");
-                table.AddColumn("[cyan]Role[/]");
-                table.AddColumn("[cyan]Owned Feeds[/]");
-                table.AddColumn("[cyan]Last Active[/]");
+                table.AddColumn("[bold]User ID[/]");
+                table.AddColumn("[bold]Name[/]");
+                table.AddColumn("[bold]Email[/]");
+                table.AddColumn("[bold]Role[/]");
+                table.AddColumn("[bold]Owned Feeds[/]");
+                table.AddColumn("[bold]Last Active[/]");
 
                 foreach (var user in users.EnumerateArray())
                 {
@@ -75,7 +75,7 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
                         Markup.Escape(id),
                         Markup.Escape(name),
                         Markup.Escape(email),
-                        role == "Admin" ? "[green]Admin[/]" : "[cyan]FeedOwner[/]",
+                        role == "Admin" ? "[grey]Admin[/]" : "[grey]FeedOwner[/]",
                         Markup.Escape(ownedFeeds),
                         Markup.Escape(lastActive)
                     );
@@ -92,7 +92,7 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
                 AnsiConsole.MarkupLine($"[red]✗[/] Failed to list users: {response.StatusCode}");
                 if (!string.IsNullOrEmpty(errorContent))
                 {
-                    AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                    AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
                 }
                 return 1;
             }

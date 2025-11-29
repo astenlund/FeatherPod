@@ -29,7 +29,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
             feed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FeedId);
             if (feed == null)
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] Feed '{settings.FeedId}' not found.");
+                AnsiConsole.MarkupLine($"[red]✗[/] Feed '{settings.FeedId}' not found.");
                 return 1;
             }
         }
@@ -38,7 +38,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
             feed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
             if (feed == null)
             {
-                AnsiConsole.MarkupLine("[red]Error:[/] No feeds available. Create a feed first.");
+                AnsiConsole.MarkupLine("[red]✗[/] No feeds available. Create a feed first.");
                 return 1;
             }
         }
@@ -48,7 +48,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
 
         if (files.Count == 0)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] No files found matching pattern: {settings.Files}");
+            AnsiConsole.MarkupLine($"[red]✗[/] No files found matching pattern: {settings.Files}");
             return 1;
         }
 
@@ -57,20 +57,20 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         {
             if (!string.IsNullOrEmpty(settings.Title))
             {
-                AnsiConsole.MarkupLine("[red]Error:[/] Cannot use -t/--title with multiple files (all episodes would get the same title)");
+                AnsiConsole.MarkupLine("[red]✗[/] Cannot use -t/--title with multiple files (all episodes would get the same title)");
                 return 1;
             }
 
             if (!string.IsNullOrEmpty(settings.Description))
             {
-                AnsiConsole.MarkupLine("[red]Error:[/] Cannot use -d/--description with multiple files (all episodes would get the same description)");
+                AnsiConsole.MarkupLine("[red]✗[/] Cannot use -d/--description with multiple files (all episodes would get the same description)");
                 return 1;
             }
 
             if (!string.IsNullOrEmpty(settings.PublishedDate))
             {
                 AnsiConsole.WriteLine();
-                AnsiConsole.MarkupLine("[yellow]Warning:[/] Using -p/--published-date with multiple files will set the same date for all episodes.");
+                AnsiConsole.MarkupLine("[yellow]Δ[/] Using -p/--published-date with multiple files will set the same date for all episodes.");
                 var continueAnyway = new MenuBuilder<bool?>()
                     .WithTitle("Continue anyway?")
                     .WithHint("(arrow keys or Y/N)")
@@ -88,13 +88,13 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
             }
         }
 
-        AnsiConsole.MarkupLine($"Found [cyan]{files.Count}[/] file(s) to upload");
+        AnsiConsole.MarkupLine($"Found [bold]{files.Count}[/] file(s) to upload");
         AnsiConsole.WriteLine();
 
         // Confirm upload
         var fileList = files.Count <= 5
             ? string.Join(", ", files.Select(f => $"[cyan]{Markup.Escape(Path.GetFileName(f))}[/]"))
-            : $"[cyan]{files.Count}[/] files";
+            : $"[bold]{files.Count}[/] files";
 
         var confirmed = new MenuBuilder<bool?>()
             .WithTitle($"Upload {fileList} to feed [cyan]{Markup.Escape(feed.Title)}[/]?")

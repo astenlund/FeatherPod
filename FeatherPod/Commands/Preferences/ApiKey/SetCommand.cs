@@ -18,7 +18,7 @@ internal sealed class SetCommand : Command<ApiKeySetSettings>
         var key = settings.Key.Trim();
         if (string.IsNullOrWhiteSpace(key))
         {
-            AnsiConsole.MarkupLine("[red]Error:[/] API key cannot be empty");
+            AnsiConsole.MarkupLine("[red]✗[/] API key cannot be empty");
 
             return 1;
         }

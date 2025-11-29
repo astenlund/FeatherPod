@@ -31,7 +31,7 @@ internal static class EnvironmentHelpers
 
         if (environment != "Dev" && environment != "Test" && environment != "Prod")
         {
-            AnsiConsole.MarkupLine($"[red]Invalid environment:[/] {environment}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Invalid environment: {environment}");
             AnsiConsole.MarkupLine("Valid options: Dev, Test, Prod");
             return null;
         }
@@ -103,7 +103,7 @@ internal static class EnvironmentHelpers
             apiKey = PreferencesHelpers.GetApiKey(environment);
             if (string.IsNullOrEmpty(apiKey))
             {
-                AnsiConsole.MarkupLine("[red]ERROR:[/] Failed to load API key after saving.");
+                AnsiConsole.MarkupLine("[red]✗[/] Failed to load API key after saving.");
 
                 return (null, null);
             }

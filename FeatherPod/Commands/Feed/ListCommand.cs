@@ -29,11 +29,11 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
 
         var table = new Table();
         table.Border(TableBorder.Rounded);
-        table.AddColumn("[cyan]Feed ID[/]");
-        table.AddColumn("[cyan]Title[/]");
-        table.AddColumn("[cyan]Author[/]");
-        table.AddColumn("[cyan]Language[/]");
-        table.AddColumn("[cyan]Category[/]");
+        table.AddColumn("[bold]Feed ID[/]");
+        table.AddColumn("[bold]Title[/]");
+        table.AddColumn("[bold]Author[/]");
+        table.AddColumn("[bold]Language[/]");
+        table.AddColumn("[bold]Category[/]");
 
         foreach (var feed in feeds)
         {

@@ -24,7 +24,7 @@ internal static class FeedHelpers
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error fetching feeds:[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Error fetching feeds: {ex.Message}");
             return [];
         }
     }
@@ -41,7 +41,7 @@ internal static class FeedHelpers
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error fetching feed:[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Error fetching feed: {ex.Message}");
             return null;
         }
     }
@@ -146,7 +146,7 @@ internal static class FeedHelpers
                 AnsiConsole.MarkupLine($"[red]✗[/] Failed to upload icon: {response.StatusCode}");
                 if (!string.IsNullOrEmpty(errorContent))
                 {
-                    AnsiConsole.MarkupLine($"[red]Error:[/] {errorContent}");
+                    AnsiConsole.MarkupLine($"[red]✗[/] {errorContent}");
                 }
                 return false;
             }
@@ -173,7 +173,7 @@ internal static class FeedHelpers
             else if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
                 var errorContent = await response.Content.ReadAsStringAsync();
-                AnsiConsole.MarkupLine($"[yellow]⚠[/] {errorContent}");
+                AnsiConsole.MarkupLine($"[yellow]Δ[/] {errorContent}");
                 return false;
             }
             else
@@ -182,7 +182,7 @@ internal static class FeedHelpers
                 AnsiConsole.MarkupLine($"[red]✗[/] Failed to delete icon: {response.StatusCode}");
                 if (!string.IsNullOrEmpty(errorContent))
                 {
-                    AnsiConsole.MarkupLine($"[red]Error:[/] {errorContent}");
+                    AnsiConsole.MarkupLine($"[red]✗[/] {errorContent}");
                 }
                 return false;
             }

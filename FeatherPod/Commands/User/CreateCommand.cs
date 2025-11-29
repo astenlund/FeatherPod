@@ -24,21 +24,21 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
         var userId = settings.UserId.Trim();
         if (string.IsNullOrWhiteSpace(userId))
         {
-            AnsiConsole.MarkupLine("[red]Error:[/] User ID cannot be empty");
+            AnsiConsole.MarkupLine("[red]✗[/] User ID cannot be empty");
             return 1;
         }
 
         var name = settings.Name;
         if (string.IsNullOrWhiteSpace(name))
         {
-            name = AnsiConsole.Ask<string>("User's [cyan]display name[/]:");
+            name = AnsiConsole.Ask<string>("User's [bold]display name[/]:");
         }
 
         var email = settings.Email;
         if (string.IsNullOrWhiteSpace(email))
         {
             email = AnsiConsole.Prompt(
-                new TextPrompt<string>("User's [cyan]email address[/] (optional):")
+                new TextPrompt<string>("User's [bold]email address[/] (optional):")
                     .AllowEmpty());
         }
         if (string.IsNullOrWhiteSpace(email)) email = null;
@@ -48,13 +48,13 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
         {
             role = AnsiConsole.Prompt(
                 new SelectionPrompt<string>()
-                    .Title("Select [cyan]user role[/]:")
+                    .Title("Select [bold]user role[/]:")
                     .AddChoices("Admin", "FeedOwner"));
         }
 
         if (role != "Admin" && role != "FeedOwner")
         {
-            AnsiConsole.MarkupLine("[red]Error:[/] Role must be either 'Admin' or 'FeedOwner'");
+            AnsiConsole.MarkupLine("[red]✗[/] Role must be either 'Admin' or 'FeedOwner'");
 
             return 1;
         }
@@ -68,7 +68,7 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
             }
             else
             {
-                var feedsInput = AnsiConsole.Ask("Enter [cyan]feed IDs[/] to own (comma-separated, or leave empty):", string.Empty);
+                var feedsInput = AnsiConsole.Ask("Enter [bold]feed IDs[/] to own (comma-separated, or leave empty):", string.Empty);
                 if (!string.IsNullOrWhiteSpace(feedsInput))
                 {
                     ownedFeeds = feedsInput.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
@@ -121,12 +121,12 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
                     var errorData = JsonSerializer.Deserialize<JsonElement>(errorContent);
                     if (errorData.TryGetProperty("error", out var errorMsg))
                     {
-                        AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorMsg.GetString() ?? "")}");
+                        AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorMsg.GetString() ?? "")}");
                     }
                 }
                 catch
                 {
-                    AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                    AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
                 }
             }
 

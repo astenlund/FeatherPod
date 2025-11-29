@@ -97,18 +97,18 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     var filesToUpload = EpisodeHelpers.ExpandFilePatterns(filePattern);
                     if (filesToUpload.Count == 0)
                     {
-                        AnsiConsole.MarkupLine($"[red]Error:[/] No files found matching pattern: {Markup.Escape(filePattern)}");
+                        AnsiConsole.MarkupLine($"[red]✗[/] No files found matching pattern: {Markup.Escape(filePattern)}");
                         WaitForKeyPress();
                         break;
                     }
 
-                    AnsiConsole.MarkupLine($"Found [cyan]{filesToUpload.Count}[/] file(s)");
+                    AnsiConsole.MarkupLine($"Found [bold]{filesToUpload.Count}[/] file(s)");
                     AnsiConsole.WriteLine();
 
                     // Confirm files
                     var fileListDisplay = filesToUpload.Count <= 5
                         ? string.Join(", ", filesToUpload.Select(f => $"[cyan]{Markup.Escape(Path.GetFileName(f))}[/]"))
-                        : $"[cyan]{filesToUpload.Count}[/] files";
+                        : $"[bold]{filesToUpload.Count}[/] files";
 
                     var confirmUpload = new MenuBuilder<bool?>()
                         .WithTitle($"Upload {fileListDisplay} to feed [cyan]{Markup.Escape(pushFeed.Title)}[/]?")
@@ -303,7 +303,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                     if (availableTargets.Count == 0)
                     {
-                        AnsiConsole.MarkupLine("[red]Error:[/] No target feeds available.");
+                        AnsiConsole.MarkupLine("[red]✗[/] No target feeds available.");
                         WaitForKeyPress();
                         break;
                     }
@@ -329,7 +329,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     // Validate for copy: can't copy to same feed
                     if (!isMove && sourceFeed.Id == targetFeed.Id)
                     {
-                        AnsiConsole.MarkupLine("[red]Error:[/] Cannot copy episodes within the same feed.");
+                        AnsiConsole.MarkupLine("[red]✗[/] Cannot copy episodes within the same feed.");
                         WaitForKeyPress();
                         break;
                     }
@@ -447,10 +447,10 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                     {
                                         var table = new Table();
                                         table.Border(TableBorder.Rounded);
-                                        table.AddColumn("[cyan]User ID[/]");
-                                        table.AddColumn("[cyan]Name[/]");
-                                        table.AddColumn("[cyan]Role[/]");
-                                        table.AddColumn("[cyan]Owned Feeds[/]");
+                                        table.AddColumn("[bold]User ID[/]");
+                                        table.AddColumn("[bold]Name[/]");
+                                        table.AddColumn("[bold]Role[/]");
+                                        table.AddColumn("[bold]Owned Feeds[/]");
 
                                         foreach (var user in users.EnumerateArray())
                                         {
@@ -468,7 +468,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                             table.AddRow(
                                                 Markup.Escape(id),
                                                 Markup.Escape(name),
-                                                role == "Admin" ? "[green]Admin[/]" : "[cyan]FeedOwner[/]",
+                                                role == "Admin" ? "[grey]Admin[/]" : "[grey]FeedOwner[/]",
                                                 Markup.Escape(ownedFeeds)
                                             );
                                         }
@@ -489,7 +489,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             break;
 
                         case "create":
-                            var newUserId = AnsiConsole.Prompt(new TextPrompt<string>("User [cyan]ID[/]:").AllowEmpty());
+                            var newUserId = AnsiConsole.Prompt(new TextPrompt<string>("User [bold]ID[/]:").AllowEmpty());
                             if (string.IsNullOrWhiteSpace(newUserId))
                             {
                                 AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
@@ -497,9 +497,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 break;
                             }
 
-                            var newName = AnsiConsole.Ask<string>("Display [cyan]name[/]:");
+                            var newName = AnsiConsole.Ask<string>("Display [bold]name[/]:");
                             var newEmail = AnsiConsole.Prompt(
-                                new TextPrompt<string>("[cyan]Email[/] (optional):")
+                                new TextPrompt<string>("[bold]Email[/] (optional):")
                                     .AllowEmpty());
 
                             var newRole = new MenuBuilder<string?>()
@@ -560,7 +560,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                     AnsiConsole.MarkupLine($"[red]✗[/] Failed to create user: {createResponse.StatusCode}");
                                     if (!string.IsNullOrEmpty(errorContent))
                                     {
-                                        AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                                        AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
                                     }
                                 }
                             }
@@ -882,9 +882,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     {
                         case "create":
                             // Prompt for feed details
-                            var id = AnsiConsole.Ask<string>("Feed [cyan]ID[/] (URL-friendly slug):");
-                            var title = AnsiConsole.Ask<string>("Feed [cyan]title[/]:");
-                            var author = AnsiConsole.Ask<string>("Feed [cyan]author[/]:");
+                            var id = AnsiConsole.Ask<string>("Feed [bold]ID[/] (URL-friendly slug):");
+                            var title = AnsiConsole.Ask<string>("Feed [bold]title[/]:");
+                            var author = AnsiConsole.Ask<string>("Feed [bold]author[/]:");
                             var description = AnsiConsole.Ask("Description (optional):", string.Empty);
                             var summary = AnsiConsole.Ask("Summary (optional, defaults to description):", string.Empty);
                             var email = AnsiConsole.Ask("Email (optional):", string.Empty);
@@ -930,7 +930,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             var feedToRename = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
                             if (feedToRename != null)
                             {
-                                var newId = AnsiConsole.Ask<string>("New feed [cyan]ID[/]:");
+                                var newId = AnsiConsole.Ask<string>("New feed [bold]ID[/]:");
                                 var renameResult = await FeedRenameCommand.RenameFeedAsync(httpClient, feedToRename.Id, newId.Trim(), cancellationToken);
                                 if (renameResult.Success && currentFeed?.Id == renameResult.OldFeedId)
                                 {
@@ -983,7 +983,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             // Validate file exists
                             if (!File.Exists(iconPath))
                             {
-                                AnsiConsole.MarkupLine($"[red]Error:[/] File not found: {Markup.Escape(iconPath)}");
+                                AnsiConsole.MarkupLine($"[red]✗[/] File not found: {Markup.Escape(iconPath)}");
                                 WaitForKeyPress();
                                 break;
                             }
@@ -992,7 +992,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             var iconExt = Path.GetExtension(iconPath).ToLowerInvariant();
                             if (iconExt != ".png" && iconExt != ".jpg" && iconExt != ".jpeg")
                             {
-                                AnsiConsole.MarkupLine("[red]Error:[/] Icon must be a PNG or JPEG file");
+                                AnsiConsole.MarkupLine("[red]✗[/] Icon must be a PNG or JPEG file");
                                 WaitForKeyPress();
                                 break;
                             }
@@ -1199,7 +1199,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 var meResponse = await httpClient.GetAsync("/api/users/me", cancellationToken);
                                 if (!meResponse.IsSuccessStatusCode)
                                 {
-                                    AnsiConsole.MarkupLine($"[red]Error:[/] Failed to get current user: {meResponse.StatusCode}");
+                                    AnsiConsole.MarkupLine($"[red]✗[/] Failed to get current user: {meResponse.StatusCode}");
                                     WaitForKeyPress();
                                     break;
                                 }
@@ -1209,7 +1209,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                                 if (!meData.TryGetProperty("id", out var idElement))
                                 {
-                                    AnsiConsole.MarkupLine("[red]Error:[/] Could not determine current user ID");
+                                    AnsiConsole.MarkupLine("[red]✗[/] Could not determine current user ID");
                                     WaitForKeyPress();
                                     break;
                                 }
@@ -1264,7 +1264,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                         }
                                         else
                                         {
-                                            AnsiConsole.MarkupLine("[yellow]Warning:[/] API key was NOT saved. Copy it now - it will NOT be shown again!");
+                                            AnsiConsole.MarkupLine("[yellow]Δ[/] API key was NOT saved. Copy it now - it will NOT be shown again!");
                                             AnsiConsole.MarkupLine("[yellow]You will need to manually update your API key to reconnect.[/]");
                                             isConnected = false;
                                             httpClient = null;
@@ -1280,7 +1280,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                     AnsiConsole.MarkupLine($"[red]✗[/] Failed to rotate API key: {rotateResponse.StatusCode}");
                                     if (!string.IsNullOrEmpty(errorContent))
                                     {
-                                        AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                                        AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
                                     }
                                     WaitForKeyPress();
                                 }
@@ -1298,15 +1298,15 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                             AnsiConsole.MarkupLine(string.IsNullOrEmpty(showApiKey)
                                 ? $"[yellow]API key ({env}):[/] (not configured)"
-                                : $"[cyan]API key ({env}):[/] {PreferencesHelpers.MaskApiKey(showApiKey)}");
+                                : $"[bold]API key ({env}):[/] {PreferencesHelpers.MaskApiKey(showApiKey)}");
 
                             var showNormPref = PreferencesHelpers.GetNormalizationEnabled(env);
                             var showNormEnabled = showNormPref ?? true;
-                            AnsiConsole.MarkupLine($"[cyan]Audio normalization ({env}):[/] {(showNormEnabled ? "enabled" : "disabled")}{(showNormPref.HasValue ? "" : " (default)")}");
+                            AnsiConsole.MarkupLine($"[bold]Audio normalization ({env}):[/] {(showNormEnabled ? "enabled" : "disabled")}{(showNormPref.HasValue ? "" : " (default)")}");
 
                             var showAutoConnectPref = PreferencesHelpers.GetAutoConnectEnabled(env);
                             var showAutoConnectEnabled = showAutoConnectPref ?? true;
-                            AnsiConsole.MarkupLine($"[cyan]Auto-connect ({env}):[/] {(showAutoConnectEnabled ? "enabled" : "disabled")}{(showAutoConnectPref.HasValue ? "" : " (default)")}");
+                            AnsiConsole.MarkupLine($"[bold]Auto-connect ({env}):[/] {(showAutoConnectEnabled ? "enabled" : "disabled")}{(showAutoConnectPref.HasValue ? "" : " (default)")}");
 
                             AnsiConsole.WriteLine();
                             AnsiConsole.MarkupLine($"[grey]Preferences: {Markup.Escape(showFilePath)}[/]");
@@ -1353,7 +1353,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 await using var stream = genAssembly.GetManifestResourceStream(resourceName);
                                 if (stream == null)
                                 {
-                                    AnsiConsole.MarkupLine($"[red]Could not find embedded resource:[/] {resourceName}");
+                                    AnsiConsole.MarkupLine($"[red]✗[/] Could not find embedded resource: {resourceName}");
                                     continue;
                                 }
 

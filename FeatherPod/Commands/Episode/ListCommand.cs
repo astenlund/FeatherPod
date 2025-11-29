@@ -72,7 +72,7 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
         }
         catch (HttpRequestException ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error fetching episodes:[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Error fetching episodes: {ex.Message}");
 
             return [];
         }
@@ -104,8 +104,8 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
         if (feed == null)
         {
             AnsiConsole.MarkupLine(!string.IsNullOrEmpty(settings.FeedId)
-                ? $"[red]Error:[/] Feed '{settings.FeedId}' not found."
-                : "[red]Error:[/] No feeds available.");
+                ? $"[red]✗[/] Feed '{settings.FeedId}' not found."
+                : "[red]✗[/] No feeds available.");
 
             return 1;
         }

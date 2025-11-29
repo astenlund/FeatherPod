@@ -29,7 +29,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
             sourceFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FromFeed);
             if (sourceFeed == null)
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] Source feed '{settings.FromFeed}' not found.");
+                AnsiConsole.MarkupLine($"[red]✗[/] Source feed '{settings.FromFeed}' not found.");
                 return 1;
             }
         }
@@ -38,7 +38,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
             sourceFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, contextMessage: "Select source feed:");
             if (sourceFeed == null)
             {
-                AnsiConsole.MarkupLine("[red]Error:[/] No feeds available.");
+                AnsiConsole.MarkupLine("[red]✗[/] No feeds available.");
                 return 1;
             }
         }
@@ -59,11 +59,11 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
             episodesToMove = EpisodeHelpers.MatchEpisodesByPattern(episodes, settings.Episode);
             if (episodesToMove.Count == 0)
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] No episodes match pattern '{settings.Episode}'");
+                AnsiConsole.MarkupLine($"[red]✗[/] No episodes match pattern '{settings.Episode}'");
                 return 1;
             }
 
-            AnsiConsole.MarkupLine($"Matched [cyan]{episodesToMove.Count}[/] episode(s) from feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]'");
+            AnsiConsole.MarkupLine($"Matched [bold]{episodesToMove.Count}[/] episode(s) from feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]'");
             AnsiConsole.WriteLine();
         }
         else
@@ -85,7 +85,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
             targetFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.ToFeed);
             if (targetFeed == null)
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] Target feed '{settings.ToFeed}' not found.");
+                AnsiConsole.MarkupLine($"[red]✗[/] Target feed '{settings.ToFeed}' not found.");
                 return 1;
             }
         }
@@ -95,14 +95,14 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
             var allFeeds = await FeedHelpers.GetFeedsAsync(httpClient);
             if (allFeeds.Count <= 1)
             {
-                AnsiConsole.MarkupLine("[red]Error:[/] No other feeds available. Create another feed first.");
+                AnsiConsole.MarkupLine("[red]✗[/] No other feeds available. Create another feed first.");
                 return 1;
             }
 
             var targetFeeds = allFeeds.Where(f => f.Id != sourceFeed.Id).ToList();
             if (targetFeeds.Count == 0)
             {
-                AnsiConsole.MarkupLine("[red]Error:[/] No other feeds available.");
+                AnsiConsole.MarkupLine("[red]✗[/] No other feeds available.");
                 return 1;
             }
 
@@ -127,7 +127,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
         // Validate: source != target
         if (sourceFeed.Id == targetFeed.Id)
         {
-            AnsiConsole.MarkupLine("[red]Error:[/] Cannot move episodes within the same feed.");
+            AnsiConsole.MarkupLine("[red]✗[/] Cannot move episodes within the same feed.");
             return 1;
         }
 

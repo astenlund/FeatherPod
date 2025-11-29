@@ -29,7 +29,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
             sourceFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FromFeed);
             if (sourceFeed == null)
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] Source feed '{settings.FromFeed}' not found.");
+                AnsiConsole.MarkupLine($"[red]✗[/] Source feed '{settings.FromFeed}' not found.");
                 return 1;
             }
         }
@@ -38,7 +38,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
             sourceFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, contextMessage: "Select source feed:");
             if (sourceFeed == null)
             {
-                AnsiConsole.MarkupLine("[red]Error:[/] No feeds available.");
+                AnsiConsole.MarkupLine("[red]✗[/] No feeds available.");
                 return 1;
             }
         }
@@ -59,11 +59,11 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
             episodesToCopy = EpisodeHelpers.MatchEpisodesByPattern(episodes, settings.Episode);
             if (episodesToCopy.Count == 0)
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] No episodes match pattern '{settings.Episode}'");
+                AnsiConsole.MarkupLine($"[red]✗[/] No episodes match pattern '{settings.Episode}'");
                 return 1;
             }
 
-            AnsiConsole.MarkupLine($"Matched [cyan]{episodesToCopy.Count}[/] episode(s) from feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]'");
+            AnsiConsole.MarkupLine($"Matched [bold]{episodesToCopy.Count}[/] episode(s) from feed '[cyan]{Markup.Escape(sourceFeed.Title)}[/]'");
             AnsiConsole.WriteLine();
         }
         else
@@ -85,7 +85,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
             targetFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.ToFeed);
             if (targetFeed == null)
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] Target feed '{settings.ToFeed}' not found.");
+                AnsiConsole.MarkupLine($"[red]✗[/] Target feed '{settings.ToFeed}' not found.");
                 return 1;
             }
         }
@@ -95,7 +95,7 @@ internal sealed class CopyCommand : AsyncCommand<CopySettings>
             var allFeeds = await FeedHelpers.GetFeedsAsync(httpClient);
             if (allFeeds.Count == 0)
             {
-                AnsiConsole.MarkupLine("[red]Error:[/] No feeds available.");
+                AnsiConsole.MarkupLine("[red]✗[/] No feeds available.");
                 return 1;
             }
 

@@ -51,7 +51,7 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
 
             if (!string.IsNullOrEmpty(errorContent))
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
             }
 
             return new() { Success = false, ErrorMessage = errorContent };
@@ -80,19 +80,19 @@ internal sealed class CreateCommand : AsyncCommand<CreateSettings>
         var id = settings.Id;
         if (string.IsNullOrWhiteSpace(id))
         {
-            id = AnsiConsole.Ask<string>("Feed [cyan]ID[/] (URL-friendly slug):");
+            id = AnsiConsole.Ask<string>("Feed [bold]ID[/] (URL-friendly slug):");
         }
 
         var title = settings.Title;
         if (string.IsNullOrWhiteSpace(title))
         {
-            title = AnsiConsole.Ask<string>("Feed [cyan]title[/]:");
+            title = AnsiConsole.Ask<string>("Feed [bold]title[/]:");
         }
 
         var author = settings.Author;
         if (string.IsNullOrWhiteSpace(author))
         {
-            author = AnsiConsole.Ask<string>("Feed [cyan]author[/]:");
+            author = AnsiConsole.Ask<string>("Feed [bold]author[/]:");
         }
 
         // Optional fields

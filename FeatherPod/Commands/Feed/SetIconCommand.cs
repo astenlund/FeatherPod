@@ -29,7 +29,7 @@ internal sealed class SetIconCommand : AsyncCommand<SetIconSettings>
         var iconPath = settings.IconPath.Trim().Trim('"', '\'');
         if (!File.Exists(iconPath))
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Icon file not found: {Markup.Escape(iconPath)}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Icon file not found: {Markup.Escape(iconPath)}");
 
             return 1;
         }
@@ -38,7 +38,7 @@ internal sealed class SetIconCommand : AsyncCommand<SetIconSettings>
         var extension = Path.GetExtension(iconPath).ToLowerInvariant();
         if (extension != ".png" && extension != ".jpg" && extension != ".jpeg")
         {
-            AnsiConsole.MarkupLine("[red]Error:[/] Icon must be a PNG or JPEG file");
+            AnsiConsole.MarkupLine("[red]✗[/] Icon must be a PNG or JPEG file");
 
             return 1;
         }
@@ -51,8 +51,8 @@ internal sealed class SetIconCommand : AsyncCommand<SetIconSettings>
         if (feed == null)
         {
             AnsiConsole.MarkupLine(!string.IsNullOrEmpty(settings.FeedId)
-                ? $"[red]Error:[/] Feed '{settings.FeedId}' not found."
-                : "[red]Error:[/] No feeds available. Create a feed first.");
+                ? $"[red]✗[/] Feed '{settings.FeedId}' not found."
+                : "[red]✗[/] No feeds available. Create a feed first.");
 
             return 1;
         }

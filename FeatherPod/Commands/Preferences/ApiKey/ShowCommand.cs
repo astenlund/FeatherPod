@@ -21,7 +21,7 @@ internal sealed class ShowCommand : Command<ApiKeyShowSettings>
         AnsiConsole.MarkupLine(
             string.IsNullOrEmpty(apiKey)
                 ? $"[yellow]API key ({env}):[/] (not configured)"
-                : $"[cyan]API key ({env}):[/] {PreferencesHelpers.MaskApiKey(apiKey)}");
+                : $"[bold]API key ({env}):[/] {PreferencesHelpers.MaskApiKey(apiKey)}");
         AnsiConsole.WriteLine();
 
         return 0;

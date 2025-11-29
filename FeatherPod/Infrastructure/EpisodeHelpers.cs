@@ -94,7 +94,7 @@ internal static class EpisodeHelpers
                 if (!FFmpegService.IsFFmpegAvailable())
                 {
                     AnsiConsole.WriteLine();
-                    AnsiConsole.MarkupLine("[yellow]Warning:[/] FFmpeg is not installed or not found.");
+                    AnsiConsole.MarkupLine("[yellow]Δ[/] FFmpeg is not installed or not found.");
 
                     // Offer to download FFmpeg automatically
                     var downloadChoice = new MenuBuilder<bool?>()
@@ -112,7 +112,7 @@ internal static class EpisodeHelpers
 
                         if (!downloadSuccess)
                         {
-                            AnsiConsole.MarkupLine("[red]Failed to download FFmpeg.[/]");
+                            AnsiConsole.MarkupLine("[red]✗[/] Failed to download FFmpeg.");
                             AnsiConsole.WriteLine();
 
                             var continueAfterFailure = new MenuBuilder<bool?>()
@@ -166,7 +166,7 @@ internal static class EpisodeHelpers
                     if (!normResult.Success)
                     {
                         AnsiConsole.WriteLine();
-                        AnsiConsole.MarkupLine("[yellow]Warning:[/] Audio normalization failed.");
+                        AnsiConsole.MarkupLine("[yellow]Δ[/] Audio normalization failed.");
 
                         var continueWithOriginal = new MenuBuilder<bool?>()
                             .WithTitle("Continue upload with original (unnormalized) file?")
@@ -279,7 +279,7 @@ internal static class EpisodeHelpers
                             AnsiConsole.MarkupLine($"[red]✗[/] Failed to upload [cyan]{fileName}[/]: {response.StatusCode}");
                             if (!string.IsNullOrEmpty(errorContent))
                             {
-                                AnsiConsole.MarkupLine($"  [red]Error:[/] {errorContent}");
+                                AnsiConsole.MarkupLine($"  [red]✗[/] {errorContent}");
                             }
                         }
                     }
@@ -345,7 +345,7 @@ internal static class EpisodeHelpers
 
             if (!response.IsSuccessStatusCode)
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] Failed to fetch episodes from feed '{feedId}'");
+                AnsiConsole.MarkupLine($"[red]✗[/] Failed to fetch episodes from feed '{feedId}'");
                 return null;
             }
 
@@ -355,7 +355,7 @@ internal static class EpisodeHelpers
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error fetching episodes:[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Error fetching episodes: {ex.Message}");
             return null;
         }
     }
@@ -375,7 +375,7 @@ internal static class EpisodeHelpers
                 var errorJson = await response.Content.ReadAsStringAsync();
                 var errorObj = JsonSerializer.Deserialize<JsonElement>(errorJson);
                 var errorMsg = errorObj.TryGetProperty("error", out var err) ? err.GetString() : "Unknown error";
-                AnsiConsole.MarkupLine($"[red]Error:[/] {errorMsg}");
+                AnsiConsole.MarkupLine($"[red]✗[/] {errorMsg}");
                 return false;
             }
 
@@ -383,7 +383,7 @@ internal static class EpisodeHelpers
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error moving episode:[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Error moving episode: {ex.Message}");
             return false;
         }
     }
@@ -403,7 +403,7 @@ internal static class EpisodeHelpers
                 var errorJson = await response.Content.ReadAsStringAsync();
                 var errorObj = JsonSerializer.Deserialize<JsonElement>(errorJson);
                 var errorMsg = errorObj.TryGetProperty("error", out var err) ? err.GetString() : "Unknown error";
-                AnsiConsole.MarkupLine($"[red]Error:[/] {errorMsg}");
+                AnsiConsole.MarkupLine($"[red]✗[/] {errorMsg}");
                 return false;
             }
 
@@ -411,7 +411,7 @@ internal static class EpisodeHelpers
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error copying episode:[/] {ex.Message}");
+            AnsiConsole.MarkupLine($"[red]✗[/] Error copying episode: {ex.Message}");
             return false;
         }
     }
@@ -483,7 +483,7 @@ internal static class EpisodeHelpers
     {
         return await AnsiConsole.Status()
             .Spinner(Spinner.Known.Dots)
-            .StartAsync("[cyan]Downloading FFmpeg...[/]", async _ => await FFmpegService.DownloadFFmpegAsync());
+            .StartAsync("[bold]Downloading FFmpeg...[/]", async _ => await FFmpegService.DownloadFFmpegAsync());
     }
 
     private static async Task<bool> PollJobCompletionAsync(HttpClient httpClient, string jobId, string fileName)
@@ -504,14 +504,14 @@ internal static class EpisodeHelpers
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException)
         {
-            AnsiConsole.MarkupLine($"[yellow]SSE connection failed, falling back to polling...[/]");
+            AnsiConsole.MarkupLine($"[yellow]Δ[/] SSE connection failed, falling back to polling...");
 
             return await FallbackPollJobCompletionAsync(httpClient, jobId, fileName, cts.Token);
         }
         catch (OperationCanceledException)
         {
             AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine($"[yellow]![/] Normalization timed out after {maxWaitMs / 1000} seconds");
+            AnsiConsole.MarkupLine($"[yellow]Δ[/] Normalization timed out after {maxWaitMs / 1000} seconds");
             AnsiConsole.MarkupLine($"  Job ID: [grey]{jobId}[/] - check status manually");
 
             return false;
@@ -630,7 +630,7 @@ internal static class EpisodeHelpers
 
         return await AnsiConsole.Status()
             .Spinner(Spinner.Known.Dots)
-            .StartAsync($"[cyan]Normalizing {Markup.Escape(fileName)}...[/]", async ctx =>
+            .StartAsync($"[bold]Normalizing {Markup.Escape(fileName)}...[/]", async ctx =>
             {
                 while (!cancellationToken.IsCancellationRequested)
                 {
@@ -673,7 +673,7 @@ internal static class EpisodeHelpers
                             return false;
                         }
 
-                        ctx.Status($"[cyan]Normalizing {Markup.Escape(fileName)}...[/] ({elapsed / 1000}s)");
+                        ctx.Status($"[bold]Normalizing {Markup.Escape(fileName)}...[/] ({elapsed / 1000}s)");
                     }
                     catch (OperationCanceledException)
                     {

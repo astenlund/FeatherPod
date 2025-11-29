@@ -33,8 +33,8 @@ internal sealed class UnsetIconCommand : AsyncCommand<UnsetIconSettings>
         if (feed == null)
         {
             AnsiConsole.MarkupLine(!string.IsNullOrEmpty(settings.FeedId)
-                ? $"[red]Error:[/] Feed '{settings.FeedId}' not found."
-                : "[red]Error:[/] No feeds available. Create a feed first.");
+                ? $"[red]✗[/] Feed '{settings.FeedId}' not found."
+                : "[red]✗[/] No feeds available. Create a feed first.");
 
             return 1;
         }

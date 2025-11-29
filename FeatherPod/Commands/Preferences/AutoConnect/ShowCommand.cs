@@ -19,7 +19,7 @@ internal sealed class ShowCommand : Command<AutoConnectSettings>
         var enabled = pref ?? true;
 
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"[cyan]Auto-connect ({env}):[/] {(enabled ? "enabled" : "disabled")}{(pref.HasValue ? "" : " (default)")}");
+        AnsiConsole.MarkupLine($"[bold]Auto-connect ({env}):[/] {(enabled ? "enabled" : "disabled")}{(pref.HasValue ? "" : " (default)")}");
         AnsiConsole.WriteLine();
 
         return 0;

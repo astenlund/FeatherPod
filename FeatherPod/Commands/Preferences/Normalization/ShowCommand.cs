@@ -19,7 +19,7 @@ internal sealed class ShowCommand : Command<NormalizationSettings>
         var enabled = pref ?? true;
 
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"[cyan]Audio normalization ({env}):[/] {(enabled ? "enabled" : "disabled")}{(pref.HasValue ? "" : " (default)")}");
+        AnsiConsole.MarkupLine($"[bold]Audio normalization ({env}):[/] {(enabled ? "enabled" : "disabled")}{(pref.HasValue ? "" : " (default)")}");
         AnsiConsole.WriteLine();
 
         return 0;

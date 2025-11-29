@@ -26,13 +26,13 @@ internal sealed class GrantCommand : AsyncCommand<GrantSettings>
 
         if (string.IsNullOrWhiteSpace(userId))
         {
-            AnsiConsole.MarkupLine("[red]Error:[/] User ID cannot be empty");
+            AnsiConsole.MarkupLine("[red]✗[/] User ID cannot be empty");
             return 1;
         }
 
         if (string.IsNullOrWhiteSpace(feedId))
         {
-            AnsiConsole.MarkupLine("[red]Error:[/] Feed ID cannot be empty");
+            AnsiConsole.MarkupLine("[red]✗[/] Feed ID cannot be empty");
             return 1;
         }
 
@@ -55,7 +55,7 @@ internal sealed class GrantCommand : AsyncCommand<GrantSettings>
                 AnsiConsole.MarkupLine($"[red]✗[/] Failed to grant feed ownership: {response.StatusCode}");
                 if (!string.IsNullOrEmpty(errorContent))
                 {
-                    AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                    AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
                 }
                 return 1;
             }

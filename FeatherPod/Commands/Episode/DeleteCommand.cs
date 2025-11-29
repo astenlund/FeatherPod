@@ -61,7 +61,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
 
             if (!string.IsNullOrEmpty(errorContent))
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
             }
 
             return new() { Success = false, ErrorMessage = errorContent };
@@ -100,8 +100,8 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
         if (feed == null)
         {
             AnsiConsole.MarkupLine(!string.IsNullOrEmpty(settings.FeedId)
-                ? $"[red]Error:[/] Feed '{settings.FeedId}' not found."
-                : "[red]Error:[/] No feeds available.");
+                ? $"[red]✗[/] Feed '{settings.FeedId}' not found."
+                : "[red]✗[/] No feeds available.");
             AnsiConsole.WriteLine();
 
             return 1;
@@ -125,7 +125,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
             var episode = episodes.FirstOrDefault(e => e.Id == settings.EpisodeId);
             if (episode == null)
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] Episode '{settings.EpisodeId}' not found in feed '{feed.Id}'.");
+                AnsiConsole.MarkupLine($"[red]✗[/] Episode '{settings.EpisodeId}' not found in feed '{feed.Id}'.");
                 AnsiConsole.WriteLine();
 
                 return 1;
@@ -196,7 +196,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
         }
 
         AnsiConsole.WriteLine();
-        AnsiConsole.MarkupLine($"[green]Deleted {successCount}/{episodesToDelete.Count} episodes.[/]");
+        AnsiConsole.MarkupLine($"[green]✓[/] Deleted {successCount}/{episodesToDelete.Count} episodes.");
         AnsiConsole.WriteLine();
 
         return successCount == episodesToDelete.Count ? 0 : 1;

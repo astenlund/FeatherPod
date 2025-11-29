@@ -65,7 +65,7 @@ internal sealed class RenameCommand : AsyncCommand<RenameSettings>
             var feed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
             if (feed == null)
             {
-                AnsiConsole.MarkupLine("[red]Error:[/] No feeds available.");
+                AnsiConsole.MarkupLine("[red]✗[/] No feeds available.");
                 return 1;
             }
             feedId = feed.Id;
@@ -75,7 +75,7 @@ internal sealed class RenameCommand : AsyncCommand<RenameSettings>
         var currentFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, feedId);
         if (currentFeed == null)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Feed '{feedId}' not found.");
+            AnsiConsole.MarkupLine($"[red]✗[/] Feed '{feedId}' not found.");
             return 1;
         }
 
@@ -83,7 +83,7 @@ internal sealed class RenameCommand : AsyncCommand<RenameSettings>
         var newId = settings.NewId?.Trim();
         if (string.IsNullOrWhiteSpace(newId))
         {
-            newId = AnsiConsole.Ask<string>("New feed [cyan]ID[/]:");
+            newId = AnsiConsole.Ask<string>("New feed [bold]ID[/]:");
         }
 
         var result = await RenameFeedAsync(httpClient, feedId, newId, cancellationToken);

@@ -136,7 +136,7 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
 
             if (!string.IsNullOrEmpty(errorContent))
             {
-                AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
             }
 
             return new() { Success = false, ErrorMessage = errorContent };
@@ -168,7 +168,7 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
             var feed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
             if (feed == null)
             {
-                AnsiConsole.MarkupLine("[red]Error:[/] No feeds available.");
+                AnsiConsole.MarkupLine("[red]✗[/] No feeds available.");
                 return 1;
             }
             feedId = feed.Id;
@@ -178,7 +178,7 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
         var currentFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, feedId);
         if (currentFeed == null)
         {
-            AnsiConsole.MarkupLine($"[red]Error:[/] Feed '{feedId}' not found.");
+            AnsiConsole.MarkupLine($"[red]✗[/] Feed '{feedId}' not found.");
             return 1;
         }
 
@@ -240,7 +240,7 @@ internal sealed class UpdateCommand : AsyncCommand<UpdateSettings>
                 AnsiConsole.MarkupLine($"[red]✗[/] Failed to update feed: {response.StatusCode}");
                 if (!string.IsNullOrEmpty(errorContent))
                 {
-                    AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(errorContent)}");
+                    AnsiConsole.MarkupLine($"[red]✗[/] {Markup.Escape(errorContent)}");
                 }
                 return 1;
             }
