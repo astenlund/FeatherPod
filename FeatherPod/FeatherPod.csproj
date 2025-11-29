@@ -2,6 +2,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FeatherPod.Shared\FeatherPod.Shared.csproj" />
+    <ProjectReference Include="..\FeatherPod.Analyzers\FeatherPod.Analyzers.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
