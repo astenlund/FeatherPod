@@ -330,3 +330,61 @@ public class EpisodeServiceTests : IDisposable
         }
     }
 }
+
+public class TitleParsingTests
+{
+    [Theory]
+    [InlineData("Simple_Title.m4a", "Simple Title")]
+    [InlineData("Multiple_Words_Here.mp3", "Multiple Words Here")]
+    public void ParseTitleFromFilename_ReplacesUnderscoresWithSpaces(string fileName, string expected)
+    {
+        var result = EpisodeService.ParseTitleFromFilename(fileName);
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData("Cold_War_Built_Silicon_Valley_s_Wealth.m4a", "Cold War Built Silicon Valley's Wealth")]
+    [InlineData("America_s_Best.m4a", "America's Best")]
+    [InlineData("Today_s_Episode.mp3", "Today's Episode")]
+    public void ParseTitleFromFilename_ConvertsPossessives(string fileName, string expected)
+    {
+        var result = EpisodeService.ParseTitleFromFilename(fileName);
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData("Unlocking_GaussianImage__The_Speed_vs.m4a", "Unlocking Gaussian Image: The Speed vs")]
+    [InlineData("Topic__Subtitle.mp3", "Topic: Subtitle")]
+    [InlineData("Main_Title__Sub_Title.m4a", "Main Title: Sub Title")]
+    public void ParseTitleFromFilename_ConvertsDoubleUnderscoreToColon(string fileName, string expected)
+    {
+        var result = EpisodeService.ParseTitleFromFilename(fileName);
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData("PascalCaseTitle.m4a", "Pascal Case Title")]
+    [InlineData("NotebookLMOverview.mp3", "Notebook LMOverview")]
+    public void ParseTitleFromFilename_HandlesPascalCase(string fileName, string expected)
+    {
+        var result = EpisodeService.ParseTitleFromFilename(fileName);
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData("America_s_Future__A_Deep_Dive.m4a", "America's Future: A Deep Dive")]
+    public void ParseTitleFromFilename_HandlesCombinedPatterns(string fileName, string expected)
+    {
+        var result = EpisodeService.ParseTitleFromFilename(fileName);
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
+    [InlineData("Valve%E2%80%99s_Steam_Frame_Unpacked__Why_Their_Wireless-Only%2C_Modular_.m4a", "Valve's Steam Frame Unpacked: Why Their Wireless-Only, Modular")]
+    [InlineData("Hello%20World.mp3", "Hello World")]
+    public void ParseTitleFromFilename_DecodesUrlEncodedCharacters(string fileName, string expected)
+    {
+        var result = EpisodeService.ParseTitleFromFilename(fileName);
+        Assert.Equal(expected, result);
+    }
+}

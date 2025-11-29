@@ -621,10 +621,24 @@ public sealed partial class EpisodeService : IDisposable
         }
     }
 
-    private static string ParseTitleFromFilename(string fileName)
+    internal static string ParseTitleFromFilename(string fileName)
     {
         var nameWithoutExtension = Path.GetFileNameWithoutExtension(fileName);
-        var title = nameWithoutExtension.Replace('_', ' ');
+
+        // URL-decode any percent-encoded characters (e.g., %E2%80%99 → ', %2C → ,)
+        var title = Uri.UnescapeDataString(nameWithoutExtension);
+
+        // Normalize curly quotes to straight quotes
+        title = title.Replace('\u2019', '\'');  // Right single quote → apostrophe
+        title = title.Replace('\u2018', '\'');  // Left single quote → apostrophe
+
+        // Convert double underscore to colon (e.g., Topic__Subtitle → Topic: Subtitle)
+        title = title.Replace("__", ": ");
+
+        // Convert lonely _s_ or _s at end to possessive apostrophe (e.g., Valley_s_Wealth → Valley's Wealth)
+        title = PossessiveRegex().Replace(title, "'s");
+
+        title = title.Replace('_', ' ');
 
         // Handle PascalCase: Insert space before uppercase letters that follow lowercase letters
         // But preserve sequences like "2D", "3D", "4K" (digit followed by uppercase)
@@ -644,6 +658,9 @@ public sealed partial class EpisodeService : IDisposable
     [GeneratedRegex(@"\s+")]
     private static partial Regex SpaceRegex();
 
-    [GeneratedRegex("(?<![A-Z0-9])(?=[A-Z])")]
+    [GeneratedRegex("(?<![A-Z0-9-])(?=[A-Z])")]
     private static partial Regex PascalRegex();
+
+    [GeneratedRegex(@"_s(?=_|$)")]
+    private static partial Regex PossessiveRegex();
 }
