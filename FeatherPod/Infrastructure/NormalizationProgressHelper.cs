@@ -7,7 +7,9 @@ namespace FeatherPod.Infrastructure;
 /// </summary>
 public static class NormalizationProgressHelper
 {
-    private static readonly int MaxStageNameLength = Enum.GetNames<NormalizationStage>().Max(s => s.Length);
+    private static readonly int LocalMaxStageNameLength = Enum.GetNames<NormalizationStage>()
+        .Where(n => n != nameof(NormalizationStage.Unknown))
+        .Max(s => s.Length);
 
     public static string FormatPosition(TimeSpan? current, TimeSpan? total)
     {
@@ -28,11 +30,16 @@ public static class NormalizationProgressHelper
 
     /// <summary>
     /// Get a fixed-width stage description for consistent progress bar alignment.
+    /// Uses server-provided display name and max length when available for forward compatibility.
     /// </summary>
-    public static string GetStageDescription(string? stage)
+    public static string GetStageDescription(ProgressUpdate update)
     {
-        var isValidStage = Enum.TryParse<NormalizationStage>(stage, out _);
+        var displayName = update.StageDisplayName
+            ?? (update.Stage != NormalizationStage.Unknown ? update.Stage.ToString() : null)
+            ?? "Processing";
 
-        return (isValidStage ? stage! : "Processing").PadRight(MaxStageNameLength);
+        var maxLength = update.StageDisplayNameMaxLength ?? LocalMaxStageNameLength;
+
+        return displayName.PadRight(maxLength);
     }
 }

@@ -1,4 +1,5 @@
 using FeatherPod.Infrastructure;
+using FeatherPod.Shared.Models;
 
 namespace FeatherPod.Tests;
 
@@ -100,40 +101,84 @@ public class NormalizationProgressHelperTests
     }
 
     [Theory]
-    [InlineData("Queued")]
-    [InlineData("Downloading")]
-    [InlineData("Analyzing")]
-    [InlineData("Normalizing")]
-    [InlineData("Uploading")]
-    [InlineData("Finalizing")]
-    [InlineData("Completed")]
-    [InlineData("Failed")]
-    public void GetStageDescription_ShouldReturnPaddedStageName(string stage)
+    [InlineData(NormalizationStage.Queued)]
+    [InlineData(NormalizationStage.Downloading)]
+    [InlineData(NormalizationStage.Analyzing)]
+    [InlineData(NormalizationStage.Normalizing)]
+    [InlineData(NormalizationStage.Uploading)]
+    [InlineData(NormalizationStage.Finalizing)]
+    [InlineData(NormalizationStage.Completed)]
+    [InlineData(NormalizationStage.Failed)]
+    public void GetStageDescription_ShouldReturnPaddedStageName(NormalizationStage stage)
     {
-        var result = NormalizationProgressHelper.GetStageDescription(stage);
+        var update = new ProgressUpdate { Stage = stage, ProgressPercent = 0, Message = "" };
+        var result = NormalizationProgressHelper.GetStageDescription(update);
 
-        Assert.StartsWith(stage, result);
-        Assert.Equal(stage, result.TrimEnd());
+        Assert.StartsWith(stage.ToString(), result);
+        Assert.Equal(stage.ToString(), result.TrimEnd());
     }
 
     [Fact]
     public void GetStageDescription_ShouldReturnConsistentWidth()
     {
-        var stages = new[] { "Queued", "Downloading", "Analyzing", "Normalizing", "Uploading", "Finalizing", "Completed", "Failed", null, "Unknown" };
-        var lengths = stages.Select(s => NormalizationProgressHelper.GetStageDescription(s).Length).Distinct().ToList();
+        var stages = new[] { NormalizationStage.Unknown, NormalizationStage.Queued, NormalizationStage.Downloading, NormalizationStage.Analyzing, NormalizationStage.Normalizing, NormalizationStage.Uploading, NormalizationStage.Finalizing, NormalizationStage.Completed, NormalizationStage.Failed };
+        var updates = stages.Select(s => new ProgressUpdate { Stage = s, ProgressPercent = 0, Message = "" });
+        var lengths = updates.Select(u => NormalizationProgressHelper.GetStageDescription(u).Length).Distinct().ToList();
 
         Assert.Single(lengths);
     }
 
-    [Theory]
-    [InlineData("Unknown")]
-    [InlineData("")]
-    [InlineData("RandomStage")]
-    [InlineData(null)]
-    public void GetStageDescription_ShouldReturnProcessingForInvalidStages(string? stage)
+    [Fact]
+    public void GetStageDescription_ShouldReturnProcessingForUnknownStage()
     {
-        var result = NormalizationProgressHelper.GetStageDescription(stage);
+        var update = new ProgressUpdate { Stage = NormalizationStage.Unknown, ProgressPercent = 0, Message = "" };
+        var result = NormalizationProgressHelper.GetStageDescription(update);
 
         Assert.StartsWith("Processing", result);
+    }
+
+    [Fact]
+    public void GetStageDescription_ShouldUseServerDisplayNameWhenProvided()
+    {
+        var update = new ProgressUpdate
+        {
+            Stage = NormalizationStage.Unknown,
+            ProgressPercent = 50,
+            Message = "",
+            StageDisplayName = "NewServerStage"
+        };
+        var result = NormalizationProgressHelper.GetStageDescription(update);
+
+        Assert.StartsWith("NewServerStage", result);
+    }
+
+    [Fact]
+    public void GetStageDescription_ShouldUseServerMaxLengthWhenProvided()
+    {
+        var update = new ProgressUpdate
+        {
+            Stage = NormalizationStage.Queued,
+            ProgressPercent = 0,
+            Message = "",
+            StageDisplayNameMaxLength = 20
+        };
+        var result = NormalizationProgressHelper.GetStageDescription(update);
+
+        Assert.Equal(20, result.Length);
+    }
+
+    [Fact]
+    public void GetStageDescription_ShouldPreferServerDisplayNameOverLocalStage()
+    {
+        var update = new ProgressUpdate
+        {
+            Stage = NormalizationStage.Queued,
+            ProgressPercent = 0,
+            Message = "",
+            StageDisplayName = "ServerOverride"
+        };
+        var result = NormalizationProgressHelper.GetStageDescription(update);
+
+        Assert.StartsWith("ServerOverride", result);
     }
 }

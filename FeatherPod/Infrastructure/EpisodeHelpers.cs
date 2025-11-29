@@ -518,6 +518,8 @@ internal static class EpisodeHelpers
         }
     }
 
+    private static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(20);
+
     private static async Task<NormalizationProgressRenderer.NormalizationResult> StreamSSEProgressAsync(
         HttpClient httpClient,
         string jobId,
@@ -541,7 +543,19 @@ internal static class EpisodeHelpers
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            var line = await reader.ReadLineAsync(cancellationToken);
+            using var readCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            readCts.CancelAfter(ReadTimeout);
+
+            string? line;
+            try
+            {
+                line = await reader.ReadLineAsync(readCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw new IOException($"SSE read timed out after {ReadTimeout.TotalSeconds} seconds");
+            }
+
             if (line == null)
             {
                 break;
@@ -569,7 +583,7 @@ internal static class EpisodeHelpers
 
                     var stage = Enum.TryParse<NormalizationStage>(status.Stage, out var s)
                         ? s
-                        : NormalizationStage.Queued;
+                        : NormalizationStage.Unknown;
 
                     updateProgress(new()
                     {
@@ -581,7 +595,9 @@ internal static class EpisodeHelpers
                             : null,
                         TotalDuration = status.TotalDurationMs.HasValue
                             ? TimeSpan.FromMilliseconds(status.TotalDurationMs.Value)
-                            : null
+                            : null,
+                        StageDisplayName = status.StageDisplayName,
+                        StageDisplayNameMaxLength = status.StageDisplayNameMaxLength
                     });
                 }
                 else if (currentEvent is "done" or "error")

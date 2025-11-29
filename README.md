@@ -178,6 +178,7 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
 | `/api/jobs/{jobId}` | GET | Any | Get normalization job status (Queued/Processing/Completed/Failed) |
+| `/api/jobs/{jobId}/progress` | GET | Any | SSE stream for real-time progress updates |
 
 ### Icon Management
 
@@ -240,9 +241,9 @@ FeatherPod includes a command-line tool for managing feeds, episodes, icons, and
 ```bash
 # Episode management
 FeatherPod episode push *.mp3 -f my-podcast -x  # -x extracts date from file before normalization
-FeatherPod episode push *.mp3 -f my-podcast -n  # -n uses server-side normalization
+FeatherPod episode push *.mp3 -f my-podcast -n  # -n uses server-side normalization (SSE progress)
 FeatherPod episode list -f my-podcast           # List episodes
-FeatherPod episode delete -f my-podcast         # Interactive delete
+FeatherPod episode delete -f my-podcast         # Interactive delete (supports multi-select)
 FeatherPod episode delete abc123 -f my-podcast --force  # Delete by ID
 FeatherPod push episode.mp3 --title "Episode Title" --description "Full description"  # Alias
 

@@ -37,7 +37,7 @@ internal sealed class PushSettings : CommandSettings
     [Description("Extract published date from file metadata")]
     public bool? ExtractDateFromFile { get; init; }
 
-    [CommandOption("-n|--server-normalize")]
+    [CommandOption("-n|--normalize-on-server")]
     [Description("Normalize audio on server instead of locally")]
     public bool ServerNormalize { get; init; }
 }

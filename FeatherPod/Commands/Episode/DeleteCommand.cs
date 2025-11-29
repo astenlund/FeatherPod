@@ -117,49 +117,88 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
             return 1;
         }
 
-        // Find episode by ID or select interactively
-        EpisodeModel? episodeToDelete;
+        // Find episode(s) by ID or select interactively
+        List<EpisodeModel> episodesToDelete;
 
         if (!string.IsNullOrEmpty(settings.EpisodeId))
         {
-            episodeToDelete = episodes.FirstOrDefault(e => e.Id == settings.EpisodeId);
-            if (episodeToDelete == null)
+            var episode = episodes.FirstOrDefault(e => e.Id == settings.EpisodeId);
+            if (episode == null)
             {
                 AnsiConsole.MarkupLine($"[red]Error:[/] Episode '{settings.EpisodeId}' not found in feed '{feed.Id}'.");
                 AnsiConsole.WriteLine();
 
                 return 1;
             }
+
+            episodesToDelete = [episode];
         }
         else
         {
             // Interactive selection
-            var selected = EpisodeHelpers.SelectEpisodesMulti(episodes);
-            if (selected.Count == 0)
+            episodesToDelete = EpisodeHelpers.SelectEpisodesMulti(episodes);
+            if (episodesToDelete.Count == 0)
             {
                 AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
                 AnsiConsole.WriteLine();
 
                 return 1;
             }
-            if (selected.Count > 1)
+        }
+
+        // Single episode - use standard confirmation
+        if (episodesToDelete.Count == 1)
+        {
+            var result = await DeleteEpisodeAsync(httpClient, feed.Id, episodesToDelete[0], settings.Force, cancellationToken);
+
+            if (result.Success)
             {
-                AnsiConsole.MarkupLine("[yellow]Multiple episodes selected. Use episode move/copy for batch operations, or delete one at a time.[/]");
                 AnsiConsole.WriteLine();
+            }
+
+            return result.Success ? 0 : 1;
+        }
+
+        // Multiple episodes - confirm once for all
+        if (!settings.Force)
+        {
+            AnsiConsole.MarkupLine($"[yellow]About to delete {episodesToDelete.Count} episodes:[/]");
+            foreach (var ep in episodesToDelete)
+            {
+                AnsiConsole.MarkupLine($"  • {Markup.Escape(ep.Title)}");
+            }
+            AnsiConsole.WriteLine();
+
+            var confirmed = new MenuBuilder<bool?>()
+                .WithTitle($"[red]Delete all {episodesToDelete.Count} episodes?[/]")
+                .WithHint("(arrow keys or Y/N, Esc to cancel)")
+                .AddOption("Y", "Yes", true)
+                .AddOption("N", "No", false)
+                .AllowCancel(true, false)
+                .Show();
+
+            if (confirmed != true)
+            {
+                AnsiConsole.MarkupLine("[grey]Cancelled.[/]");
 
                 return 1;
             }
-
-            episodeToDelete = selected[0];
         }
 
-        var result = await DeleteEpisodeAsync(httpClient, feed.Id, episodeToDelete, settings.Force, cancellationToken);
-
-        if (result.Success)
+        var successCount = 0;
+        foreach (var episode in episodesToDelete)
         {
-            AnsiConsole.WriteLine();
+            var result = await DeleteEpisodeAsync(httpClient, feed.Id, episode, skipConfirmation: true, cancellationToken);
+            if (result.Success)
+            {
+                successCount++;
+            }
         }
 
-        return result.Success ? 0 : 1;
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine($"[green]Deleted {successCount}/{episodesToDelete.Count} episodes.[/]");
+        AnsiConsole.WriteLine();
+
+        return successCount == episodesToDelete.Count ? 0 : 1;
     }
 }

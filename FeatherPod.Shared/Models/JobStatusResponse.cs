@@ -46,6 +46,16 @@ public record JobStatusResponse
     public string? Stage { get; init; }
 
     /// <summary>
+    /// Display name for the current stage (for UI rendering).
+    /// </summary>
+    public string? StageDisplayName { get; init; }
+
+    /// <summary>
+    /// Maximum length of any stage display name (for UI padding/alignment).
+    /// </summary>
+    public int? StageDisplayNameMaxLength { get; init; }
+
+    /// <summary>
     /// Progress percentage (0-100).
     /// </summary>
     public int? ProgressPercent { get; init; }
@@ -72,6 +82,11 @@ public record JobStatusResponse
         ? (CompletedAt ?? DateTimeOffset.UtcNow) - QueuedAt.Value
         : null;
 
+    // Cache the max stage name length (excludes Unknown)
+    private static readonly int MaxStageDisplayNameLength = Enum.GetNames<NormalizationStage>()
+        .Where(n => n != nameof(NormalizationStage.Unknown))
+        .Max(n => n.Length);
+
     /// <summary>
     /// Create from a JobStatusEntity.
     /// </summary>
@@ -87,6 +102,8 @@ public record JobStatusResponse
             QueuedAt = entity.QueuedAt,
             CompletedAt = entity.CompletedAt,
             Stage = entity.Stage,
+            StageDisplayName = entity.Stage,
+            StageDisplayNameMaxLength = MaxStageDisplayNameLength,
             ProgressPercent = entity.ProgressPercent,
             ProgressMessage = entity.ProgressMessage,
             CurrentPositionMs = entity.CurrentPositionMs,

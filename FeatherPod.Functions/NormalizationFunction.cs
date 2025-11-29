@@ -118,8 +118,15 @@ public class NormalizationFunction
                     }
                     lastProgressUpdate = now;
 
-                    // Fire-and-forget progress update
-                    _ = UpdateProgressAsync(tableClient, job.JobId, progress);
+                    // Fire-and-forget progress update with error logging
+                    _ = UpdateProgressAsync(tableClient, job.JobId, progress)
+                        .ContinueWith(t =>
+                        {
+                            if (t.IsFaulted)
+                            {
+                                _logger.LogWarning(t.Exception, "Failed to update progress for job {JobId}", job.JobId);
+                            }
+                        }, TaskContinuationOptions.OnlyOnFaulted);
                 },
                 cancellationToken);
 
@@ -186,7 +193,8 @@ public class NormalizationFunction
             {
                 Stage = NormalizationStage.Completed,
                 ProgressPercent = 100,
-                Message = "Normalization complete"
+                Message = "Normalization complete",
+                TotalDuration = duration
             });
 
             await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Completed,
@@ -317,7 +325,12 @@ public class NormalizationFunction
             entity.ProgressPercent = progress.ProgressPercent;
             entity.ProgressMessage = progress.Message;
             entity.CurrentPositionMs = progress.CurrentPosition.HasValue ? (long)progress.CurrentPosition.Value.TotalMilliseconds : null;
-            entity.TotalDurationMs = progress.TotalDuration.HasValue ? (long)progress.TotalDuration.Value.TotalMilliseconds : null;
+
+            // Only update TotalDurationMs if provided (preserve existing value from Normalizing stage)
+            if (progress.TotalDuration.HasValue)
+            {
+                entity.TotalDurationMs = (long)progress.TotalDuration.Value.TotalMilliseconds;
+            }
 
             // Update Status based on stage
             entity.Status = progress.Stage switch

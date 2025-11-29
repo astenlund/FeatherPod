@@ -14,4 +14,14 @@ public record ProgressUpdate
     public TimeSpan? CurrentPosition { get; init; }
 
     public TimeSpan? TotalDuration { get; init; }
+
+    /// <summary>
+    /// Server-provided display name for the stage (for forward compatibility).
+    /// </summary>
+    public string? StageDisplayName { get; init; }
+
+    /// <summary>
+    /// Server-provided max length for stage display names (for UI alignment).
+    /// </summary>
+    public int? StageDisplayNameMaxLength { get; init; }
 }

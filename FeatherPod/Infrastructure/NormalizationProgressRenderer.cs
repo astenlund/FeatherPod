@@ -28,7 +28,40 @@ public static class NormalizationProgressRenderer
     {
         NormalizationResult result = new(false);
         ProgressUpdate? lastUpdate = null;
+        var passedQueued = false;
+        Action<ProgressUpdate>? progressHandler = null;
 
+        // Start operation - updates come via callback
+        var operationTask = operation(update =>
+        {
+            lastUpdate = update;
+            if (update.Stage != NormalizationStage.Queued)
+            {
+                passedQueued = true;
+            }
+            progressHandler?.Invoke(update);
+        }, cancellationToken);
+
+        // Show "Queued" spinner while waiting
+        if (!passedQueued && !operationTask.IsCompleted)
+        {
+            await AnsiConsole.Status()
+                .Spinner(Spinner.Known.Dots)
+                .StartAsync("Queued", async _ =>
+                {
+                    while (!passedQueued && !operationTask.IsCompleted)
+                    {
+                        await Task.Delay(50, cancellationToken);
+                    }
+                });
+        }
+
+        if (operationTask.IsCompleted)
+        {
+            return await operationTask;
+        }
+
+        // Show progress bar for actual work
         await AnsiConsole.Progress()
             .AutoClear(false)
             .Columns(
@@ -40,33 +73,37 @@ public static class NormalizationProgressRenderer
             {
                 var task = ctx.AddTask(Markup.Escape(fileName), maxValue: 100);
 
-                void UpdateProgress(ProgressUpdate update)
+                progressHandler = update =>
                 {
-                    lastUpdate = update;
-                    task.Value = update.ProgressPercent;
+                    if (update.Stage == NormalizationStage.Queued) return;
 
-                    var stageDesc = NormalizationProgressHelper.GetStageDescription(update.Stage.ToString());
+                    task.Value = update.ProgressPercent;
+                    var stageDesc = NormalizationProgressHelper.GetStageDescription(update);
                     var position = NormalizationProgressHelper.FormatPosition(update.CurrentPosition, update.TotalDuration);
 
                     task.Description = string.IsNullOrEmpty(position)
                         ? stageDesc
                         : $"{stageDesc} [grey]{position}[/]";
+                };
+
+                // Apply last update if we missed it
+                if (lastUpdate != null && lastUpdate.Stage != NormalizationStage.Queued)
+                {
+                    progressHandler(lastUpdate);
                 }
 
-                result = await operation(UpdateProgress, cancellationToken);
+                result = await operationTask;
 
-                // Update final state with position
+                // Final state
                 task.Value = 100;
                 if (lastUpdate != null)
                 {
-                    var stageDesc = NormalizationProgressHelper.GetStageDescription(lastUpdate.Stage.ToString());
+                    var stageDesc = NormalizationProgressHelper.GetStageDescription(lastUpdate);
                     var position = NormalizationProgressHelper.FormatPosition(lastUpdate.TotalDuration, lastUpdate.TotalDuration);
-
                     task.Description = string.IsNullOrEmpty(position)
                         ? stageDesc
                         : $"{stageDesc} [grey]{position}[/]";
                 }
-
                 task.StopTask();
             });
 

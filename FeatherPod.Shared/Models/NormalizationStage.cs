@@ -5,6 +5,7 @@ namespace FeatherPod.Shared.Models;
 /// </summary>
 public enum NormalizationStage
 {
+    Unknown = 0,
     Queued,
     Downloading,
     Analyzing,

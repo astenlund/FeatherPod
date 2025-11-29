@@ -9,7 +9,7 @@ internal sealed class DeleteSettings : CommandSettings
     [Description("Feed ID to delete")]
     public string? FeedId { get; init; }
 
-    [CommandOption("-f|--force")]
+    [CommandOption("--force")]
     [Description("Skip confirmation prompt")]
     public bool Force { get; init; }
 
