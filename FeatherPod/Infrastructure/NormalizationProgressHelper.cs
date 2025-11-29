@@ -3,7 +3,7 @@ namespace FeatherPod.Infrastructure;
 /// <summary>
 /// Shared helper for formatting normalization progress display.
 /// </summary>
-internal static class NormalizationProgressHelper
+public static class NormalizationProgressHelper
 {
     public static string FormatPosition(TimeSpan? current, TimeSpan? total)
     {

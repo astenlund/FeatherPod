@@ -120,6 +120,7 @@ public class ApiKeyAuthMiddleware
             // Public read endpoints
             if (path.StartsWith("/api/version") ||
                 path.StartsWith("/api/feeds") && !path.Contains("/episodes") && !path.Contains("/icon") ||
+                path.StartsWith("/api/jobs/") ||
                 path.EndsWith("/feed.xml") ||
                 path.EndsWith("/icon.png") ||
                 path.Contains("/audio/"))
