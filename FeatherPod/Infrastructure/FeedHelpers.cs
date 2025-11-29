@@ -66,21 +66,30 @@ internal static class FeedHelpers
                 AnsiConsole.MarkupLine(message);
                 AnsiConsole.WriteLine();
             }
+
             return null;
         }
 
-        if (feeds.Count == 1 && !forcePrompt)
-        {
-            return feeds[0];
-        }
+        // Check last-used first (before single-feed shortcut)
+        var lastUsed = PreferencesHelpers.GetLastSelectedFeed(environment);
+        var lastUsedFeed = string.IsNullOrEmpty(lastUsed) ? null : feeds.FirstOrDefault(f => string.Equals(f.Id, lastUsed, StringComparison.OrdinalIgnoreCase));
 
-        // Multiple feeds - check last-used
-        var lastUsed = UserSettings.Default.GetLastUsedFeed(environment);
-        var lastUsedFeed = string.IsNullOrEmpty(lastUsed) ? null : feeds.FirstOrDefault(f => f.Id == lastUsed);
-
-        if (!forcePrompt && lastUsedFeed != null)
+        // Auto-select if not forcing prompt
+        if (!forcePrompt)
         {
-            return lastUsedFeed;
+            // Return last-used if valid
+            if (lastUsedFeed != null)
+            {
+                return lastUsedFeed;
+            }
+
+            // Return single feed if only one exists
+            if (feeds.Count == 1)
+            {
+                PreferencesHelpers.SetLastSelectedFeed(environment, feeds[0].Id);
+
+                return feeds[0];
+            }
         }
 
         // Show feed selector with optional context message
@@ -101,7 +110,7 @@ internal static class FeedHelpers
         var selected = menu.Show();
         if (selected != null)
         {
-            UserSettings.Default.SetLastUsedFeed(environment, selected.Id);
+            PreferencesHelpers.SetLastSelectedFeed(environment, selected.Id);
         }
 
         return selected;

@@ -38,15 +38,10 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         }
 
         // Main menu loop
-        var firstIteration = true;
         while (true)
         {
-            // Redraw header (skip on first iteration since it was just displayed)
-            if (!firstIteration)
-            {
-                await ShowHeader(env, apiUrl, currentFeed, shouldConnect: false, currentlyConnected: isConnected, existingServerVersion: serverVersion);
-            }
-            firstIteration = false;
+            // Redraw header with current feed status
+            await ShowHeader(env, apiUrl, currentFeed, shouldConnect: false, currentlyConnected: isConnected, existingServerVersion: serverVersion);
 
             var choice = ShowMenu(currentFeed, isConnected, currentUser);
 
@@ -84,6 +79,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         WaitForKeyPress();
                         break;
                     }
+                    currentFeed = pushFeed;
 
                     // Prompt for file path(s)
                     var filePattern = AnsiConsole.Prompt(
@@ -277,6 +273,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         WaitForKeyPress();
                         break;
                     }
+                    currentFeed = sourceFeed;
 
                     // Get episodes from source
                     var sourceEpisodes = await EpisodeHelpers.GetEpisodesAsync(httpClient, sourceFeed.Id);
@@ -966,6 +963,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 WaitForKeyPress();
                                 break;
                             }
+                            currentFeed = feedForIcon;
 
                             // Prompt for icon path
                             var iconPath = AnsiConsole.Prompt(
@@ -1011,6 +1009,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 WaitForKeyPress();
                                 break;
                             }
+                            currentFeed = feedToRemoveIcon;
 
                             // Confirm removal
                             var confirmRemove = new MenuBuilder<bool?>()

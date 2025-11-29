@@ -254,4 +254,80 @@ internal static class PreferencesHelpers
         // Write back with nice formatting
         File.WriteAllText(filePath, root.ToJsonString(JsonWriteOptions));
     }
+
+    /// <summary>
+    /// Gets the last selected feed ID for the given environment.
+    /// </summary>
+    internal static string? GetLastSelectedFeed(string environment)
+    {
+        var preferencesPath = GetPreferencesPath();
+        if (!File.Exists(preferencesPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var content = File.ReadAllText(preferencesPath);
+            var root = JsonNode.Parse(content);
+
+            return root?["Environments"]?[environment]?["LastSelectedFeed"]?.GetValue<string>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Saves the last selected feed ID for the given environment.
+    /// </summary>
+    internal static void SetLastSelectedFeed(string environment, string? feedId)
+    {
+        var filePath = GetPreferencesPath();
+        var directory = Path.GetDirectoryName(filePath)!;
+
+        if (!Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        JsonObject root;
+
+        if (File.Exists(filePath))
+        {
+            var existingContent = File.ReadAllText(filePath);
+            root = JsonNode.Parse(existingContent)?.AsObject() ?? new JsonObject();
+        }
+        else
+        {
+            root = new();
+        }
+
+        // Ensure Environments section exists
+        if (!root.ContainsKey("Environments"))
+        {
+            root["Environments"] = new JsonObject();
+        }
+
+        // Ensure environment section exists
+        var environments = root["Environments"]!.AsObject();
+        if (!environments.ContainsKey(environment))
+        {
+            environments[environment] = new JsonObject();
+        }
+
+        // Set or remove the feed ID
+        if (feedId != null)
+        {
+            environments[environment]!["LastSelectedFeed"] = feedId;
+        }
+        else
+        {
+            environments[environment]!.AsObject().Remove("LastSelectedFeed");
+        }
+
+        // Write back with nice formatting
+        File.WriteAllText(filePath, root.ToJsonString(JsonWriteOptions));
+    }
 }
