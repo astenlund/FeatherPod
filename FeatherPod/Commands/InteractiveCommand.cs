@@ -886,8 +886,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     var manageChoice = new MenuBuilder<string?>()
                         .WithTitle("Manage Feeds:")
                         .WithHint("(arrow keys or highlighted letter, Esc to go back)")
-                        .AddOption("C", "Create new feed", "create")
+                        .AddOption("C", "Configure feed", "config")
                         .AddOption("U", "Update feed metadata", "update")
+                        .AddOption("N", "Create new feed", "create")
                         .AddOption("R", "Rename feed ID", "rename")
                         .AddOption("D", "Delete feed", "delete")
                         .AddOption("I", "Set icon", "icon-set")
@@ -938,6 +939,20 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 if (currentFeed?.Id == feedToUpdate.Id)
                                 {
                                     currentFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, feedToUpdate.Id);
+                                }
+                                WaitForKeyPress();
+                            }
+                            break;
+
+                        case "config":
+                            var feedToConfig = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
+                            if (feedToConfig != null)
+                            {
+                                await ConfigureFeedInteractiveAsync(httpClient, feedToConfig, cancellationToken);
+                                // Refresh current feed if it was configured
+                                if (currentFeed?.Id == feedToConfig.Id)
+                                {
+                                    currentFeed = await FeedHelpers.GetFeedByIdAsync(httpClient, feedToConfig.Id);
                                 }
                                 WaitForKeyPress();
                             }
@@ -1402,6 +1417,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
     private static void WaitForKeyPress()
     {
+        Out.BlankLine();
         Out.Markup("[grey]Press any key to continue...[/]");
         Console.ReadKey(true);
     }
@@ -1582,6 +1598,67 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         }
 
         Out.BlankLine();
+    }
+
+    private static async Task ConfigureFeedInteractiveAsync(HttpClient httpClient, FeedConfig feed, CancellationToken cancellationToken)
+    {
+        Out.MarkupLine($"Configure feed: [cyan]{Markup.Escape(feed.Title)}[/]");
+        Out.BlankLine().Flush();
+
+        // Multi-select prompt with current values pre-selected
+        const string extractDateOption = "Extract date from file";
+
+        var prompt = new MultiSelectionPrompt<string>()
+            .Title("Select settings to change:")
+            .PageSize(10)
+            .NotRequired()
+            .InstructionsText("[grey]([blue]Space[/] to toggle, [green]Enter[/] to confirm)[/]")
+            .AddChoices(extractDateOption);
+
+        // Pre-select based on current values
+        if (feed.UseFileMetadataForPublishDate)
+        {
+            prompt.Select(extractDateOption);
+        }
+
+        var selectedOptions = AnsiConsole.Prompt(prompt);
+
+        // Check if value changed
+        var extractDateSelected = selectedOptions.Contains(extractDateOption);
+        bool? newExtractDate = null;
+
+        if (extractDateSelected != feed.UseFileMetadataForPublishDate)
+        {
+            newExtractDate = extractDateSelected;
+        }
+
+        if (newExtractDate == null)
+        {
+            Out.MarkupLine("[grey]No changes made.[/]");
+
+            return;
+        }
+
+        var (success, updatedFeed, error) = await FeedHelpers.UpdateFeedConfigAsync(
+            httpClient,
+            feed,
+            useFileMetadataForPublishDate: newExtractDate,
+            cancellationToken);
+
+        if (success)
+        {
+            Out.Success($"Updated feed configuration: [cyan]{Markup.Escape(feed.Id)}[/]");
+            Out.BlankLine();
+
+            if (updatedFeed != null)
+            {
+                Out.MarkupLine($"  Extract date from file: {(updatedFeed.UseFileMetadataForPublishDate ? "[green]Yes[/]" : "[grey]No[/]")}");
+            }
+        }
+        else
+        {
+            Out.Error(Markup.Escape(error ?? "Unknown error"));
+        }
     }
 
     private static MenuChoice ShowMenu(FeedConfig? currentFeed, bool isConnected, CurrentUserInfo? currentUser)

@@ -14,6 +14,48 @@ internal static class FeedHelpers
         PropertyNameCaseInsensitive = true
     };
 
+    /// <summary>
+    /// Resolves environment, sets up HTTP client, and fetches a feed by ID (prompting if not provided).
+    /// Returns null values on failure (errors are already printed).
+    /// </summary>
+    internal static async Task<(HttpClient? HttpClient, FeedConfig? Feed)> ResolveEnvironmentAndFeedAsync(string? environmentName, string? feedId)
+    {
+        var env = EnvironmentHelpers.GetEnvironment(environmentName);
+        if (env == null)
+        {
+            return (null, null);
+        }
+
+        var (httpClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+        if (httpClient == null)
+        {
+            return (null, null);
+        }
+
+        var resolvedFeedId = feedId?.Trim();
+        if (string.IsNullOrWhiteSpace(resolvedFeedId))
+        {
+            var selectedFeed = await SelectFeedAsync(httpClient, env, forcePrompt: true);
+            if (selectedFeed == null)
+            {
+                Out.Error("No feeds available.");
+
+                return (httpClient, null);
+            }
+            resolvedFeedId = selectedFeed.Id;
+        }
+
+        var feed = await GetFeedByIdAsync(httpClient, resolvedFeedId);
+        if (feed == null)
+        {
+            Out.Error($"Feed '{resolvedFeedId}' not found.");
+
+            return (httpClient, null);
+        }
+
+        return (httpClient, feed);
+    }
+
     internal static async Task<List<FeedConfig>> GetFeedsAsync(HttpClient httpClient)
     {
         try
@@ -162,6 +204,42 @@ internal static class FeedHelpers
             Out.Error($"Error uploading icon: {ex.Message}");
 
             return false;
+        }
+    }
+
+    internal static async Task<(bool Success, FeedConfig? UpdatedFeed, string? Error)> UpdateFeedConfigAsync(
+        HttpClient httpClient,
+        FeedConfig currentFeed,
+        bool? useFileMetadataForPublishDate = null,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // Build complete FeedConfig with updated values
+            var updatedFeed = currentFeed with
+            {
+                UseFileMetadataForPublishDate = useFileMetadataForPublishDate ?? currentFeed.UseFileMetadataForPublishDate
+            };
+
+            var json = JsonSerializer.Serialize(updatedFeed);
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+            var response = await httpClient.PutAsync($"/api/feeds/{currentFeed.Id}", content, cancellationToken);
+
+            if (response.IsSuccessStatusCode)
+            {
+                var refreshedFeed = await GetFeedByIdAsync(httpClient, currentFeed.Id);
+
+                return (true, refreshedFeed, null);
+            }
+
+            var errorContent = "" + await response.Content.ReadAsStringAsync(cancellationToken);
+
+            return (false, null, $"Failed to update feed configuration: {response.StatusCode}\n{errorContent}".Trim());
+        }
+        catch (Exception ex)
+        {
+            return (false, null, $"Error updating feed configuration: {ex.Message}");
         }
     }
 

@@ -121,6 +121,19 @@ internal class Program
                     .WithDescription("Remove feed icon")
                     .WithExample("feed", "unset-icon", "my-podcast")
                     .WithExample("feed", "unset-icon");
+
+                feed.AddBranch("config", cfg =>
+                {
+                    cfg.SetDescription("Feed configuration commands");
+
+                    cfg.AddCommand<FeedCommands.Config.ShowCommand>("show")
+                        .WithDescription("Show feed configuration")
+                        .WithExample("feed", "config", "show", "-f", "my-feed");
+
+                    cfg.AddCommand<FeedCommands.Config.SetCommand>("set")
+                        .WithDescription("Set feed configuration")
+                        .WithExample("feed", "config", "set", "-f", "my-feed", "-x", "true");
+                });
             });
 
             config.AddBranch("config", cfg =>
