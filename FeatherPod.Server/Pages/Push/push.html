@@ -21,7 +21,7 @@
             <div id="drop-zone">
                 <button id="select-file" class="btn-primary">Select Audio File</button>
                 <input type="file" id="file-input" accept=".mp3,.m4a,.wav,.ogg,.flac,.aac" hidden>
-                <p class="hint drop-hint">(or drag-n-drop)</p>
+                <p class="hint drop-hint">(or drop here)</p>
             </div>
         </div>
 
@@ -33,12 +33,16 @@
             <p id="upload-status" aria-live="polite">Uploading...</p>
         </div>
 
+        <div id="normalizing" class="state" style="display: none;">
+            <h2 id="normalizing-file-name"></h2>
+            <div class="spinner" aria-hidden="true"></div>
+            <p id="normalizing-status" aria-live="polite">Normalizing...</p>
+            <p class="hint">This may take a minute...</p>
+        </div>
+
         <div id="success" class="state" style="display: none;">
             <h2><span class="success-icon">&#10003;</span> Upload Complete</h2>
-            <dl class="episode-details">
-                <dt>File</dt><dd id="ep-filename"></dd>
-                <dt>Size</dt><dd id="ep-size"></dd>
-            </dl>
+            <p id="ep-filename" class="success-filename"></p>
             <button id="upload-another" class="btn-secondary">Upload Another File</button>
         </div>
 

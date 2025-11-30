@@ -12,7 +12,7 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 - **RSS podcast feeds** - iTunes spec compatible with per-feed configuration
 - **CLI tool** - Command-line interface for episode, icon, feed, and user management
 - **REST API** - REST API for management (consumed by CLI tool)
-- **Browser push page** - Quick mobile uploads via `/{feedId}/push#API_KEY`
+- **Browser push page** - Quick mobile uploads via `/{feedId}/push#API_KEY` with server-side normalization
 - **Version tracking** - Git SHA embedded in binaries and available via `/api/version`
 - **Hash-based episode IDs** - Preserves play progress; re-uploading same file updates metadata
 - **Cross-feed operations** - Move or copy episodes between feeds

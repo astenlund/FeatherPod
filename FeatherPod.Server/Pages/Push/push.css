@@ -175,8 +175,23 @@ h2 {
         font-size: 1rem;
     }
 }
+
 .success-filename {
     color: #ccc;
     word-break: break-word;
     margin-bottom: 1rem;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #374151;
+    border-top-color: #4f46e5;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 1.5rem auto;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
 }
