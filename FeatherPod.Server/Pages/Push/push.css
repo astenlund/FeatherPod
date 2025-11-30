@@ -1,0 +1,182 @@
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.container {
+    width: fit-content;
+    max-width: 800px;
+    min-width: 300px;
+    text-align: center;
+    padding: 0 1rem;
+}
+
+h1 {
+    font-size: 1.8rem;
+    margin-bottom: 2.4rem;
+    color: #fff;
+}
+
+h2 {
+    font-size: 1.3rem;
+    margin-bottom: 1.8rem;
+    word-break: break-word;
+    color: #ccc;
+}
+
+.btn-primary {
+    background: #4f46e5;
+    color: white;
+    border: none;
+    padding: 1.2rem 2.4rem;
+    font-size: 1.3rem;
+    border-radius: 10px;
+    cursor: pointer;
+    width: 100%;
+    max-width: 340px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.btn-primary:active {
+    background: #4338ca;
+}
+
+.btn-secondary {
+    background: transparent;
+    color: #aaa;
+    border: 2px solid #444;
+    padding: 0.8rem 1.6rem;
+    font-size: 1rem;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-top: 1.5rem;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.btn-secondary:hover {
+    border-color: #666;
+    color: #ccc;
+}
+
+.btn-secondary:active {
+    border-color: #888;
+}
+
+.progress-container {
+    background: #333;
+    border-radius: 4px;
+    height: 8px;
+    overflow: hidden;
+    margin: 1rem 0;
+}
+
+.progress-bar {
+    background: linear-gradient(90deg, #4f46e5, #7c3aed);
+    height: 100%;
+    width: 0;
+    transition: width 0.3s ease;
+}
+
+.hint {
+    color: #888;
+    font-size: 1rem;
+    margin-top: 1.2rem;
+}
+
+.hint code {
+    background: #333;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+}
+
+.error {
+    color: #ef4444;
+}
+
+.success-icon {
+    color: #22c55e;
+    margin-right: 0.4rem;
+}
+
+.error-icon {
+    color: #ef4444;
+    margin-right: 0.4rem;
+}
+
+#drop-zone {
+    padding: 3rem 3.5rem;
+    border: 4px dashed transparent;
+    border-radius: 14px;
+    transition: border-color 0.2s, background-color 0.2s;
+}
+
+#drop-zone.drag-over {
+    border-color: #4f46e5;
+    background-color: rgba(79, 70, 229, 0.1);
+}
+
+.drop-hint {
+    display: none;
+}
+
+/* Show drop zone styling only on desktop */
+@media (min-width: 768px) and (hover: hover) {
+    #drop-zone {
+        border-color: #444;
+    }
+
+    .drop-hint {
+        display: block;
+    }
+}
+
+.episode-details {
+    background: #2a2a4a;
+    border-radius: 8px;
+    padding: 1.25rem 1.5rem;
+    text-align: left;
+    margin: 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.875rem 1.25rem;
+}
+
+.episode-details dt {
+    color: #888;
+}
+
+.episode-details dd {
+    color: #fff;
+    margin: 0;
+    word-break: break-word;
+}
+
+@media (max-width: 768px) {
+    .episode-details {
+        font-size: 0.875rem;
+    }
+
+    #file-name {
+        font-size: 1rem;
+    }
+}
+.success-filename {
+    color: #ccc;
+    word-break: break-word;
+    margin-bottom: 1rem;
+}

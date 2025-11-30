@@ -852,6 +852,78 @@ public class IntegrationTests : IDisposable
         Assert.Contains("Queued", responseContent);
         Assert.Contains("episodeId", responseContent);
     }
+
+    // ============================================================================
+    // PUSH PAGE TESTS
+    // ============================================================================
+
+    [AzuriteFact]
+    public async Task GetPushPage_ShouldReturnHtml_WhenFeedExists()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        // Act
+        var response = await _client.GetAsync($"/{TestFeedId}/push");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
+
+        var content = await response.Content.ReadAsStringAsync();
+        Assert.Contains("<!DOCTYPE html>", content);
+        Assert.Contains($"/{TestFeedId}/icon.png", content);
+        Assert.Contains($"const FEED_ID = '{TestFeedId}'", content);
+        Assert.Contains("Push to Test Podcast", content);
+    }
+
+    [AzuriteFact]
+    public async Task GetPushPage_ShouldReturn404_WhenFeedNotFound()
+    {
+        // Act
+        var response = await _client.GetAsync("/nonexistent-feed/push");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [AzuriteFact]
+    public async Task GetPushPage_ShouldReturn400_WhenFeedIdInvalid()
+    {
+        // Act - Feed ID that's too long (>64 chars) is invalid
+        var tooLongFeedId = new string('a', 65);
+        var response = await _client.GetAsync($"/{tooLongFeedId}/push");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [AzuriteFact]
+    public async Task GetPushPage_ShouldEscapeFeedTitle()
+    {
+        // Arrange - Create feed with XSS attempt in title
+        var feedJson = """
+        {
+            "id": "xss-test",
+            "title": "Test <script>alert('xss')</script>",
+            "description": "Test",
+            "author": "Test"
+        }
+        """;
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/feeds");
+        request.Content = new StringContent(feedJson, System.Text.Encoding.UTF8, "application/json");
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        await _client.SendAsync(request);
+
+        // Act
+        var response = await _client.GetAsync("/xss-test/push");
+        var content = await response.Content.ReadAsStringAsync();
+
+        // Assert
+        Assert.DoesNotContain("<script>alert", content);
+        Assert.Contains("&lt;script&gt;", content);
+    }
 }
 
 internal class FeatherPodWebApplicationFactory : WebApplicationFactory<Program>

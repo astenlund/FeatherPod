@@ -9,8 +9,16 @@ const long MaxUploadSizeBytes = 500 * 1024 * 1024; // 500 MB
 var builder = WebApplication.CreateBuilder(args);
 
 // Configure port from environment variable (for Azure App Service)
-var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
-builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+// Use 0.0.0.0 in Azure (PORT is set), localhost for local dev (clickable URL)
+var port = Environment.GetEnvironmentVariable("PORT");
+if (port != null)
+{
+    builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+}
+else
+{
+    builder.WebHost.UseUrls("http://localhost:8080");
+}
 
 // Configure Kestrel for large file uploads
 builder.WebHost.ConfigureKestrel(options =>
@@ -151,6 +159,27 @@ app.MapGet("/{feedId}/icon.png", async (string feedId, IBlobStorageService servi
 .Produces(200, contentType: "image/png")
 .Produces(404);
 
+// Browser-based upload page for quick mobile uploads
+app.MapGet("/{feedId}/push", async (string feedId, EpisodeService episodeService) =>
+{
+    if (!InputValidation.IsValidFeedId(feedId))
+    {
+        return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+    }
+
+    var feed = await episodeService.GetFeedAsync(feedId);
+    if (feed == null)
+    {
+        return Results.NotFound($"Feed '{feedId}' not found");
+    }
+
+    return Results.Content(GeneratePushPageHtml(feedId, feed.Title), "text/html");
+})
+.WithName("GetPushPage")
+.Produces(200, contentType: "text/html")
+.Produces(400)
+.Produces(404);
+
 // Audio file streaming with range support
 app.MapGet("/{feedId}/audio/{filename}", async (string feedId, string filename, IBlobStorageService service, HttpContext context) =>
 {
@@ -256,3 +285,32 @@ app.MapGet("/{feedId}/audio/{filename}", async (string feedId, string filename, 
 .Produces(416);
 
 app.Run();
+
+// ============================================================================
+// PUSH PAGE HTML GENERATION
+// ============================================================================
+
+static string GeneratePushPageHtml(string feedId, string feedTitle)
+{
+    var escapedTitle = System.Net.WebUtility.HtmlEncode(feedTitle);
+    var assembly = typeof(Program).Assembly;
+
+    var html = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.html");
+    var css = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.css");
+    var js = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.js");
+
+    return html
+        .Replace("/* {{CSS}} */", css)
+        .Replace("/* {{JS}} */", js)
+        .Replace("{{FEED_ID}}", feedId)
+        .Replace("{{FEED_TITLE}}", escapedTitle);
+}
+
+static string ReadResource(System.Reflection.Assembly assembly, string name)
+{
+    using var stream = assembly.GetManifestResourceStream(name)
+        ?? throw new InvalidOperationException($"Embedded resource '{name}' not found");
+    using var reader = new StreamReader(stream);
+
+    return reader.ReadToEnd();
+}

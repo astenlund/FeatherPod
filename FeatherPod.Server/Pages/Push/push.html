@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Push to {{FEED_TITLE}}</title>
+    <link rel="icon" type="image/png" href="/{{FEED_ID}}/icon.png">
+    <style>/* {{CSS}} */</style>
+</head>
+<body>
+    <div class="container">
+        <h1>Push to {{FEED_TITLE}}</h1>
+
+        <div id="no-key" class="state" style="display: none;">
+            <p class="error">No API key provided</p>
+            <p class="hint">Add your API key to the URL:<br><code>/{{FEED_ID}}/push#YOUR_API_KEY</code></p>
+        </div>
+
+        <div id="ready" class="state" style="display: none;">
+            <div id="drop-zone">
+                <button id="select-file" class="btn-primary">Select Audio File</button>
+                <input type="file" id="file-input" accept=".mp3,.m4a,.wav,.ogg,.flac,.aac" hidden>
+                <p class="hint drop-hint">(or drag-n-drop)</p>
+            </div>
+        </div>
+
+        <div id="uploading" class="state" style="display: none;">
+            <h2 id="file-name"></h2>
+            <div class="progress-container" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Upload progress">
+                <div class="progress-bar" id="upload-progress"></div>
+            </div>
+            <p id="upload-status" aria-live="polite">Uploading...</p>
+        </div>
+
+        <div id="success" class="state" style="display: none;">
+            <h2><span class="success-icon">&#10003;</span> Upload Complete</h2>
+            <dl class="episode-details">
+                <dt>File</dt><dd id="ep-filename"></dd>
+                <dt>Size</dt><dd id="ep-size"></dd>
+            </dl>
+            <button id="upload-another" class="btn-secondary">Upload Another File</button>
+        </div>
+
+        <div id="error" class="state" style="display: none;">
+            <h2><span class="error-icon">&#10007;</span> Upload Failed</h2>
+            <p id="error-message" class="error" aria-live="assertive"></p>
+            <button id="try-another" class="btn-secondary">Try Another File</button>
+        </div>
+    </div>
+
+    <script>/* {{JS}} */</script>
+</body>
+</html>
