@@ -5,7 +5,7 @@
     "logLevel": {
       "default": "Warning",
       "Function": "Information",
-      "FeatherPod": "Information",
+      "FeatherPod": "Debug",
       "Azure.Core": "Error",
       "Azure.Storage": "Error"
     },
