@@ -1007,6 +1007,32 @@ public class IntegrationTests : IDisposable
         Assert.Contains("Second Upload", episodesJson);
         Assert.DoesNotContain("First Upload", episodesJson);
     }
+
+    [AzuriteFact]
+    public async Task PostEpisode_WithoutTitle_ShouldParseTitleFromFilename()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "My_Cool_Episode__Part_One.mp3");
+        // No title provided - should be parsed from filename
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        request.Content = content;
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+        var responseContent = await response.Content.ReadAsStringAsync();
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        // Should be parsed: underscores to spaces, double underscore to colon
+        Assert.Contains("My Cool Episode: Part One", responseContent);
+    }
 }
 
 internal class FeatherPodWebApplicationFactory : WebApplicationFactory<Program>

@@ -622,7 +622,7 @@ public sealed partial class EpisodeService : IDisposable
         }
     }
 
-    internal static string ParseTitleFromFilename(string fileName)
+    public static string ParseTitleFromFilename(string fileName)
     {
         var nameWithoutExtension = Path.GetFileNameWithoutExtension(fileName);
 

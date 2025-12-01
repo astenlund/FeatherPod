@@ -108,7 +108,7 @@ public class EpisodesController : ControllerBase
                 var jobId = Guid.NewGuid().ToString("N");
                 var fileSize = new FileInfo(tempPath).Length;
                 var effectiveEpisodeId = episodeId ?? Episode.GenerateId(feedId, file.FileName, fileSize);
-                var effectiveTitle = string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(file.FileName) : title;
+                var effectiveTitle = string.IsNullOrWhiteSpace(title) ? EpisodeService.ParseTitleFromFilename(file.FileName) : title;
                 var effectivePublishedDate = publishedDate ?? DateTime.UtcNow;
 
                 // Upload to pending location
