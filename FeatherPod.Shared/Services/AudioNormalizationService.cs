@@ -163,6 +163,7 @@ public partial class AudioNormalizationService : IAudioNormalizationService
         var loudnessRangeStr = LoudnessRange.ToString("G", CultureInfo.InvariantCulture);
 
         var ffmpegPath = GetFFmpegPath();
+        _logger.LogDebug("Using FFmpeg at: {FfmpegPath}, Exists: {Exists}", ffmpegPath, File.Exists(ffmpegPath));
 
         using var process = new Process();
         process.StartInfo = new()
@@ -211,9 +212,27 @@ public partial class AudioNormalizationService : IAudioNormalizationService
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
+        _logger.LogDebug("FFmpeg pass 1 started, PID: {Pid}", process.Id);
+
         // Use linked token with timeout to protect against corrupted/extremely long files
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(AnalysisTimeout);
+
+        // Heartbeat logging task - logs every 30s to show process is still running
+        var lastHeartbeat = DateTime.UtcNow;
+        var heartbeatTask = Task.Run(async () =>
+        {
+            while (!timeoutCts.Token.IsCancellationRequested && !process.HasExited)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), timeoutCts.Token).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                if (!process.HasExited)
+                {
+                    var elapsed = DateTime.UtcNow - lastHeartbeat;
+                    _logger.LogDebug("FFmpeg pass 1 heartbeat: still running after {Elapsed}s, HasExited={HasExited}",
+                        (int)elapsed.TotalSeconds, process.HasExited);
+                }
+            }
+        }, timeoutCts.Token);
 
         try
         {
@@ -221,21 +240,37 @@ public partial class AudioNormalizationService : IAudioNormalizationService
         }
         catch (OperationCanceledException)
         {
+            _logger.LogWarning("FFmpeg pass 1 cancelled/timed out after running. PID: {Pid}, HasExited: {HasExited}",
+                process.Id, process.HasExited);
+
             // Kill the FFmpeg process to avoid orphaned processes
             try
             {
                 process.Kill(entireProcessTree: true);
+                _logger.LogDebug("Killed FFmpeg process {Pid}", process.Id);
             }
             catch (InvalidOperationException)
             {
                 // Process already exited
+                _logger.LogDebug("FFmpeg process {Pid} already exited", process.Id);
             }
 
             throw;
         }
 
+        _logger.LogDebug("FFmpeg pass 1 exited with code {ExitCode}", process.ExitCode);
+
         // Parse JSON output from stderr
         var errorText = error.ToString();
+
+        if (process.ExitCode != 0)
+        {
+            _logger.LogError("FFmpeg pass 1 failed with exit code {ExitCode}. Stderr: {Stderr}",
+                process.ExitCode, errorText.Length > 2000 ? errorText[..2000] : errorText);
+
+            return null;
+        }
+
         var jsonMatch = JsonRegex().Match(errorText);
 
         if (!jsonMatch.Success)

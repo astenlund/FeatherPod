@@ -6,6 +6,7 @@ using Azure.Storage.Blobs.Specialized;
 using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
 using FFMpegCore;
+using Microsoft.ApplicationInsights;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -21,6 +22,7 @@ public class NormalizationFunction
     private readonly TableServiceClient _tableClient;
     private readonly IAudioNormalizationService _normalizationService;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly TelemetryClient _telemetryClient;
     private readonly FunctionSettings _settings;
     private readonly ILogger<NormalizationFunction> _logger;
 
@@ -34,6 +36,7 @@ public class NormalizationFunction
         TableServiceClient tableClient,
         IAudioNormalizationService normalizationService,
         IHttpClientFactory httpClientFactory,
+        TelemetryClient telemetryClient,
         IOptions<FunctionSettings> settings,
         ILogger<NormalizationFunction> logger)
     {
@@ -41,6 +44,7 @@ public class NormalizationFunction
         _tableClient = tableClient;
         _normalizationService = normalizationService;
         _httpClientFactory = httpClientFactory;
+        _telemetryClient = telemetryClient;
         _settings = settings.Value;
         _logger = logger;
     }
@@ -62,6 +66,11 @@ public class NormalizationFunction
         }
 
         _logger.LogInformation("Processing normalization job {JobId} for {FeedId}/{FileName}", job.JobId, job.FeedId, job.FileName);
+        _logger.LogDebug("Environment: HOME={Home}, TEMP={Temp}, FFmpegDir={FfmpegDir}",
+            Environment.GetEnvironmentVariable("HOME"),
+            Path.GetTempPath(),
+            FFmpegBinaryManager.GetBinaryDirectory());
+        _telemetryClient.Flush(); // Ensure job start is logged before FFmpeg runs
 
         var tableClient = _tableClient.GetTableClient(TableName);
         await tableClient.CreateIfNotExistsAsync(cancellationToken);
@@ -126,7 +135,10 @@ public class NormalizationFunction
             });
 
             // Normalize audio with progress callback
-            _logger.LogInformation("Starting normalization for {FileName}", job.FileName);
+            var inputFileSize = new FileInfo(tempInputFile).Length;
+            _logger.LogInformation("Starting normalization for {FileName} (input size: {Size} bytes, path: {Path})",
+                job.FileName, inputFileSize, tempInputFile);
+            _telemetryClient.Flush(); // Ensure normalization start is logged before FFmpeg runs
             var lastProgressUpdate = DateTime.MinValue;
 
             normalizedFile = await _normalizationService.NormalizeAudioAsync(
@@ -247,6 +259,7 @@ public class NormalizationFunction
         catch (Exception ex)
         {
             _logger.LogError(ex, "Normalization job {JobId} failed: {ErrorType} - {ErrorMessage}", job.JobId, ex.GetType().Name, ex.Message);
+            _telemetryClient.Flush(); // Ensure error is logged before re-throw
 
             // Sanitize error message to avoid exposing internal details (file paths, connection strings, etc.)
             var sanitizedError = ex switch
