@@ -43,9 +43,11 @@ public partial class AudioNormalizationService : IAudioNormalizationService
     /// <summary>
     /// Ensure FFmpeg is available, downloading if necessary.
     /// </summary>
-    public Task<bool> EnsureFFmpegAvailableAsync()
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if FFmpeg is available after this call.</returns>
+    public Task<bool> EnsureFFmpegAvailableAsync(CancellationToken cancellationToken = default)
     {
-        return _binaryManager.EnsureFFmpegAvailableAsync();
+        return _binaryManager.EnsureFFmpegAvailableAsync(cancellationToken);
     }
 
     /// <summary>
@@ -58,7 +60,7 @@ public partial class AudioNormalizationService : IAudioNormalizationService
     /// <returns>Path to the normalized temporary file, or null if normalization fails</returns>
     public async Task<string?> NormalizeAudioAsync(string inputPath, Action<ProgressUpdate>? progressCallback = null, CancellationToken cancellationToken = default)
     {
-        if (!await EnsureFFmpegAvailableAsync())
+        if (!await EnsureFFmpegAvailableAsync(cancellationToken))
         {
             _logger.LogError("FFmpeg is not available for audio normalization");
 

@@ -1,3 +1,6 @@
+using Azure;
+using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Specialized;
 using FFMpegCore;
 using FFMpegCore.Extensions.Downloader;
 using Microsoft.Extensions.Logging;
@@ -9,7 +12,13 @@ namespace FeatherPod.Shared.Services;
 /// </summary>
 public class FFmpegBinaryManager
 {
+    private const string LockBlobName = ".ffmpeg-download-lock";
+
+    private static readonly TimeSpan LeaseDuration = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan LeaseWaitTimeout = TimeSpan.FromMinutes(2);
+
     private readonly ILogger<FFmpegBinaryManager>? _logger;
+    private readonly BlobContainerClient? _blobContainer;
     private readonly Lock _lock = new();
 
     private bool? _isAvailable;
@@ -19,9 +28,11 @@ public class FFmpegBinaryManager
     /// Creates an FFmpegBinaryManager with optional logging support.
     /// </summary>
     /// <param name="logger">Optional logger for DI scenarios (Server). Pass null for CLI usage.</param>
-    public FFmpegBinaryManager(ILogger<FFmpegBinaryManager>? logger = null)
+    /// <param name="blobContainer">Optional blob container for distributed locking (Functions). Pass null for CLI usage.</param>
+    public FFmpegBinaryManager(ILogger<FFmpegBinaryManager>? logger = null, BlobContainerClient? blobContainer = null)
     {
         _logger = logger;
+        _blobContainer = blobContainer;
     }
 
     /// <summary>
@@ -107,8 +118,9 @@ public class FFmpegBinaryManager
     /// <summary>
     /// Ensures FFmpeg is available, downloading if necessary.
     /// </summary>
-    /// <returns>True if FFmpeg is available after this call</returns>
-    public async Task<bool> EnsureFFmpegAvailableAsync()
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if FFmpeg is available after this call.</returns>
+    public async Task<bool> EnsureFFmpegAvailableAsync(CancellationToken cancellationToken = default)
     {
         if (IsFFmpegAvailable())
         {
@@ -116,19 +128,141 @@ public class FFmpegBinaryManager
         }
 
         _logger?.LogInformation("FFmpeg not found, attempting to download...");
-        return await DownloadFFmpegAsync();
+
+        return await DownloadFFmpegAsync(cancellationToken);
     }
 
     /// <summary>
     /// Download FFmpeg binaries to the local directory.
+    /// Uses blob lease for distributed locking when blob container is available.
     /// </summary>
-    /// <returns>True if download succeeded</returns>
-    public async Task<bool> DownloadFFmpegAsync()
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if download succeeded.</returns>
+    public async Task<bool> DownloadFFmpegAsync(CancellationToken cancellationToken = default)
     {
         var binDir = GetBinaryDirectory();
-
         Directory.CreateDirectory(binDir);
 
+        // Use distributed lock if blob container is available (Azure Functions scenario)
+        if (_blobContainer != null)
+        {
+            return await DownloadWithDistributedLockAsync(binDir, cancellationToken);
+        }
+
+        // Direct download for CLI scenario
+        return await DownloadFFmpegCoreAsync(binDir);
+    }
+
+    private async Task<bool> DownloadWithDistributedLockAsync(string binDir, CancellationToken cancellationToken = default)
+    {
+        // Fast path: check if binaries already exist before trying to acquire lease
+        if (CheckLocalBinaries(binDir))
+        {
+            _logger?.LogDebug("FFmpeg binaries already present, skipping distributed lock");
+            ConfigureFFMpegCore(binDir);
+            lock (_lock) { _isAvailable = true; }
+
+            return true;
+        }
+
+        var lockBlob = _blobContainer!.GetBlobClient(LockBlobName);
+
+        // Ensure lock blob exists
+        if (!await lockBlob.ExistsAsync())
+        {
+            try
+            {
+                await lockBlob.UploadAsync(BinaryData.FromString("ffmpeg-download-lock"), overwrite: false);
+                _logger?.LogDebug("Created FFmpeg download lock blob");
+            }
+            catch (RequestFailedException ex) when (ex.Status == 409)
+            {
+                // Another instance created it, that's fine
+                _logger?.LogDebug("Lock blob already exists (created by another instance)");
+            }
+        }
+
+        var leaseClient = lockBlob.GetBlobLeaseClient();
+        var startTime = DateTime.UtcNow;
+        var random = new Random();
+
+        while (DateTime.UtcNow - startTime < LeaseWaitTimeout && !cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                // Try to acquire lease
+                var lease = await leaseClient.AcquireAsync(LeaseDuration);
+                _logger?.LogInformation("Acquired FFmpeg download lease: {LeaseId}", lease.Value.LeaseId);
+
+                try
+                {
+                    // Double-check if binaries appeared while waiting
+                    if (CheckLocalBinaries(binDir))
+                    {
+                        _logger?.LogInformation("FFmpeg binaries found after acquiring lease (another instance completed download)");
+                        ConfigureFFMpegCore(binDir);
+                        lock (_lock) { _isAvailable = true; }
+
+                        return true;
+                    }
+
+                    // Perform the download
+                    var result = await DownloadFFmpegCoreAsync(binDir);
+
+                    return result;
+                }
+                finally
+                {
+                    try
+                    {
+                        await leaseClient.ReleaseAsync();
+                        _logger?.LogDebug("Released FFmpeg download lease");
+                    }
+                    catch (RequestFailedException ex)
+                    {
+                        _logger?.LogWarning(ex, "Failed to release FFmpeg download lease (may have expired)");
+                    }
+                }
+            }
+            catch (RequestFailedException ex) when (ex.Status == 409)
+            {
+                // Lease held by another instance
+                _logger?.LogInformation("FFmpeg download lease held by another instance, waiting...");
+
+                // Check if binaries appeared while waiting
+                if (CheckLocalBinaries(binDir))
+                {
+                    _logger?.LogInformation("FFmpeg binaries now available (downloaded by another instance)");
+                    ConfigureFFMpegCore(binDir);
+                    lock (_lock) { _isAvailable = true; }
+
+                    return true;
+                }
+
+                // Jitter: 4-6 seconds to avoid thundering herd
+                var jitterMs = 4000 + random.Next(2000);
+                await Task.Delay(jitterMs, cancellationToken);
+            }
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        _logger?.LogError("Timed out waiting for FFmpeg download lease");
+
+        // Last chance: check if binaries are available
+        if (CheckLocalBinaries(binDir))
+        {
+            _logger?.LogInformation("FFmpeg binaries found after timeout");
+            ConfigureFFMpegCore(binDir);
+            lock (_lock) { _isAvailable = true; }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private async Task<bool> DownloadFFmpegCoreAsync(string binDir)
+    {
         _logger?.LogInformation("Downloading FFmpeg binaries to {BinDir}...", binDir);
 
         try
@@ -139,6 +273,7 @@ public class FFmpegBinaryManager
             if (downloadedFiles.Count == 0)
             {
                 _logger?.LogError("FFmpeg download returned no files");
+
                 return false;
             }
 

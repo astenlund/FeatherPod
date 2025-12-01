@@ -15,7 +15,9 @@ public interface IAudioNormalizationService
     /// <summary>
     /// Ensure FFmpeg is available, downloading if necessary.
     /// </summary>
-    Task<bool> EnsureFFmpegAvailableAsync();
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>True if FFmpeg is available after this call.</returns>
+    Task<bool> EnsureFFmpegAvailableAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Normalize audio file to podcast standard loudness (-16 LUFS).

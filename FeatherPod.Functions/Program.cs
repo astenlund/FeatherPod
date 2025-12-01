@@ -6,6 +6,7 @@ using FeatherPod.Shared.Services;
 using Microsoft.Azure.Functions.Worker.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 var builder = FunctionsApplication.CreateBuilder(args);
@@ -58,8 +59,17 @@ builder.Services.AddSingleton(sp =>
     return new TableServiceClient(tableUri, credential);
 });
 
-// FFmpeg for audio normalization
-builder.Services.AddSingleton<FFmpegBinaryManager>();
+// FFmpeg for audio normalization (with blob lease for distributed locking)
+builder.Services.AddSingleton(sp =>
+{
+    var settings = sp.GetRequiredService<IOptions<FunctionSettings>>().Value;
+    var blobServiceClient = sp.GetRequiredService<BlobServiceClient>();
+    var blobContainer = blobServiceClient.GetBlobContainerClient(settings.ContainerName);
+    var logger = sp.GetRequiredService<ILogger<FFmpegBinaryManager>>();
+
+    return new FFmpegBinaryManager(logger, blobContainer);
+});
+
 builder.Services.AddSingleton<IAudioNormalizationService, AudioNormalizationService>();
 
 // HttpClient for App Service cache refresh
