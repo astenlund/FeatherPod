@@ -53,8 +53,7 @@ public class NormalizationFunction
         NormalizationJob job;
         try
         {
-            job = JsonSerializer.Deserialize<NormalizationJob>(message!)
-                ?? throw new InvalidOperationException("Failed to deserialize normalization job");
+            job = JsonSerializer.Deserialize<NormalizationJob>(message!) ?? throw new InvalidOperationException("Failed to deserialize normalization job");
         }
         catch (Exception ex)
         {
@@ -62,8 +61,7 @@ public class NormalizationFunction
             throw;
         }
 
-        _logger.LogInformation("Processing normalization job {JobId} for {FeedId}/{FileName}",
-            job.JobId, job.FeedId, job.FileName);
+        _logger.LogInformation("Processing normalization job {JobId} for {FeedId}/{FileName}", job.JobId, job.FeedId, job.FileName);
 
         var tableClient = _tableClient.GetTableClient(TableName);
         await tableClient.CreateIfNotExistsAsync(cancellationToken);
@@ -115,7 +113,7 @@ public class NormalizationFunction
                 });
             });
 
-            await pendingBlob.DownloadToAsync(tempInputFile, new Azure.Storage.Blobs.Models.BlobDownloadToOptions
+            await pendingBlob.DownloadToAsync(tempInputFile, new()
             {
                 ProgressHandler = downloadProgress
             }, cancellationToken);
@@ -235,8 +233,7 @@ public class NormalizationFunction
                 TotalDuration = duration
             });
 
-            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Completed,
-                episodeId: job.EpisodeId, cancellationToken: cancellationToken);
+            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Completed, episodeId: job.EpisodeId, cancellationToken: cancellationToken);
 
             // Call App Service refresh endpoint
             await RefreshAppServiceCacheAsync(job.FeedId, cancellationToken);
@@ -245,12 +242,11 @@ public class NormalizationFunction
             _logger.LogDebug("Deleting pending blob {PendingPath}", pendingBlobPath);
             await pendingBlob.DeleteIfExistsAsync(cancellationToken: cancellationToken);
 
-            _logger.LogInformation("Normalization job {JobId} completed successfully. Episode {EpisodeId} created.",
-                job.JobId, job.EpisodeId);
+            _logger.LogInformation("Normalization job {JobId} completed successfully. Episode {EpisodeId} created.", job.JobId, job.EpisodeId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Normalization job {JobId} failed", job.JobId);
+            _logger.LogError(ex, "Normalization job {JobId} failed: {ErrorType} - {ErrorMessage}", job.JobId, ex.GetType().Name, ex.Message);
 
             // Sanitize error message to avoid exposing internal details (file paths, connection strings, etc.)
             var sanitizedError = ex switch
@@ -262,8 +258,7 @@ public class NormalizationFunction
             };
 
             // Update job status to Failed
-            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Failed,
-                error: sanitizedError, cancellationToken: cancellationToken);
+            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Failed, error: sanitizedError, cancellationToken: cancellationToken);
 
             // Delete pending blob on failure
             var pendingBlob = containerClient.GetBlobClient(pendingBlobPath);
@@ -326,7 +321,7 @@ public class NormalizationFunction
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
-            entity = new JobStatusEntity
+            entity = new()
             {
                 PartitionKey = "jobs",
                 RowKey = jobId,
@@ -347,10 +342,7 @@ public class NormalizationFunction
         await tableClient.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
     }
 
-    private async Task UpdateProgressAsync(
-        TableClient tableClient,
-        string jobId,
-        ProgressUpdate progress)
+    private async Task UpdateProgressAsync(TableClient tableClient, string jobId, ProgressUpdate progress)
     {
         try
         {
