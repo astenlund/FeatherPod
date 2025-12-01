@@ -21,6 +21,8 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
         bool skipConfirmation = false,
         CancellationToken cancellationToken = default)
     {
+        Out.BlankLine().Flush();
+
         // Confirm deletion unless skipped
         if (!skipConfirmation)
         {
