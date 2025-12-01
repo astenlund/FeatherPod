@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using FeatherPod.Shared.Models;
@@ -257,7 +258,7 @@ public sealed partial class EpisodeService : IDisposable
         var fileName = fileInfo.Name;
         var id = episodeId ?? Episode.GenerateId(feedId, fileName, fileInfo.Length);
 
-        await _lock.WaitAsync();
+        await _lock.WaitAsync(cancellationToken);
         try
         {
             if (!_episodesByFeed.TryGetValue(feedId, out var episodes))
@@ -583,7 +584,7 @@ public sealed partial class EpisodeService : IDisposable
         }
     }
 
-    private DateTime GetPublishedDate(string filePath)
+    public static bool TryGetPublishedDateFromFile(string filePath, [NotNullWhen(true)] out DateTime? date)
     {
         try
         {
@@ -592,9 +593,9 @@ public sealed partial class EpisodeService : IDisposable
             // Try DateTagged first (user-editable metadata)
             if (file.Tag.DateTagged.HasValue)
             {
-                _logger.LogInformation("Using DateTagged from audio metadata: {Date}", file.Tag.DateTagged.Value);
+                date = file.Tag.DateTagged.Value.ToUniversalTime();
 
-                return file.Tag.DateTagged.Value.ToUniversalTime();
+                return true;
             }
 
             // For M4A/MP4 files, try to read container creation time
@@ -604,21 +605,21 @@ public sealed partial class EpisodeService : IDisposable
                 var creationTime = Mp4Parser.GetCreationTime(filePath);
                 if (creationTime.HasValue)
                 {
-                    _logger.LogInformation("Using MP4 container creation time: {Date}", creationTime.Value);
+                    date = creationTime.Value;
 
-                    return creationTime.Value;
+                    return true;
                 }
             }
 
-            _logger.LogDebug("No metadata date found for {FilePath}, using current time", filePath);
+            date = null;
 
-            return DateTime.UtcNow;
+            return false;
         }
-        catch (Exception ex)
+        catch
         {
-            _logger.LogDebug(ex, "Failed to read published date from {FilePath}, using current time", filePath);
+            date = null;
 
-            return DateTime.UtcNow;
+            return false;
         }
     }
 
@@ -654,6 +655,20 @@ public sealed partial class EpisodeService : IDisposable
     public void Dispose()
     {
         _lock.Dispose();
+    }
+
+    private DateTime GetPublishedDate(string filePath)
+    {
+        if (TryGetPublishedDateFromFile(filePath, out var date))
+        {
+            _logger.LogInformation("Using file metadata for published date: {Date}", date);
+
+            return date.Value;
+        }
+
+        _logger.LogDebug("No metadata date found for {FilePath}, using current time", filePath);
+
+        return DateTime.UtcNow;
     }
 
     [GeneratedRegex(@"\s+")]

@@ -109,7 +109,9 @@ public class EpisodesController : ControllerBase
                 var fileSize = new FileInfo(tempPath).Length;
                 var effectiveEpisodeId = episodeId ?? Episode.GenerateId(feedId, file.FileName, fileSize);
                 var effectiveTitle = string.IsNullOrWhiteSpace(title) ? EpisodeService.ParseTitleFromFilename(file.FileName) : title;
-                var effectivePublishedDate = publishedDate ?? DateTime.UtcNow;
+                var effectivePublishedDate = publishedDate ?? (feed.UseFileMetadataForPublishDate && EpisodeService.TryGetPublishedDateFromFile(tempPath, out var extractedDate)
+                    ? extractedDate.Value
+                    : DateTime.UtcNow);
 
                 // Upload to pending location
                 await _blobStorageService.UploadPendingAudioAsync(feedId, jobId, file.FileName, tempPath);
