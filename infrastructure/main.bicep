@@ -227,6 +227,11 @@ resource functionAppPlan 'Microsoft.Web/serverfarms@2023-01-01' = {
   }
 }
 
+@description('Maximum number of Function App instances for scale-out (Consumption plan)')
+@minValue(1)
+@maxValue(200)
+param functionAppScaleLimit int = 1
+
 // Function App
 resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
   name: functionAppName
@@ -243,6 +248,7 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
       netFrameworkVersion: 'v10.0'
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
+      functionAppScaleLimit: functionAppScaleLimit
     }
   }
 }
@@ -255,6 +261,7 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2023-01-01' = {
     AzureWebJobsStorage__accountName: storageAccountName
     FUNCTIONS_EXTENSION_VERSION: '~4'
     FUNCTIONS_WORKER_RUNTIME: 'dotnet-isolated'
+    WEBSITE_MAX_DYNAMIC_APPLICATION_SCALE_OUT: string(functionAppScaleLimit)
     StorageAccountName: storageAccountName
     ContainerName: containerName
     AppServiceUrl: 'https://${appServiceName}.azurewebsites.net'
