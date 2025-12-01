@@ -182,7 +182,7 @@ function formatBytes(bytes) {
  * @typedef {Object} JobStatus
  * @property {string} status - Queued, Processing, Completed, Failed
  * @property {string} [stage] - Queued, Downloading, Analyzing, Normalizing, Uploading, Finalizing
- * @property {number} [progressPercent]
+ * @property {number} [progressPercent] - Progress percentage (0-100) for Downloading, Analyzing, Normalizing, Uploading stages
  * @property {string} [error]
  */
 
@@ -224,7 +224,8 @@ async function pollNormalizationJob(jobId, fileName) {
 
             // Update progress display
             if (job.stage) {
-                const showPercent = (job.stage === 'Analyzing' || job.stage === 'Normalizing') && job.progressPercent != null;
+                const stagesWithProgress = ['Downloading', 'Analyzing', 'Normalizing', 'Uploading'];
+                const showPercent = stagesWithProgress.includes(job.stage) && job.progressPercent != null;
                 statusEl.textContent = job.stage + '...' + (showPercent ? ' ' + job.progressPercent + '%' : '');
             }
 

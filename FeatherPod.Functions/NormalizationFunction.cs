@@ -82,6 +82,10 @@ public class NormalizationFunction
         try
         {
             // Download pending blob to temp file
+            var pendingBlob = containerClient.GetBlobClient(pendingBlobPath);
+            var blobProperties = await pendingBlob.GetPropertiesAsync(cancellationToken: cancellationToken);
+            var downloadSize = blobProperties.Value.ContentLength;
+
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
                 Stage = NormalizationStage.Downloading,
@@ -89,11 +93,32 @@ public class NormalizationFunction
                 Message = "Downloading audio file"
             });
 
-            var pendingBlob = containerClient.GetBlobClient(pendingBlobPath);
             tempInputFile = Path.Combine(Path.GetTempPath(), $"{job.JobId}_{job.FileName}");
 
             _logger.LogDebug("Downloading pending blob to {TempFile}", tempInputFile);
-            await pendingBlob.DownloadToAsync(tempInputFile, cancellationToken);
+            var downloadLastUpdate = DateTime.MinValue;
+            var downloadProgress = new Progress<long>(bytesDownloaded =>
+            {
+                var now = DateTime.UtcNow;
+                if (now - downloadLastUpdate < ProgressUpdateThrottle)
+                {
+                    return;
+                }
+                downloadLastUpdate = now;
+
+                var percent = downloadSize > 0 ? (int)(bytesDownloaded * 100 / downloadSize) : 0;
+                _ = UpdateProgressAsync(tableClient, job.JobId, new()
+                {
+                    Stage = NormalizationStage.Downloading,
+                    ProgressPercent = percent,
+                    Message = "Downloading audio file"
+                });
+            });
+
+            await pendingBlob.DownloadToAsync(tempInputFile, new Azure.Storage.Blobs.Models.BlobDownloadToOptions
+            {
+                ProgressHandler = downloadProgress
+            }, cancellationToken);
 
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
@@ -110,7 +135,6 @@ public class NormalizationFunction
                 tempInputFile,
                 progressCallback: progress =>
                 {
-                    // Throttle updates to once per second
                     var now = DateTime.UtcNow;
                     if (now - lastProgressUpdate < ProgressUpdateThrottle)
                     {
@@ -118,15 +142,7 @@ public class NormalizationFunction
                     }
                     lastProgressUpdate = now;
 
-                    // Fire-and-forget progress update with error logging
-                    _ = UpdateProgressAsync(tableClient, job.JobId, progress)
-                        .ContinueWith(t =>
-                        {
-                            if (t.IsFaulted)
-                            {
-                                _logger.LogWarning(t.Exception, "Failed to update progress for job {JobId}", job.JobId);
-                            }
-                        }, TaskContinuationOptions.OnlyOnFaulted);
+                    _ = UpdateProgressAsync(tableClient, job.JobId, progress);
                 },
                 cancellationToken);
 
@@ -139,6 +155,9 @@ public class NormalizationFunction
             var mediaInfo = await FFProbe.AnalyseAsync(normalizedFile, cancellationToken: cancellationToken);
             var duration = mediaInfo.Duration;
 
+            // Get the file size of the normalized file for the episode and upload progress
+            var normalizedFileSize = new FileInfo(normalizedFile).Length;
+
             // Upload normalized file to final location
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
@@ -149,9 +168,31 @@ public class NormalizationFunction
 
             _logger.LogDebug("Uploading normalized file to {FinalPath}", finalBlobPath);
             var finalBlob = containerClient.GetBlobClient(finalBlobPath);
+            var uploadLastUpdate = DateTime.MinValue;
+            var uploadProgress = new Progress<long>(bytesUploaded =>
+            {
+                var now = DateTime.UtcNow;
+                if (now - uploadLastUpdate < ProgressUpdateThrottle)
+                {
+                    return;
+                }
+                uploadLastUpdate = now;
+
+                var percent = normalizedFileSize > 0 ? (int)(bytesUploaded * 100 / normalizedFileSize) : 0;
+                _ = UpdateProgressAsync(tableClient, job.JobId, new()
+                {
+                    Stage = NormalizationStage.Uploading,
+                    ProgressPercent = percent,
+                    Message = "Uploading normalized file"
+                });
+            });
+
             await using (var stream = File.OpenRead(normalizedFile))
             {
-                await finalBlob.UploadAsync(stream, overwrite: true, cancellationToken);
+                await finalBlob.UploadAsync(stream, new Azure.Storage.Blobs.Models.BlobUploadOptions
+                {
+                    ProgressHandler = uploadProgress
+                }, cancellationToken);
             }
 
             await UpdateProgressAsync(tableClient, job.JobId, new()
@@ -160,9 +201,6 @@ public class NormalizationFunction
                 ProgressPercent = 100,
                 Message = "Upload complete"
             });
-
-            // Get the file size of the normalized file for the episode
-            var normalizedFileSize = new FileInfo(normalizedFile).Length;
 
             // Create episode entry
             var episode = new Episode
