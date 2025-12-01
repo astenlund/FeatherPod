@@ -299,7 +299,7 @@ public class EpisodeServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task SyncWithBlobStorageAsync_ShouldRemoveEpisodesWithMissingFiles()
+    public async Task SyncWithBlobStorageAsync_ShouldPreserveEpisodesWithMissingFiles()
     {
         // Arrange
         var service = CreateService();
@@ -309,7 +309,7 @@ public class EpisodeServiceTests : IDisposable
         var testFile = Path.Combine(_testDirectory, "test.mp3");
         await File.WriteAllTextAsync(testFile, "audio data");
 
-        _ = await service.AddEpisodeAsync(TestFeedId, testFile, "Test");
+        var episode = await service.AddEpisodeAsync(TestFeedId, testFile, "Test");
 
         // Delete the audio file manually from blob storage
         var blobStorage = _blobServicesToDispose[0];
@@ -320,8 +320,9 @@ public class EpisodeServiceTests : IDisposable
 
         var episodes = await service.GetAllEpisodesAsync(TestFeedId);
 
-        // Assert
-        Assert.Empty(episodes);
+        // Assert - episode should still exist (sync warns but doesn't delete to prevent silent data loss)
+        Assert.Single(episodes);
+        Assert.Equal(episode.Id, episodes[0].Id);
     }
 
     [Fact]

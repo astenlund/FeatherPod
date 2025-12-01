@@ -491,23 +491,17 @@ public sealed partial class EpisodeService : IDisposable
 
             var blobFiles = await _blobStorage.ListAudioFilesAsync(feedId);
 
-            // Remove episodes whose blob files are missing
-            var episodesToRemove = _episodesByFeed[feedId]
+            // Warn about episodes whose blob files are missing (don't auto-delete to prevent silent data loss)
+            var orphanedEpisodes = _episodesByFeed[feedId]
                 .Where(e => !blobFiles.Contains(e.FileName))
                 .ToList();
 
-            foreach (var episode in episodesToRemove)
+            foreach (var episode in orphanedEpisodes)
             {
-                _episodesByFeed[feedId].Remove(episode);
-                _logger.LogInformation("Removed episode with missing blob file from feed {FeedId}: {FileName}", feedId, episode.FileName);
+                _logger.LogWarning("Episode has missing blob file in feed {FeedId}: {Title} ({FileName})", feedId, episode.Title, episode.FileName);
             }
 
-            if (episodesToRemove.Any())
-            {
-                await SaveEpisodesAsync(feedId);
-            }
-
-            _logger.LogInformation("Sync complete for feed {FeedId}. Removed {Count} episodes with missing files.", feedId, episodesToRemove.Count);
+            _logger.LogInformation("Sync complete for feed {FeedId}. Found {Count} episodes with missing files.", feedId, orphanedEpisodes.Count);
         }
         finally
         {
