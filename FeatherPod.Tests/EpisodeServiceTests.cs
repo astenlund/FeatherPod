@@ -127,6 +127,55 @@ public class EpisodeServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task AddEpisodeAsync_ShouldUseProvidedEpisodeId_WhenSupplied()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var testFile = Path.Combine(_testDirectory, "test.mp3");
+        await File.WriteAllTextAsync(testFile, "audio data");
+
+        // Use a custom episode ID (simulating CLI sending ID based on original file size)
+        var customEpisodeId = "custom123456";
+
+        // Act
+        var episode = await service.AddEpisodeAsync(TestFeedId, testFile, "Test", episodeId: customEpisodeId);
+
+        // Assert
+        Assert.Equal(customEpisodeId, episode.Id);
+    }
+
+    [Fact]
+    public async Task AddEpisodeAsync_WithProvidedEpisodeId_ShouldReplaceExistingEpisode()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var testFile1 = Path.Combine(_testDirectory, "test.mp3");
+        var testFile2 = Path.Combine(_testDirectory, "test_normalized.mp3");
+        await File.WriteAllTextAsync(testFile1, "original audio data");
+        await File.WriteAllTextAsync(testFile2, "normalized audio"); // Different size
+
+        // Both uploads use the same episodeId (simulating re-upload scenario)
+        var sharedEpisodeId = "shared123456";
+
+        // Act
+        var firstEpisode = await service.AddEpisodeAsync(TestFeedId, testFile1, "First Upload", episodeId: sharedEpisodeId);
+        var secondEpisode = await service.AddEpisodeAsync(TestFeedId, testFile2, "Second Upload", episodeId: sharedEpisodeId);
+
+        var episodes = await service.GetAllEpisodesAsync(TestFeedId);
+
+        // Assert
+        Assert.Single(episodes); // Only one episode exists (replaced)
+        Assert.Equal(sharedEpisodeId, episodes[0].Id);
+        Assert.Equal("Second Upload", episodes[0].Title); // Title updated
+    }
+
+    [Fact]
     public async Task AddEpisodeAsync_ShouldUploadToBlobStorage()
     {
         // Arrange

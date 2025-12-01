@@ -239,6 +239,7 @@ public sealed partial class EpisodeService : IDisposable
         string? description = null,
         string? summary = null,
         DateTime? publishedDate = null,
+        string? episodeId = null,
         CancellationToken cancellationToken = default)
     {
         var fileInfo = new FileInfo(filePath);
@@ -254,7 +255,7 @@ public sealed partial class EpisodeService : IDisposable
         }
 
         var fileName = fileInfo.Name;
-        var id = Episode.GenerateId(feedId, fileName, fileInfo.Length);
+        var id = episodeId ?? Episode.GenerateId(feedId, fileName, fileInfo.Length);
 
         await _lock.WaitAsync();
         try

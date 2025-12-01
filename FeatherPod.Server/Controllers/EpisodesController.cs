@@ -66,6 +66,7 @@ public class EpisodesController : ControllerBase
         [FromForm] string? description,
         [FromForm] string? summary,
         [FromForm] DateTime? publishedDate,
+        [FromForm] string? episodeId,
         [FromQuery] bool normalize = false)
     {
         if (!InputValidation.IsValidFeedId(feedId))
@@ -106,7 +107,7 @@ public class EpisodesController : ControllerBase
             {
                 var jobId = Guid.NewGuid().ToString("N");
                 var fileSize = new FileInfo(tempPath).Length;
-                var episodeId = Episode.GenerateId(feedId, file.FileName, fileSize);
+                var effectiveEpisodeId = episodeId ?? Episode.GenerateId(feedId, file.FileName, fileSize);
                 var effectiveTitle = string.IsNullOrWhiteSpace(title) ? Path.GetFileNameWithoutExtension(file.FileName) : title;
                 var effectivePublishedDate = publishedDate ?? DateTime.UtcNow;
 
@@ -121,7 +122,7 @@ public class EpisodesController : ControllerBase
                     FeedId = feedId,
                     FileName = file.FileName,
                     OriginalFileSize = fileSize,
-                    EpisodeId = episodeId,
+                    EpisodeId = effectiveEpisodeId,
                     Title = effectiveTitle,
                     Description = description,
                     Summary = summary,
@@ -137,7 +138,7 @@ public class EpisodesController : ControllerBase
                     JobId = jobId,
                     FeedId = feedId,
                     Status = nameof(JobStatus.Queued),
-                    EpisodeId = episodeId,
+                    EpisodeId = effectiveEpisodeId,
                     QueuedAt = job.QueuedAt
                 };
 
@@ -145,7 +146,7 @@ public class EpisodesController : ControllerBase
             }
 
             // Synchronous upload (no normalization)
-            var episode = await _episodeService.AddEpisodeAsync(feedId, tempPath, title, description, summary, publishedDate, HttpContext.RequestAborted);
+            var episode = await _episodeService.AddEpisodeAsync(feedId, tempPath, title, description, summary, publishedDate, episodeId, HttpContext.RequestAborted);
             var episodeWithUrl = episode with { Url = episode.GetAudioUrl(_baseUrl) };
 
             return CreatedAtAction(nameof(ListEpisodes), new { feedId }, episodeWithUrl);

@@ -924,6 +924,89 @@ public class IntegrationTests : IDisposable
         Assert.DoesNotContain("<script>alert", content);
         Assert.Contains("&lt;script&gt;", content);
     }
+
+    // ============================================================================
+    // EPISODE ID PARAMETER TESTS
+    // ============================================================================
+
+    [AzuriteFact]
+    public async Task PostEpisode_WithEpisodeIdParameter_ShouldUseProvidedId()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var customEpisodeId = "custom123abc";
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio data"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "test-episode.mp3");
+        content.Add(new StringContent("Test Episode"), "title");
+        content.Add(new StringContent(customEpisodeId), "episodeId");
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        request.Content = content;
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+        var responseContent = await response.Content.ReadAsStringAsync();
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Contains($"\"id\":\"{customEpisodeId}\"", responseContent);
+    }
+
+    [AzuriteFact]
+    public async Task PostEpisode_WithEpisodeIdParameter_ShouldReplaceExistingEpisode()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var sharedEpisodeId = "shared456def";
+
+        // First upload
+        var content1 = new MultipartFormDataContent();
+        var fileContent1 = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("original audio"));
+        fileContent1.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content1.Add(fileContent1, "file", "episode.mp3");
+        content1.Add(new StringContent("First Upload"), "title");
+        content1.Add(new StringContent(sharedEpisodeId), "episodeId");
+
+        var request1 = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        request1.Content = content1;
+        request1.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        await _client.SendAsync(request1);
+
+        // Second upload with same episodeId but different file size (simulates re-upload after normalization)
+        var content2 = new MultipartFormDataContent();
+        var fileContent2 = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("normalized")); // Different size
+        fileContent2.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content2.Add(fileContent2, "file", "episode.mp3");
+        content2.Add(new StringContent("Second Upload"), "title");
+        content2.Add(new StringContent(sharedEpisodeId), "episodeId");
+
+        var request2 = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        request2.Content = content2;
+        request2.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        // Act
+        var response2 = await _client.SendAsync(request2);
+
+        // Get episodes to verify only one exists
+        var getRequest = new HttpRequestMessage(HttpMethod.Get, $"/api/feeds/{TestFeedId}/episodes");
+        getRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var getResponse = await _client.SendAsync(getRequest);
+        var episodesJson = await getResponse.Content.ReadAsStringAsync();
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Created, response2.StatusCode);
+
+        // Should only have one episode (the second upload replaced the first)
+        var episodeCount = System.Text.RegularExpressions.Regex.Matches(episodesJson, "\"id\":").Count;
+        Assert.Equal(1, episodeCount);
+        Assert.Contains("Second Upload", episodesJson);
+        Assert.DoesNotContain("First Upload", episodesJson);
+    }
 }
 
 internal class FeatherPodWebApplicationFactory : WebApplicationFactory<Program>

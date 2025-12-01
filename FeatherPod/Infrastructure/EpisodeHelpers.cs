@@ -63,6 +63,10 @@ internal static class EpisodeHelpers
         var success = false;
         string? normalizedTempFile = null;
 
+        // Generate episode ID from ORIGINAL file size (before any normalization)
+        var originalFileSize = new FileInfo(filePath).Length;
+        var episodeId = Episode.GenerateId(feed.Id, fileName, originalFileSize);
+
         // Extract creation time from ORIGINAL file if requested (before normalization)
         string? extractedPublishedDate = null;
         if (settings.ExtractDateFromFile == true)
@@ -243,6 +247,9 @@ internal static class EpisodeHelpers
                             content.Add(new StringContent(extractedPublishedDate), "publishedDate");
                         }
                         // Note: UseCurrentDate is the default behavior, no need to send anything
+
+                        // Add episode ID (based on original file size, before any normalization)
+                        content.Add(new StringContent(episodeId), "episodeId");
 
                         // Upload (add normalize query param if server-side normalization requested)
                         var uploadUrl = $"/api/feeds/{feed.Id}/episodes";
