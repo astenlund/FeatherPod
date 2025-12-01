@@ -260,6 +260,45 @@ public class EpisodeServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DeleteEpisodeAsync_ShouldPreserveFile_WhenOtherEpisodeSharesSameFile()
+    {
+        // Arrange - Create two episodes pointing to the same file (simulates re-upload with different file size after normalization)
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var testFile = Path.Combine(_testDirectory, "shared.mp3");
+
+        // First upload - creates episode with ID based on size "audio data 1" (12 bytes)
+        await File.WriteAllTextAsync(testFile, "audio data 1");
+        var episode1 = await service.AddEpisodeAsync(TestFeedId, testFile, "First Title");
+
+        // Second upload - different size creates different ID, but same filename overwrites blob
+        await File.WriteAllTextAsync(testFile, "audio data 2 - longer content");
+        var episode2 = await service.AddEpisodeAsync(TestFeedId, testFile, "Second Title");
+
+        // Verify we have two episodes with different IDs but same filename
+        Assert.NotEqual(episode1.Id, episode2.Id);
+        Assert.Equal(episode1.FileName, episode2.FileName);
+
+        var episodesBefore = await service.GetAllEpisodesAsync(TestFeedId);
+        Assert.Equal(2, episodesBefore.Count);
+
+        // Act - Delete first episode
+        var result = await service.DeleteEpisodeAsync(TestFeedId, episode1.Id);
+
+        // Assert - File should still exist because episode2 references it
+        Assert.True(result);
+        var episodesAfter = await service.GetAllEpisodesAsync(TestFeedId);
+        Assert.Single(episodesAfter);
+        Assert.Equal(episode2.Id, episodesAfter[0].Id);
+
+        var blobStorage = _blobServicesToDispose[0];
+        var fileStillExists = await blobStorage.AudioExistsAsync(TestFeedId, "shared.mp3");
+        Assert.True(fileStillExists, "Audio file should not be deleted when another episode references it");
+    }
+
+    [Fact]
     public async Task SyncWithBlobStorageAsync_ShouldRemoveEpisodesWithMissingFiles()
     {
         // Arrange

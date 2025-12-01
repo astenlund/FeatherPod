@@ -338,8 +338,16 @@ public sealed partial class EpisodeService : IDisposable
                 return false;
             }
 
-            // Delete from blob storage
-            await _blobStorage.DeleteAudioAsync(feedId, episode.FileName);
+            // Only delete blob if no other episodes reference the same file
+            var otherEpisodeSharesFile = value.Any(e => e.Id != id && e.FileName == episode.FileName);
+            if (!otherEpisodeSharesFile)
+            {
+                await _blobStorage.DeleteAudioAsync(feedId, episode.FileName);
+            }
+            else
+            {
+                _logger.LogInformation("Skipping blob deletion - another episode references {FileName}", episode.FileName);
+            }
 
             // Remove from list
             _episodesByFeed[feedId].Remove(episode);
