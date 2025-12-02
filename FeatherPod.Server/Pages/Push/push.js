@@ -133,14 +133,14 @@ async function uploadFile(file) {
             saveJobState({ status: 'success', fileName: file.name });
             showSuccess(file.name);
         } else if (response.status === 202) {
-            // Async normalization - start polling
+            // Async normalization - monitor via SSE (with polling fallback)
             const jobResponse = JSON.parse(response.body);
             saveJobState({
                 status: 'normalizing',
                 jobId: jobResponse.jobId,
                 fileName: file.name
             });
-            await pollNormalizationJob(jobResponse.jobId, file.name);
+            monitorNormalizationJob(jobResponse.jobId, file.name);
         } else if (response.status === 401) {
             showError('Invalid API key');
         } else if (response.status === 403) {
@@ -187,13 +187,106 @@ function formatBytes(bytes) {
  */
 
 /**
+ * Update the normalizing status display.
+ * @param {JobStatus} job
+ */
+function updateNormalizingStatus(job) {
+    const statusEl = document.getElementById('normalizing-status');
+    if (job.stage) {
+        const stagesWithProgress = ['Downloading', 'Analyzing', 'Normalizing', 'Uploading'];
+        const showPercent = stagesWithProgress.includes(job.stage) && job.progressPercent != null;
+        statusEl.textContent = job.stage + '...' + (showPercent ? ' ' + job.progressPercent + '%' : '');
+    }
+}
+
+/**
+ * Monitor normalization job via SSE with polling fallback.
  * @param {string} jobId
  * @param {string} fileName
  */
-async function pollNormalizationJob(jobId, fileName) {
+function monitorNormalizationJob(jobId, fileName) {
     showState('normalizing');
     document.getElementById('normalizing-file-name').textContent = fileName;
-    const statusEl = document.getElementById('normalizing-status');
+
+    const sseUrl = '/api/jobs/' + jobId + '/progress';
+
+    if (typeof EventSource === 'undefined') {
+        // Browser doesn't support SSE, use polling
+        void pollNormalizationJobFallback(jobId, fileName);
+
+        return;
+    }
+
+    const eventSource = new EventSource(sseUrl);
+    let lastStatus = null;
+    let connectionEstablished = false;
+    let jobFinished = false;
+
+    const connectionTimeout = setTimeout(() => {
+        if (!connectionEstablished) {
+            // SSE didn't connect in time, fall back to polling
+            eventSource.close();
+            void pollNormalizationJobFallback(jobId, fileName);
+        }
+    }, 5000);
+
+    eventSource.onopen = () => {
+        // Connection established - clear timeout even before first progress event
+        connectionEstablished = true;
+        clearTimeout(connectionTimeout);
+    };
+
+    eventSource.addEventListener('progress', (e) => {
+        lastStatus = JSON.parse(e.data);
+        updateNormalizingStatus(lastStatus);
+    });
+
+    eventSource.addEventListener('done', () => {
+        clearTimeout(connectionTimeout);
+        jobFinished = true;
+        eventSource.close();
+        if (lastStatus?.status === 'Completed') {
+            saveJobState({ status: 'success', fileName });
+            showSuccess(fileName);
+        } else {
+            const errorMsg = lastStatus?.error || 'Normalization failed';
+            saveJobState({ status: 'error', fileName, error: errorMsg });
+            showError(errorMsg);
+        }
+    });
+
+    eventSource.addEventListener('error', (e) => {
+        // Named 'error' event = job not found (server response)
+        // Server sends: event: error\ndata: {"error":"Job not found"}\n\n
+        clearTimeout(connectionTimeout);
+        jobFinished = true;
+        eventSource.close();
+        const data = JSON.parse(e.data);
+        saveJobState({ status: 'error', fileName, error: data.error });
+        showError(data.error);
+    });
+
+    eventSource.onerror = () => {
+        // Connection error (network/proxy failure, or unexpected disconnect)
+        if (jobFinished) {
+            return; // Already handled by done/error event
+        }
+        clearTimeout(connectionTimeout);
+        eventSource.close();
+        // Fall back to polling regardless of whether connection was established
+        // Handles both: initial connection failure AND mid-job disconnect
+        void pollNormalizationJobFallback(jobId, fileName);
+    };
+}
+
+/**
+ * Poll normalization job status (fallback when SSE unavailable).
+ * @param {string} jobId
+ * @param {string} fileName
+ */
+async function pollNormalizationJobFallback(jobId, fileName) {
+    showState('normalizing');
+    document.getElementById('normalizing-file-name').textContent = fileName;
 
     const pollInterval = 2000;
 
@@ -206,6 +299,7 @@ async function pollNormalizationJob(jobId, fileName) {
             if (!response.ok) {
                 saveJobState({ status: 'error', fileName, error: 'Failed to check job status' });
                 showError('Failed to check job status');
+
                 return;
             }
 
@@ -214,25 +308,23 @@ async function pollNormalizationJob(jobId, fileName) {
             if (job.status === 'Completed') {
                 saveJobState({ status: 'success', fileName });
                 showSuccess(fileName);
+
                 return;
             } else if (job.status === 'Failed') {
                 const errorMsg = job.error || 'Normalization failed';
                 saveJobState({ status: 'error', fileName, error: errorMsg });
                 showError(errorMsg);
+
                 return;
             }
 
-            // Update progress display
-            if (job.stage) {
-                const stagesWithProgress = ['Downloading', 'Analyzing', 'Normalizing', 'Uploading'];
-                const showPercent = stagesWithProgress.includes(job.stage) && job.progressPercent != null;
-                statusEl.textContent = job.stage + '...' + (showPercent ? ' ' + job.progressPercent + '%' : '');
-            }
+            updateNormalizingStatus(job);
 
             await new Promise(resolve => setTimeout(resolve, pollInterval));
         } catch (err) {
             saveJobState({ status: 'error', fileName, error: 'Failed to check job status' });
             showError('Failed to check job status');
+
             return;
         }
     }
@@ -262,7 +354,8 @@ function restoreJobState() {
         showError(job.error);
         return true;
     } else if (job.status === 'normalizing') {
-        void pollNormalizationJob(job.jobId, job.fileName);
+        monitorNormalizationJob(job.jobId, job.fileName);
+
         return true;
     }
 
