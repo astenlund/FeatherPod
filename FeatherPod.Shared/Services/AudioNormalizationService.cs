@@ -165,11 +165,21 @@ public partial class AudioNormalizationService : IAudioNormalizationService
         var ffmpegPath = GetFFmpegPath();
         _logger.LogDebug("Using FFmpeg at: {FfmpegPath}, Exists: {Exists}", ffmpegPath, File.Exists(ffmpegPath));
 
+        // Send initial progress immediately so client knows the stage has started
+        progressCallback?.Invoke(new()
+        {
+            Stage = NormalizationStage.Analyzing,
+            ProgressPercent = 0,
+            Message = "Pass 1: Analyzing loudness",
+            CurrentPosition = TimeSpan.Zero,
+            TotalDuration = totalDuration
+        });
+
         using var process = new Process();
         process.StartInfo = new()
         {
             FileName = ffmpegPath,
-            Arguments = $"-i \"{inputPath}\" -af loudnorm=I={targetLoudnessStr}:TP={truePeakStr}:LRA={loudnessRangeStr}:print_format=json -f null -",
+            Arguments = $"-i \"{inputPath}\" -af loudnorm=I={targetLoudnessStr}:TP={truePeakStr}:LRA={loudnessRangeStr}:print_format=json -stats_period 0.1 -f null -",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -305,12 +315,23 @@ public partial class AudioNormalizationService : IAudioNormalizationService
     {
         var loudnormFilter = BuildLoudnormFilter(analysis);
 
+        // Send initial progress immediately so client knows the stage has started
+        progressCallback?.Invoke(new()
+        {
+            Stage = NormalizationStage.Normalizing,
+            ProgressPercent = 0,
+            Message = "Pass 2: Applying normalization",
+            CurrentPosition = TimeSpan.Zero,
+            TotalDuration = totalDuration
+        });
+
         try
         {
             var arguments = FFMpegArguments
                 .FromFileInput(inputPath)
                 .OutputToFile(outputPath, true, options => options
                     .WithCustomArgument($"-af {loudnormFilter}")
+                    .WithCustomArgument("-stats_period 0.1")
                     .WithAudioSamplingRate())
                 .CancellableThrough(cancellationToken);
 

@@ -35,7 +35,9 @@
 
         <div id="normalizing" class="state" style="display: none;">
             <h2 id="normalizing-file-name"></h2>
-            <div class="spinner" aria-hidden="true"></div>
+            <div class="progress-container" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Normalization progress">
+                <div class="progress-bar indeterminate" id="normalizing-progress"></div>
+            </div>
             <p id="normalizing-status" aria-live="polite">Initializing...</p>
             <p class="hint">This may take a minute...</p>
         </div>

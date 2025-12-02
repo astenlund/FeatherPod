@@ -102,11 +102,10 @@ public class NormalizationProgressHelperTests
 
     [Theory]
     [InlineData(NormalizationStage.Queued)]
-    [InlineData(NormalizationStage.Downloading)]
+    [InlineData(NormalizationStage.Preparing)]
     [InlineData(NormalizationStage.Analyzing)]
     [InlineData(NormalizationStage.Normalizing)]
-    [InlineData(NormalizationStage.Uploading)]
-    [InlineData(NormalizationStage.Finalizing)]
+    [InlineData(NormalizationStage.Finishing)]
     [InlineData(NormalizationStage.Completed)]
     [InlineData(NormalizationStage.Failed)]
     public void GetStageDescription_ShouldReturnPaddedStageName(NormalizationStage stage)
@@ -121,7 +120,7 @@ public class NormalizationProgressHelperTests
     [Fact]
     public void GetStageDescription_ShouldReturnConsistentWidth()
     {
-        var stages = new[] { NormalizationStage.Unknown, NormalizationStage.Queued, NormalizationStage.Downloading, NormalizationStage.Analyzing, NormalizationStage.Normalizing, NormalizationStage.Uploading, NormalizationStage.Finalizing, NormalizationStage.Completed, NormalizationStage.Failed };
+        var stages = new[] { NormalizationStage.Unknown, NormalizationStage.Queued, NormalizationStage.Preparing, NormalizationStage.Analyzing, NormalizationStage.Normalizing, NormalizationStage.Finishing, NormalizationStage.Completed, NormalizationStage.Failed };
         var updates = stages.Select(s => new ProgressUpdate { Stage = s, ProgressPercent = 0, Message = "" });
         var lengths = updates.Select(u => NormalizationProgressHelper.GetStageDescription(u).Length).Distinct().ToList();
 

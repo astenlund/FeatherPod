@@ -7,11 +7,10 @@ public enum NormalizationStage
 {
     Unknown = 0,
     Queued,
-    Downloading,
+    Preparing,
     Analyzing,
     Normalizing,
-    Uploading,
-    Finalizing,
+    Finishing,
     Completed,
     Failed
 }

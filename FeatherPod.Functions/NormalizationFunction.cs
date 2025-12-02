@@ -95,9 +95,9 @@ public class NormalizationFunction
 
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
-                Stage = NormalizationStage.Downloading,
+                Stage = NormalizationStage.Preparing,
                 ProgressPercent = 0,
-                Message = "Downloading audio file"
+                Message = "Preparing audio file"
             });
 
             tempInputFile = Path.Combine(Path.GetTempPath(), $"{job.JobId}_{job.FileName}");
@@ -114,12 +114,13 @@ public class NormalizationFunction
                 downloadLastUpdate = now;
 
                 var percent = downloadSize > 0 ? (int)(bytesDownloaded * 100 / downloadSize) : 0;
+                _logger.LogDebug("Download progress callback: {Percent}%", percent);
                 _ = UpdateProgressAsync(tableClient, job.JobId, new()
                 {
-                    Stage = NormalizationStage.Downloading,
+                    Stage = NormalizationStage.Preparing,
                     ProgressPercent = percent,
-                    Message = "Downloading audio file"
-                });
+                    Message = "Preparing audio file"
+                }).ContinueWith(t => _logger.LogError(t.Exception, "Download progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
             });
 
             await pendingBlob.DownloadToAsync(tempInputFile, new()
@@ -129,9 +130,9 @@ public class NormalizationFunction
 
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
-                Stage = NormalizationStage.Downloading,
+                Stage = NormalizationStage.Preparing,
                 ProgressPercent = 100,
-                Message = "Download complete"
+                Message = "Preparation complete"
             });
 
             // Normalize audio with progress callback
@@ -152,7 +153,9 @@ public class NormalizationFunction
                     }
                     lastProgressUpdate = now;
 
-                    _ = UpdateProgressAsync(tableClient, job.JobId, progress);
+                    _logger.LogDebug("Progress callback: {Stage} {Percent}%", progress.Stage, progress.ProgressPercent);
+                    _ = UpdateProgressAsync(tableClient, job.JobId, progress)
+                        .ContinueWith(t => _logger.LogError(t.Exception, "Normalization progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
                 },
                 cancellationToken);
 
@@ -171,9 +174,9 @@ public class NormalizationFunction
             // Upload normalized file to final location
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
-                Stage = NormalizationStage.Uploading,
+                Stage = NormalizationStage.Finishing,
                 ProgressPercent = 0,
-                Message = "Uploading normalized file"
+                Message = "Finishing up"
             });
 
             _logger.LogDebug("Uploading normalized file to {FinalPath}", finalBlobPath);
@@ -189,12 +192,13 @@ public class NormalizationFunction
                 uploadLastUpdate = now;
 
                 var percent = normalizedFileSize > 0 ? (int)(bytesUploaded * 100 / normalizedFileSize) : 0;
+                _logger.LogDebug("Upload progress callback: {Percent}%", percent);
                 _ = UpdateProgressAsync(tableClient, job.JobId, new()
                 {
-                    Stage = NormalizationStage.Uploading,
+                    Stage = NormalizationStage.Finishing,
                     ProgressPercent = percent,
-                    Message = "Uploading normalized file"
-                });
+                    Message = "Finishing up"
+                }).ContinueWith(t => _logger.LogError(t.Exception, "Upload progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
             });
 
             await using (var stream = File.OpenRead(normalizedFile))
@@ -207,9 +211,9 @@ public class NormalizationFunction
 
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
-                Stage = NormalizationStage.Uploading,
+                Stage = NormalizationStage.Finishing,
                 ProgressPercent = 100,
-                Message = "Upload complete"
+                Message = "Almost done"
             });
 
             // Create episode entry
@@ -229,9 +233,9 @@ public class NormalizationFunction
             // Update episodes.json with lease for concurrency safety
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
-                Stage = NormalizationStage.Finalizing,
+                Stage = NormalizationStage.Finishing,
                 ProgressPercent = 0,
-                Message = "Updating feed metadata"
+                Message = "Updating episode list"
             });
 
             await AddEpisodeToFeedAsync(containerClient, episodesJsonPath, episode, _logger, cancellationToken);
@@ -390,6 +394,7 @@ public class NormalizationFunction
             }
 
             await tableClient.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace);
+            _logger.LogDebug("Progress update saved: {Stage} {Percent}%", progress.Stage, progress.ProgressPercent);
         }
         catch (RequestFailedException ex) when (ex.Status == 412)
         {
@@ -398,7 +403,7 @@ public class NormalizationFunction
         }
         catch (RequestFailedException ex) when (ex.Status == 429)
         {
-            // Throttled - ignore silently, next update will succeed
+            _logger.LogWarning("Progress update throttled (429) for job {JobId}", jobId);
         }
         catch (Exception ex)
         {
