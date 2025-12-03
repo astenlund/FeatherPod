@@ -3,6 +3,7 @@ using Azure;
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Specialized;
+using Azure.Storage.Queues;
 using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
 using FFMpegCore;
@@ -15,11 +16,14 @@ namespace FeatherPod.Functions;
 
 /// <summary>
 /// Azure Function that processes audio normalization jobs from the queue.
+/// Jobs are split into two phases (Analyze and Normalize) to stay within
+/// Azure Functions Consumption plan timeout limits.
 /// </summary>
 public class NormalizationFunction
 {
     private readonly BlobServiceClient _blobClient;
     private readonly TableServiceClient _tableClient;
+    private readonly QueueServiceClient _queueClient;
     private readonly IAudioNormalizationService _normalizationService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly TelemetryClient _telemetryClient;
@@ -30,10 +34,12 @@ public class NormalizationFunction
     private const string QueueName = "normalization-jobs";
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan ProgressUpdateThrottle = TimeSpan.FromSeconds(1);
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
 
     public NormalizationFunction(
         BlobServiceClient blobClient,
         TableServiceClient tableClient,
+        QueueServiceClient queueClient,
         IAudioNormalizationService normalizationService,
         IHttpClientFactory httpClientFactory,
         TelemetryClient telemetryClient,
@@ -42,6 +48,7 @@ public class NormalizationFunction
     {
         _blobClient = blobClient;
         _tableClient = tableClient;
+        _queueClient = queueClient;
         _normalizationService = normalizationService;
         _httpClientFactory = httpClientFactory;
         _telemetryClient = telemetryClient;
@@ -57,7 +64,7 @@ public class NormalizationFunction
         NormalizationJob job;
         try
         {
-            job = JsonSerializer.Deserialize<NormalizationJob>(message!) ?? throw new InvalidOperationException("Failed to deserialize normalization job");
+            job = JsonSerializer.Deserialize<NormalizationJob>(message!, JsonOptions) ?? throw new InvalidOperationException("Failed to deserialize normalization job");
         }
         catch (Exception ex)
         {
@@ -65,18 +72,121 @@ public class NormalizationFunction
             throw;
         }
 
-        _logger.LogInformation("Processing normalization job {JobId} for {FeedId}/{FileName}", job.JobId, job.FeedId, job.FileName);
+        _logger.LogInformation("Processing normalization job {JobId} phase {Phase} for {FeedId}/{FileName}",
+            job.JobId, job.Phase, job.FeedId, job.FileName);
         _logger.LogDebug("Environment: HOME={Home}, TEMP={Temp}, FFmpegDir={FfmpegDir}",
             Environment.GetEnvironmentVariable("HOME"),
             Path.GetTempPath(),
             FFmpegBinaryManager.GetBinaryDirectory());
-        _telemetryClient.Flush(); // Ensure job start is logged before FFmpeg runs
+        _telemetryClient.Flush();
 
         var tableClient = _tableClient.GetTableClient(TableName);
         await tableClient.CreateIfNotExistsAsync(cancellationToken);
 
-        // Update status to Processing
         await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Processing, cancellationToken: cancellationToken);
+
+        if (job.Phase == NormalizationPhase.Analyze)
+        {
+            await ProcessAnalyzePhaseAsync(job, tableClient, cancellationToken);
+        }
+        else
+        {
+            await ProcessNormalizePhaseAsync(job, tableClient, cancellationToken);
+        }
+    }
+
+    /// <summary>
+    /// Phase 1: Download file and analyze loudness, then queue Phase 2.
+    /// </summary>
+    private async Task ProcessAnalyzePhaseAsync(NormalizationJob job, TableClient tableClient, CancellationToken cancellationToken)
+    {
+        var containerClient = _blobClient.GetBlobContainerClient(_settings.ContainerName);
+        var pendingBlobPath = $"{job.FeedId}/pending/{job.JobId}/{job.FileName}";
+        string? tempInputFile = null;
+
+        try
+        {
+            tempInputFile = await DownloadPendingBlobAsync(containerClient, pendingBlobPath, job, tableClient, cancellationToken);
+
+            await UpdateProgressAsync(tableClient, job.JobId, new()
+            {
+                Stage = NormalizationStage.Preparing,
+                ProgressPercent = 100,
+                Message = "Preparation complete"
+            });
+
+            // Analyze audio
+            var inputFileSize = new FileInfo(tempInputFile).Length;
+            _logger.LogInformation("Starting analysis for {FileName} (input size: {Size} bytes)", job.FileName, inputFileSize);
+            _telemetryClient.Flush();
+
+            var lastProgressUpdate = DateTime.MinValue;
+            var analysisResult = await _normalizationService.AnalyzeAudioAsync(
+                tempInputFile,
+                progressCallback: progress =>
+                {
+                    var now = DateTime.UtcNow;
+                    if (now - lastProgressUpdate < ProgressUpdateThrottle)
+                    {
+                        return;
+                    }
+                    lastProgressUpdate = now;
+
+                    _logger.LogDebug("Progress callback: {Stage} {Percent}%", progress.Stage, progress.ProgressPercent);
+                    _ = UpdateProgressAsync(tableClient, job.JobId, progress)
+                        .ContinueWith(t => _logger.LogError(t.Exception, "Analysis progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
+                },
+                cancellationToken);
+
+            if (analysisResult == null)
+            {
+                throw new InvalidOperationException("Audio analysis failed - no result produced");
+            }
+
+            _logger.LogInformation("Analysis complete for {FileName}: {InputLufs} LUFS, duration {Duration}",
+                job.FileName, analysisResult.Analysis.InputI, analysisResult.Duration);
+
+            // Queue the normalize phase
+            var normalizeJob = job with
+            {
+                Phase = NormalizationPhase.Normalize,
+                TotalDurationMs = (long)analysisResult.Duration.TotalMilliseconds,
+                Analysis = LoudnessAnalysisData.FromAnalysis(analysisResult.Analysis)
+            };
+
+            var queueClient = _queueClient.GetQueueClient(QueueName);
+            await queueClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
+            var messageJson = JsonSerializer.Serialize(normalizeJob, JsonOptions);
+            await queueClient.SendMessageAsync(messageJson, cancellationToken: cancellationToken);
+
+            _logger.LogInformation("Queued normalize phase for job {JobId}", job.JobId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Analyze phase failed for job {JobId}: {ErrorType} - {ErrorMessage}",
+                job.JobId, ex.GetType().Name, ex.Message);
+            _telemetryClient.Flush();
+
+            var sanitizedError = SanitizeErrorMessage(ex);
+            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Failed, error: sanitizedError, cancellationToken: cancellationToken);
+
+            throw;
+        }
+        finally
+        {
+            CleanupTempFile(tempInputFile);
+        }
+    }
+
+    /// <summary>
+    /// Phase 2: Download file, apply normalization with analysis data, upload, and create episode.
+    /// </summary>
+    private async Task ProcessNormalizePhaseAsync(NormalizationJob job, TableClient tableClient, CancellationToken cancellationToken)
+    {
+        if (job.Analysis == null || job.TotalDurationMs == null)
+        {
+            throw new InvalidOperationException("Normalize phase requires analysis data and duration");
+        }
 
         var containerClient = _blobClient.GetBlobContainerClient(_settings.ContainerName);
         var pendingBlobPath = $"{job.FeedId}/pending/{job.JobId}/{job.FileName}";
@@ -88,62 +198,20 @@ public class NormalizationFunction
 
         try
         {
-            // Download pending blob to temp file
-            var pendingBlob = containerClient.GetBlobClient(pendingBlobPath);
-            var blobProperties = await pendingBlob.GetPropertiesAsync(cancellationToken: cancellationToken);
-            var downloadSize = blobProperties.Value.ContentLength;
+            tempInputFile = await DownloadPendingBlobAsync(containerClient, pendingBlobPath, job, tableClient, cancellationToken);
 
-            await UpdateProgressAsync(tableClient, job.JobId, new()
-            {
-                Stage = NormalizationStage.Preparing,
-                ProgressPercent = 0,
-                Message = "Preparing audio file"
-            });
+            // Apply normalization with pre-computed analysis
+            var totalDuration = TimeSpan.FromMilliseconds(job.TotalDurationMs.Value);
+            var analysis = job.Analysis.ToLoudnessAnalysis();
 
-            tempInputFile = Path.Combine(Path.GetTempPath(), $"{job.JobId}_{job.FileName}");
+            _logger.LogInformation("Starting normalization pass 2 for {FileName}", job.FileName);
+            _telemetryClient.Flush();
 
-            _logger.LogDebug("Downloading pending blob to {TempFile}", tempInputFile);
-            var downloadLastUpdate = DateTime.MinValue;
-            var downloadProgress = new Progress<long>(bytesDownloaded =>
-            {
-                var now = DateTime.UtcNow;
-                if (now - downloadLastUpdate < ProgressUpdateThrottle)
-                {
-                    return;
-                }
-                downloadLastUpdate = now;
-
-                var percent = downloadSize > 0 ? (int)(bytesDownloaded * 100 / downloadSize) : 0;
-                _logger.LogDebug("Download progress callback: {Percent}%", percent);
-                _ = UpdateProgressAsync(tableClient, job.JobId, new()
-                {
-                    Stage = NormalizationStage.Preparing,
-                    ProgressPercent = percent,
-                    Message = "Preparing audio file"
-                }).ContinueWith(t => _logger.LogError(t.Exception, "Download progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
-            });
-
-            await pendingBlob.DownloadToAsync(tempInputFile, new()
-            {
-                ProgressHandler = downloadProgress
-            }, cancellationToken);
-
-            await UpdateProgressAsync(tableClient, job.JobId, new()
-            {
-                Stage = NormalizationStage.Preparing,
-                ProgressPercent = 100,
-                Message = "Preparation complete"
-            });
-
-            // Normalize audio with progress callback
-            var inputFileSize = new FileInfo(tempInputFile).Length;
-            _logger.LogInformation("Starting normalization for {FileName} (input size: {Size} bytes, path: {Path})",
-                job.FileName, inputFileSize, tempInputFile);
-            _telemetryClient.Flush(); // Ensure normalization start is logged before FFmpeg runs
             var lastProgressUpdate = DateTime.MinValue;
-
-            normalizedFile = await _normalizationService.NormalizeAudioAsync(
+            normalizedFile = await _normalizationService.ApplyNormalizationAsync(
                 tempInputFile,
+                analysis,
+                totalDuration,
                 progressCallback: progress =>
                 {
                     var now = DateTime.UtcNow;
@@ -167,11 +235,9 @@ public class NormalizationFunction
             // Get duration from normalized file
             var mediaInfo = await FFProbe.AnalyseAsync(normalizedFile, cancellationToken: cancellationToken);
             var duration = mediaInfo.Duration;
-
-            // Get the file size of the normalized file for the episode and upload progress
             var normalizedFileSize = new FileInfo(normalizedFile).Length;
 
-            // Upload normalized file to final location
+            // Upload normalized file
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
                 Stage = NormalizationStage.Finishing,
@@ -230,7 +296,6 @@ public class NormalizationFunction
                 PublishedDate = job.PublishedDate
             };
 
-            // Update episodes.json with lease for concurrency safety
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
                 Stage = NormalizationStage.Finishing,
@@ -251,42 +316,88 @@ public class NormalizationFunction
 
             await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Completed, episodeId: job.EpisodeId, cancellationToken: cancellationToken);
 
-            // Call App Service refresh endpoint
             await RefreshAppServiceCacheAsync(job.FeedId, cancellationToken);
 
             // Delete pending blob
             _logger.LogDebug("Deleting pending blob {PendingPath}", pendingBlobPath);
-            await pendingBlob.DeleteIfExistsAsync(cancellationToken: cancellationToken);
+            await containerClient.GetBlobClient(pendingBlobPath).DeleteIfExistsAsync(cancellationToken: cancellationToken);
 
             _logger.LogInformation("Normalization job {JobId} completed successfully. Episode {EpisodeId} created.", job.JobId, job.EpisodeId);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Normalization job {JobId} failed: {ErrorType} - {ErrorMessage}", job.JobId, ex.GetType().Name, ex.Message);
-            _telemetryClient.Flush(); // Ensure error is logged before re-throw
+            _logger.LogError(ex, "Normalize phase failed for job {JobId}: {ErrorType} - {ErrorMessage}",
+                job.JobId, ex.GetType().Name, ex.Message);
+            _telemetryClient.Flush();
 
-            // Sanitize error message to avoid exposing internal details (file paths, connection strings, etc.)
-            var sanitizedError = ex switch
-            {
-                InvalidOperationException => ex.Message,
-                FileNotFoundException => "Input file not found",
-                IOException => "File processing error",
-                _ => "An internal error occurred during audio normalization"
-            };
-
-            // Update job status to Failed (will be retried by queue visibility timeout)
-            // Note: Don't delete pending blob here - let the poison queue handler clean up after max retries
+            var sanitizedError = SanitizeErrorMessage(ex);
             await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Failed, error: sanitizedError, cancellationToken: cancellationToken);
 
-            throw; // Re-throw to trigger retry/poison queue
+            throw;
         }
         finally
         {
-            // Cleanup temp files
             CleanupTempFile(tempInputFile);
             CleanupTempFile(normalizedFile);
         }
     }
+
+    /// <summary>
+    /// Downloads the pending blob to a temp file with progress updates.
+    /// </summary>
+    private async Task<string> DownloadPendingBlobAsync(
+        BlobContainerClient containerClient,
+        string pendingBlobPath,
+        NormalizationJob job,
+        TableClient tableClient,
+        CancellationToken cancellationToken)
+    {
+        var pendingBlob = containerClient.GetBlobClient(pendingBlobPath);
+        var blobProperties = await pendingBlob.GetPropertiesAsync(cancellationToken: cancellationToken);
+        var downloadSize = blobProperties.Value.ContentLength;
+
+        await UpdateProgressAsync(tableClient, job.JobId, new()
+        {
+            Stage = NormalizationStage.Preparing,
+            ProgressPercent = 0,
+            Message = "Preparing audio file"
+        });
+
+        var tempInputFile = Path.Combine(Path.GetTempPath(), $"{job.JobId}_{job.FileName}");
+
+        _logger.LogDebug("Downloading pending blob to {TempFile}", tempInputFile);
+        var downloadLastUpdate = DateTime.MinValue;
+        var downloadProgress = new Progress<long>(bytesDownloaded =>
+        {
+            var now = DateTime.UtcNow;
+            if (now - downloadLastUpdate < ProgressUpdateThrottle)
+            {
+                return;
+            }
+            downloadLastUpdate = now;
+
+            var percent = downloadSize > 0 ? (int)(bytesDownloaded * 100 / downloadSize) : 0;
+            _logger.LogDebug("Download progress callback: {Percent}%", percent);
+            _ = UpdateProgressAsync(tableClient, job.JobId, new()
+            {
+                Stage = NormalizationStage.Preparing,
+                ProgressPercent = percent,
+                Message = "Preparing audio file"
+            }).ContinueWith(t => _logger.LogError(t.Exception, "Download progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
+        });
+
+        await pendingBlob.DownloadToAsync(tempInputFile, new() { ProgressHandler = downloadProgress }, cancellationToken);
+
+        return tempInputFile;
+    }
+
+    private static string SanitizeErrorMessage(Exception ex) => ex switch
+    {
+        InvalidOperationException => ex.Message,
+        FileNotFoundException => "Input file not found",
+        IOException => "File processing error",
+        _ => "An internal error occurred during audio normalization"
+    };
 
     /// <summary>
     /// Handle messages that have failed all retry attempts.

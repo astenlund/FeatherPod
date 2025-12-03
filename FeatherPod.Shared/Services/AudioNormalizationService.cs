@@ -99,7 +99,7 @@ public partial class AudioNormalizationService : IAudioNormalizationService
 
             // Pass 2: Apply normalization with measured values
             _logger.LogDebug("Pass 2: Applying normalization for {FileName}", fileName);
-            var success = await ApplyNormalizationAsync(inputPath, tempFile, analysis, totalDuration, progressCallback, cancellationToken);
+            var success = await ApplyNormalizationInternalAsync(inputPath, tempFile, analysis, totalDuration, progressCallback, cancellationToken);
 
             if (!success)
             {
@@ -130,7 +130,8 @@ public partial class AudioNormalizationService : IAudioNormalizationService
         }
     }
 
-    private async Task<TimeSpan> GetAudioDurationAsync(string inputPath)
+    /// <inheritdoc />
+    public async Task<TimeSpan> GetAudioDurationAsync(string inputPath)
     {
         try
         {
@@ -143,6 +144,97 @@ public partial class AudioNormalizationService : IAudioNormalizationService
             _logger.LogWarning(ex, "Failed to probe audio duration, progress will not be available");
 
             return TimeSpan.Zero;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<AudioAnalysisResult?> AnalyzeAudioAsync(
+        string inputPath,
+        Action<ProgressUpdate>? progressCallback = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await EnsureFFmpegAvailableAsync(cancellationToken))
+        {
+            _logger.LogError("FFmpeg is not available for audio analysis");
+
+            return null;
+        }
+
+        var fileName = Path.GetFileName(inputPath);
+        _logger.LogInformation("Starting audio analysis for {FileName}", fileName);
+
+        var totalDuration = await GetAudioDurationAsync(inputPath);
+        _logger.LogDebug("Audio duration: {Duration}", totalDuration);
+
+        _logger.LogDebug("Pass 1: Analyzing loudness for {FileName}", fileName);
+        var analysis = await AnalyzeLoudnessAsync(inputPath, totalDuration, progressCallback, cancellationToken);
+
+        if (analysis == null)
+        {
+            _logger.LogError("Loudness analysis failed for {FileName}", fileName);
+
+            return null;
+        }
+
+        _logger.LogInformation("Audio analysis complete for {FileName}: Input={InputLufs} LUFS", fileName, analysis.InputI);
+
+        return new AudioAnalysisResult(analysis, totalDuration);
+    }
+
+    /// <inheritdoc />
+    public async Task<string?> ApplyNormalizationAsync(
+        string inputPath,
+        LoudnessAnalysis analysis,
+        TimeSpan totalDuration,
+        Action<ProgressUpdate>? progressCallback = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (!await EnsureFFmpegAvailableAsync(cancellationToken))
+        {
+            _logger.LogError("FFmpeg is not available for audio normalization");
+
+            return null;
+        }
+
+        var fileName = Path.GetFileName(inputPath);
+        _logger.LogInformation("Starting normalization pass 2 for {FileName}", fileName);
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "FeatherPod");
+        Directory.CreateDirectory(tempDir);
+
+        var extension = Path.GetExtension(inputPath);
+        var tempFile = Path.Combine(tempDir, $"{Guid.NewGuid()}{extension}");
+
+        try
+        {
+            _logger.LogDebug("Pass 2: Applying normalization for {FileName}", fileName);
+            var success = await ApplyNormalizationInternalAsync(inputPath, tempFile, analysis, totalDuration, progressCallback, cancellationToken);
+
+            if (!success)
+            {
+                _logger.LogError("Normalization failed for {FileName}", fileName);
+                CleanupTempFile(tempFile);
+
+                return null;
+            }
+
+            _logger.LogInformation("Audio normalization complete for {FileName}: {InputLufs} LUFS -> -16 LUFS", fileName, analysis.InputI);
+
+            return tempFile;
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Audio normalization cancelled for {FileName}", fileName);
+            CleanupTempFile(tempFile);
+
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Audio normalization failed for {FileName}", fileName);
+            CleanupTempFile(tempFile);
+
+            return null;
         }
     }
 
@@ -303,9 +395,9 @@ public partial class AudioNormalizationService : IAudioNormalizationService
     }
 
     /// <summary>
-    /// Pass 2: Apply normalization using FFMpegCore with measured values.
+    /// Pass 2: Apply normalization using FFMpegCore with measured values (internal implementation).
     /// </summary>
-    private async Task<bool> ApplyNormalizationAsync(
+    private async Task<bool> ApplyNormalizationInternalAsync(
         string inputPath,
         string outputPath,
         LoudnessAnalysis analysis,
