@@ -274,12 +274,9 @@ public class NormalizationFunction
                 _ => "An internal error occurred during audio normalization"
             };
 
-            // Update job status to Failed
+            // Update job status to Failed (will be retried by queue visibility timeout)
+            // Note: Don't delete pending blob here - let the poison queue handler clean up after max retries
             await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Failed, error: sanitizedError, cancellationToken: cancellationToken);
-
-            // Delete pending blob on failure
-            var pendingBlob = containerClient.GetBlobClient(pendingBlobPath);
-            await pendingBlob.DeleteIfExistsAsync(cancellationToken: cancellationToken);
 
             throw; // Re-throw to trigger retry/poison queue
         }
