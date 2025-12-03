@@ -122,6 +122,32 @@ resource normalizationTable 'Microsoft.Storage/storageAccounts/tableServices/tab
   name: 'normalizationjobs'
 }
 
+// Log Analytics Workspace (required for App Insights)
+resource logAnalyticsWorkspace 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+  name: '${appServiceName}-logs'
+  location: location
+  tags: tags
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 30
+  }
+}
+
+// Application Insights
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: '${appServiceName}-insights'
+  location: location
+  tags: tags
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: logAnalyticsWorkspace.id
+    RetentionInDays: 30
+  }
+}
+
 // App Service Plan
 resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
   name: appServicePlanName
@@ -170,6 +196,7 @@ resource appServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
     Azure__ContainerName: containerName
     Podcast__BaseUrl: 'https://${appServiceName}.azurewebsites.net'
     Internal__Key: internalApiKey
+    APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.properties.ConnectionString
   }
 }
 
@@ -266,6 +293,7 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2023-01-01' = {
     ContainerName: containerName
     AppServiceUrl: 'https://${appServiceName}.azurewebsites.net'
     InternalKey: internalApiKey
+    APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.properties.ConnectionString
   }
 }
 
@@ -316,3 +344,5 @@ output functionAppId string = functionApp.id
 output functionAppName string = functionApp.name
 output functionAppDefaultHostname string = functionApp.properties.defaultHostName
 output functionAppPrincipalId string = functionApp.identity.principalId
+output appInsightsName string = appInsights.name
+output appInsightsConnectionString string = appInsights.properties.ConnectionString
