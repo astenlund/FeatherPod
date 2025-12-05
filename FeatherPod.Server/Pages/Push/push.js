@@ -38,22 +38,55 @@ function parseVelocityOverrides() {
 let apiKey = null;
 const states = ['no-key', 'ready', 'uploading', 'normalizing', 'success', 'error'];
 const JOB_STORAGE_KEY = 'featherpod_job_' + FEED_ID;
+const HISTORY_STORAGE_KEY = 'featherpod_history_' + FEED_ID;
+const HISTORY_FILTER_KEY = 'featherpod_history_filter_' + FEED_ID;
+const MAX_LOCAL_HISTORY = 50;
 
 /** @type {Array<Object>|null} */
 let recentUploadsData = null;
 /** @type {string|null} */
 let selectedUploadId = null;
 
+/** @type {Array<Object>|null} - History data for ready state */
+let historyData = null;
+/** @type {string|null} - Selected upload ID in history */
+let historySelectedId = null;
+/** @type {'local'|'browser'|'all'} - Current history filter */
+let historyFilter = 'local';
+/** @type {number} - Counter for tracking pending filter requests (prevents race conditions) */
+let pendingFilterRequest = 0;
+
 /** @param {string} stateName */
 function showState(stateName) {
     states.forEach(s => document.getElementById(s).style.display = s === stateName ? '' : 'none');
+
+    // Update container state class for CSS styling
+    const container = document.querySelector('.container');
+    if (container) {
+        states.forEach(s => container.classList.remove('state-' + s));
+        container.classList.add('state-' + stateName);
+    }
+
+    // Update page title based on state
+    const titleEl = document.getElementById('page-title');
+    if (titleEl) {
+        if (stateName === 'uploading' || stateName === 'normalizing') {
+            titleEl.textContent = 'Pushing to Feed';
+        } else if (stateName === 'success') {
+            titleEl.textContent = 'Pushed to Feed';
+        } else {
+            titleEl.textContent = 'Push to Feed';
+        }
+    }
 }
 
 /** @param {File} file */
 function isValidAudioFile(file) {
     const extension = '.' + file.name.split('.').pop().toLowerCase();
+
     return ALLOWED_EXTENSIONS.includes(extension);
 }
+
 
 async function init() {
     const fragment = window.location.hash.slice(1);
@@ -84,6 +117,7 @@ async function init() {
     }
 
     showState('ready');
+    await initHistorySection();
     document.getElementById('select-file').focus();
 }
 
@@ -91,23 +125,19 @@ document.getElementById('select-file').addEventListener('click', () => {
     document.getElementById('file-input').click();
 });
 
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && document.getElementById('ready').style.display !== 'none') {
-        document.getElementById('file-input').click();
-    }
-});
-
-document.getElementById('upload-another').addEventListener('click', () => {
+document.getElementById('upload-another').addEventListener('click', async () => {
     clearJobState();
     document.getElementById('file-input').value = '';
     showState('ready');
+    await initHistorySection();
     document.getElementById('select-file').focus();
 });
 
-document.getElementById('try-another').addEventListener('click', () => {
+document.getElementById('try-another').addEventListener('click', async () => {
     clearJobState();
     document.getElementById('file-input').value = '';
     showState('ready');
+    await initHistorySection();
     document.getElementById('select-file').focus();
 });
 
@@ -274,6 +304,11 @@ function formatDuration(duration) {
 async function showSuccess(episodeOrFileName) {
     showState('success');
 
+    // Save to localStorage if we have full episode data
+    if (typeof episodeOrFileName === 'object' && episodeOrFileName !== null) {
+        saveToLocalHistory(episodeOrFileName);
+    }
+
     // Determine the selected episode ID (if we have full episode data)
     const currentEpisodeId = (typeof episodeOrFileName === 'object' && episodeOrFileName !== null)
         ? episodeOrFileName.id
@@ -408,9 +443,19 @@ function updateInfoCard(episode) {
 
         document.getElementById('info-title').textContent = episode.title || episode.fileName;
         document.getElementById('info-filename').textContent = episode.fileName || '';
+
+        // Combine duration and size: "16m 40s (31 MB)"
+        const duration = formatDuration(episode.duration);
+        const size = episode.fileSize ? episode.fileSize.formatBytes() : '';
+        let durationText = duration;
+        if (duration && size) {
+            durationText = duration + ' (' + size + ')';
+        } else if (size) {
+            durationText = size;
+        }
+        document.getElementById('info-duration').textContent = durationText;
+
         document.getElementById('info-published').textContent = formatDate(episode.publishedDate);
-        document.getElementById('info-duration').textContent = formatDuration(episode.duration);
-        document.getElementById('info-size').textContent = episode.fileSize ? episode.fileSize.formatBytes() : '';
 
         // Uploaded time (shown on mobile only via CSS)
         const uploadedTime = formatRelativeTime(episode.uploadedAt);
@@ -452,6 +497,9 @@ function renderRecentUploads(uploads, initialSelectedId = null) {
         const item = document.createElement('div');
         item.className = 'upload-item';
         item.dataset.id = upload.id;
+        item.tabIndex = 0;
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', (upload.id === selectedUploadId).toString());
 
         if (upload.id === selectedUploadId) {
             item.classList.add('upload-item--selected');
@@ -461,13 +509,6 @@ function renderRecentUploads(uploads, initialSelectedId = null) {
         const titleText = upload.title || upload.fileName;
         title.className = 'upload-title';
         title.textContent = titleText;
-
-        // Scale font down for long titles
-        if (titleText.length > 60) {
-            title.classList.add('upload-title--small');
-        } else if (titleText.length > 40) {
-            title.classList.add('upload-title--medium');
-        }
 
         const time = document.createElement('span');
         time.className = 'upload-time';
@@ -500,11 +541,13 @@ function selectUpload(uploadId) {
 
     selectedUploadId = uploadId;
 
-    // Update visual selection
-    const list = document.querySelector('.upload-list');
+    // Update visual selection and aria-selected (target success state's list specifically)
+    const list = document.querySelector('#recent-uploads .upload-list');
     if (list) {
         list.querySelectorAll('.upload-item').forEach(item => {
-            item.classList.toggle('upload-item--selected', item.dataset.id === uploadId);
+            const isSelected = item.dataset.id === uploadId;
+            item.classList.toggle('upload-item--selected', isSelected);
+            item.setAttribute('aria-selected', isSelected.toString());
         });
     }
 
@@ -513,6 +556,447 @@ function selectUpload(uploadId) {
 
     // Scroll to top so the info card is visible
     window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ============================================================================
+// HISTORY SECTION (Ready State)
+// ============================================================================
+
+/**
+ * Load upload history from localStorage for this feed.
+ * Returns an empty array if no history exists or if parsing fails.
+ * @returns {Array<Episode>} Array of episodes uploaded from this browser, most recent first
+ */
+function loadLocalHistory() {
+    try {
+        const stored = localStorage.getItem(HISTORY_STORAGE_KEY);
+        if (!stored) {
+            return [];
+        }
+
+        const history = JSON.parse(stored);
+
+        return Array.isArray(history) ? history : [];
+    } catch (e) {
+        console.warn('Failed to load history from localStorage:', e);
+
+        return [];
+    }
+}
+
+/**
+ * Save an episode to localStorage history.
+ * Removes any existing entry with the same ID and prepends the new episode.
+ * Trims history to MAX_LOCAL_HISTORY items. Fails silently on localStorage errors.
+ * @param {Episode} episode - Episode to save (must have an id property)
+ */
+function saveToLocalHistory(episode) {
+    if (!episode || !episode.id) {
+        return;
+    }
+
+    try {
+        const history = loadLocalHistory();
+
+        // Remove existing entry with same ID (if re-uploading)
+        const filtered = history.filter(e => e.id !== episode.id);
+
+        // Prepend new episode and trim to max size
+        const updated = [episode, ...filtered].slice(0, MAX_LOCAL_HISTORY);
+
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(updated));
+    } catch (e) {
+        console.warn('Failed to save to localStorage:', e);
+    }
+}
+
+/**
+ * Load saved filter preference from localStorage.
+ * Returns 'local' as the default if no preference is saved or if parsing fails.
+ * @returns {'local'|'browser'|'all'} The saved filter preference
+ */
+function loadFilterPreference() {
+    try {
+        const saved = localStorage.getItem(HISTORY_FILTER_KEY);
+        if (saved && ['local', 'browser', 'all'].includes(saved)) {
+            return saved;
+        }
+    } catch (e) {
+        // Ignore
+    }
+
+    return 'local';
+}
+
+/**
+ * Save filter preference to localStorage. Fails silently on errors.
+ * @param {'local'|'browser'|'all'} filter - The filter mode to save
+ */
+function saveFilterPreference(filter) {
+    try {
+        localStorage.setItem(HISTORY_FILTER_KEY, filter);
+    } catch (e) {
+        // Ignore
+    }
+}
+
+/**
+ * Toggle the history section collapsed/expanded state.
+ * Updates ARIA attributes, toggles the expanded class on the section,
+ * and disables the select-file button when expanded (since it's hidden).
+ * When expanding, focuses the selected item in the list for keyboard navigation.
+ * When collapsing, returns focus to the toggle button.
+ * @param {boolean} [expand] - Force expand (true) or collapse (false). If omitted, toggles.
+ */
+function toggleHistorySection(expand) {
+    const section = document.getElementById('history-section');
+    const toggle = document.getElementById('history-toggle');
+    const selectFileBtn = document.getElementById('select-file');
+    if (!section || !toggle) {
+        return;
+    }
+
+    const isExpanded = toggle.getAttribute('aria-expanded') === 'true';
+    const newState = expand !== undefined ? expand : !isExpanded;
+
+    toggle.setAttribute('aria-expanded', newState.toString());
+    toggle.textContent = newState ? '← Back' : 'Recent Uploads';
+    section.classList.toggle('history-section--expanded', newState);
+
+    // Disable select-file button when expanded (it's hidden via CSS but could still be activated)
+    if (selectFileBtn) {
+        selectFileBtn.disabled = newState;
+    }
+
+    // Focus management
+    if (newState) {
+        // Expanding: focus the selected item (or first item) after transition
+        requestAnimationFrame(() => {
+            const selectedItem = document.querySelector('#history-list .upload-item--selected');
+            const firstItem = document.querySelector('#history-list .upload-item');
+            const itemToFocus = selectedItem || firstItem;
+            if (itemToFocus) {
+                itemToFocus.focus();
+            }
+        });
+    } else {
+        // Collapsing: reset scroll position and selection to first item
+        const list = document.getElementById('history-list');
+        if (list) {
+            list.scrollTop = 0;
+        }
+        if (historyData && historyData.length > 0) {
+            historySelectedId = historyData[0].id;
+            list?.querySelectorAll('.upload-item').forEach((item, index) => {
+                const isFirst = index === 0;
+                item.classList.toggle('upload-item--selected', isFirst);
+                item.setAttribute('aria-selected', isFirst.toString());
+            });
+            updateHistoryInfoCard(historyData[0]);
+        }
+
+        // Return focus to the upload button
+        if (selectFileBtn) {
+            selectFileBtn.focus();
+        }
+    }
+}
+
+/**
+ * Fetch uploads based on current filter mode.
+ * - 'local': Returns episodes from localStorage (no network request)
+ * - 'browser': Fetches recent browser uploads from API (source=Browser)
+ * - 'all': Fetches all recent uploads from API (no source filter)
+ * @returns {Promise<Array<Episode>>} Array of episodes matching the current filter
+ */
+async function fetchHistoryByFilter() {
+    if (historyFilter === 'local') {
+        return loadLocalHistory();
+    } else if (historyFilter === 'browser') {
+        return await fetchRecentUploads();
+    } else {
+        // 'all' - fetch without source filter
+        try {
+            const response = await fetch('/api/feeds/' + FEED_ID + '/episodes/recent-uploads?limit=20', {
+                headers: { 'X-API-Key': apiKey }
+            });
+
+            if (!response.ok) {
+                return [];
+            }
+
+            return await response.json();
+        } catch (err) {
+            console.warn('Error fetching all uploads:', err);
+
+            return [];
+        }
+    }
+}
+
+/**
+ * Get the appropriate empty state message for the current filter.
+ * @returns {string} A user-friendly message explaining why the list is empty
+ */
+function getHistoryEmptyMessage() {
+    switch (historyFilter) {
+        case 'local':
+            return 'No uploads from this browser yet';
+        case 'browser':
+            return 'No browser uploads yet';
+        case 'all':
+            return 'No uploads yet';
+        default:
+            return 'No uploads yet';
+    }
+}
+
+/**
+ * Update the history info card with episode data.
+ * Populates the info card fields if an episode is provided, otherwise hides the card.
+ * @param {Episode|null} episode - Episode to display, or null to hide the card
+ */
+function updateHistoryInfoCard(episode) {
+    const infoCard = document.getElementById('history-info');
+    if (!infoCard) {
+        return;
+    }
+
+    if (!episode) {
+        infoCard.style.display = 'none';
+
+        return;
+    }
+
+    infoCard.style.display = 'grid';
+    document.getElementById('history-info-title').textContent = episode.title || episode.fileName;
+    document.getElementById('history-info-filename').textContent = episode.fileName || '';
+    document.getElementById('history-info-published').textContent = formatDate(episode.publishedDate);
+
+    // Combine duration and size: "16m 40s (31 MB)"
+    const duration = formatDuration(episode.duration);
+    const size = episode.fileSize ? episode.fileSize.formatBytes() : '';
+    let durationText = duration;
+    if (duration && size) {
+        durationText = duration + ' (' + size + ')';
+    } else if (size) {
+        durationText = size;
+    }
+    document.getElementById('history-info-duration').textContent = durationText;
+
+    const uploadedTime = formatRelativeTime(episode.uploadedAt);
+    document.getElementById('history-info-uploaded').textContent = uploadedTime;
+    document.getElementById('history-info-uploaded-label').style.display = uploadedTime ? '' : 'none';
+    document.getElementById('history-info-uploaded').style.display = uploadedTime ? '' : 'none';
+}
+
+/**
+ * Update the scroll fade mask based on scroll position.
+ * Removes the fade when scrolled to bottom or when list isn't scrollable.
+ */
+function updateHistoryListScrollState() {
+    const list = document.getElementById('history-list');
+    if (!list) {
+        return;
+    }
+
+    const isScrollable = list.scrollHeight > list.clientHeight;
+    const isAtBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 2;
+
+    list.classList.toggle('not-scrollable', !isScrollable);
+    list.classList.toggle('scrolled-to-bottom', isScrollable && isAtBottom);
+}
+
+/**
+ * Render the history list in the ready state.
+ * Clears existing list, creates upload items, and selects the first item by default.
+ * Shows an empty state message if no uploads are provided.
+ * @param {Array<Episode>} uploads - Array of episodes to render
+ * @param {boolean} [focusFirst=false] - Whether to focus the first item after rendering
+ */
+function renderHistoryList(uploads, focusFirst = false) {
+    const list = document.getElementById('history-list');
+    const emptyState = document.getElementById('history-empty');
+    if (!list) {
+        return;
+    }
+
+    list.innerHTML = '';
+    list.classList.remove('scrolled-to-bottom', 'not-scrollable');
+
+    if (!uploads || uploads.length === 0) {
+        historyData = null;
+        historySelectedId = null;
+        updateHistoryInfoCard(null);
+        if (emptyState) {
+            emptyState.textContent = getHistoryEmptyMessage();
+            emptyState.style.display = 'block';
+        }
+
+        return;
+    }
+
+    if (emptyState) {
+        emptyState.style.display = 'none';
+    }
+
+    historyData = uploads;
+
+    // Select first item by default
+    historySelectedId = uploads[0].id;
+    updateHistoryInfoCard(uploads[0]);
+
+    uploads.forEach((upload, index) => {
+        const item = document.createElement('div');
+        item.className = 'upload-item';
+        item.dataset.id = upload.id;
+        item.tabIndex = 0;
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', (upload.id === historySelectedId).toString());
+
+        // Staggered animation delay for each item (via CSS custom property)
+        item.style.setProperty('--stagger-index', index);
+
+        if (upload.id === historySelectedId) {
+            item.classList.add('upload-item--selected');
+        }
+
+        const title = document.createElement('span');
+        const titleText = upload.title || upload.fileName;
+        title.className = 'upload-title';
+        title.textContent = titleText;
+
+        const time = document.createElement('span');
+        time.className = 'upload-time';
+        time.textContent = formatRelativeTime(upload.uploadedAt);
+
+        item.appendChild(title);
+        if (upload.uploadedAt) {
+            item.appendChild(time);
+        }
+
+        item.addEventListener('click', () => selectHistoryUpload(upload.id));
+
+        list.appendChild(item);
+    });
+
+    // Check scroll state after render (use requestAnimationFrame to ensure layout is complete)
+    requestAnimationFrame(() => {
+        updateHistoryListScrollState();
+
+        // Focus first item if requested (e.g., after switching tabs via keyboard)
+        if (focusFirst) {
+            const firstItem = list.querySelector('.upload-item');
+            if (firstItem) {
+                firstItem.focus();
+            }
+        }
+    });
+}
+
+/**
+ * Select an upload in the history list.
+ * Updates the visual selection state and populates the info card with the selected episode.
+ * @param {string} uploadId - ID of the episode to select
+ * @param {boolean} [moveFocus=false] - Whether to move focus to the selected item
+ */
+function selectHistoryUpload(uploadId, moveFocus = false) {
+    if (!historyData) {
+        return;
+    }
+
+    const upload = historyData.find(u => u.id === uploadId);
+    if (!upload) {
+        return;
+    }
+
+    historySelectedId = uploadId;
+
+    // Update visual selection and aria-selected
+    const list = document.getElementById('history-list');
+    if (list) {
+        list.querySelectorAll('.upload-item').forEach(item => {
+            const isSelected = item.dataset.id === uploadId;
+            item.classList.toggle('upload-item--selected', isSelected);
+            item.setAttribute('aria-selected', isSelected.toString());
+            if (isSelected && moveFocus) {
+                item.focus();
+            }
+        });
+    }
+
+    updateHistoryInfoCard(upload);
+}
+
+/**
+ * Update filter tab visual state.
+ * Sets the active class, aria-selected attribute on filter tabs, and updates
+ * the tabpanel's aria-labelledby to point to the active tab.
+ */
+function updateFilterTabs() {
+    const tabs = document.querySelectorAll('#history-section .filter-tab');
+    const tabpanel = document.getElementById('history-tabpanel');
+    tabs.forEach(tab => {
+        const isActive = tab.dataset.filter === historyFilter;
+        tab.classList.toggle('filter-tab--active', isActive);
+        tab.setAttribute('aria-selected', isActive.toString());
+        if (isActive && tabpanel) {
+            tabpanel.setAttribute('aria-labelledby', tab.id);
+        }
+    });
+}
+
+/**
+ * Handle filter tab change.
+ * Uses request tracking to prevent race conditions when rapidly switching filters.
+ * @param {'local'|'browser'|'all'} filter - The filter mode to switch to
+ * @param {boolean} [focusFirst=false] - Whether to focus the first list item after loading
+ */
+async function changeHistoryFilter(filter, focusFirst = false) {
+    if (filter === historyFilter) {
+        return;
+    }
+
+    historyFilter = filter;
+    saveFilterPreference(filter);
+    updateFilterTabs();
+
+    const requestId = ++pendingFilterRequest;
+    const uploads = await fetchHistoryByFilter();
+
+    // Ignore stale response if another filter change happened while fetching
+    if (requestId !== pendingFilterRequest) {
+        return;
+    }
+
+    renderHistoryList(uploads, focusFirst);
+}
+
+/**
+ * Initialize the history section in the ready state.
+ * Loads saved filter preference, fetches uploads, and renders the list.
+ * The toggle and section are always shown (even if empty) so users can switch filters.
+ */
+async function initHistorySection() {
+    const section = document.getElementById('history-section');
+    const toggle = document.getElementById('history-toggle');
+    if (!section) {
+        return;
+    }
+
+    // Load saved filter preference
+    historyFilter = loadFilterPreference();
+    updateFilterTabs();
+
+    // Fetch and render history
+    const uploads = await fetchHistoryByFilter();
+
+    // Show toggle and section
+    if (toggle) {
+        toggle.style.display = 'block';
+    }
+    section.style.display = 'block';
+    renderHistoryList(uploads || []);
 }
 
 /**
@@ -840,7 +1324,7 @@ const progressAnimator = {
         const estimatedActual = this.targetValue + this.velocity * timeSinceUpdate;
 
         // Snap to estimated position if tab was inactive (capped at target to avoid overshooting)
-        if (rawDt > 0.5) {
+        if (rawDt > 1) {
             this.currentValue = Math.max(this.currentValue, Math.min(estimatedActual, this.targetValue));
             this.displayVelocity = this.velocity;
             this.speedFactor = 1;
@@ -1001,8 +1485,13 @@ function monitorNormalizationJob(jobId, fileName, fileSize) {
     });
 
     // Named 'error' event from server (e.g., job not found)
-    // Distinct from onerror which handles connection failures
+    // Only handle if it has data (server-sent), otherwise let onerror handle it
     eventSource.addEventListener('error', (e) => {
+        if (!e.data) {
+            // This is a connection error, not a server-sent error event
+            // Let onerror handle it (falls back to polling)
+            return;
+        }
         clearTimeout(connectionTimeout);
         jobFinished = true;
         eventSource.close();
@@ -1124,5 +1613,108 @@ document.addEventListener('visibilitychange', () => {
         // Tab became visible while progress is being tracked - snap to actual value on next SSE update
         progressAnimator.awaitingFirstUpdate = true;
         progressAnimator.isRestoring = true;
+    }
+});
+
+// History section event listeners
+// Toggle button - toggles between expanded/collapsed
+document.getElementById('history-toggle')?.addEventListener('click', () => {
+    toggleHistorySection();
+});
+
+document.querySelectorAll('#history-section .filter-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+        const filter = tab.dataset.filter;
+        if (filter) {
+            changeHistoryFilter(filter);
+        }
+    });
+});
+
+// Scroll event for fade mask
+document.getElementById('history-list')?.addEventListener('scroll', updateHistoryListScrollState);
+
+// Global keyboard shortcuts for history panel
+document.addEventListener('keydown', (e) => {
+    const section = document.getElementById('history-section');
+    if (!section?.classList.contains('history-section--expanded')) {
+        return;
+    }
+
+    // Escape to close
+    if (e.key === 'Escape') {
+        e.preventDefault();
+        toggleHistorySection(false);
+
+        return;
+    }
+
+    // Left/Right arrows or Q/E to switch filter tabs
+    if (e.key === 'ArrowLeft' || e.key === 'q' || e.key === 'Q' ||
+        e.key === 'ArrowRight' || e.key === 'e' || e.key === 'E') {
+        const filters = ['local', 'browser', 'all'];
+        const currentIndex = filters.indexOf(historyFilter);
+        let newIndex = currentIndex;
+
+        if (e.key === 'ArrowLeft' || e.key === 'q' || e.key === 'Q') {
+            newIndex = Math.max(currentIndex - 1, 0);
+        } else {
+            newIndex = Math.min(currentIndex + 1, filters.length - 1);
+        }
+
+        if (newIndex !== currentIndex) {
+            e.preventDefault();
+            changeHistoryFilter(filters[newIndex], true);
+        }
+
+        return;
+    }
+
+    // Up/Down arrows to navigate history list
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (!historyData || historyData.length === 0) {
+            return;
+        }
+
+        const currentIndex = historyData.findIndex(u => u.id === historySelectedId);
+        let newIndex = currentIndex;
+
+        if (e.key === 'ArrowDown') {
+            newIndex = Math.min(currentIndex + 1, historyData.length - 1);
+        } else {
+            newIndex = Math.max(currentIndex - 1, 0);
+        }
+
+        if (newIndex !== currentIndex) {
+            e.preventDefault();
+            selectHistoryUpload(historyData[newIndex].id, true);
+        }
+    }
+});
+
+// Global keyboard shortcuts for success state
+document.addEventListener('keydown', (e) => {
+    const successState = document.getElementById('success');
+    if (!successState || successState.style.display === 'none') {
+        return;
+    }
+
+    if (!recentUploadsData || recentUploadsData.length === 0) {
+        return;
+    }
+
+    const currentIndex = recentUploadsData.findIndex(u => u.id === selectedUploadId);
+    let newIndex = currentIndex;
+
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        newIndex = Math.min(currentIndex + 1, recentUploadsData.length - 1);
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        newIndex = Math.max(currentIndex - 1, 0);
+    }
+
+    if (newIndex !== currentIndex) {
+        selectUpload(recentUploadsData[newIndex].id);
     }
 });

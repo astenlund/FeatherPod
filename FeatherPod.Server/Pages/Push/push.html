@@ -10,7 +10,8 @@
 </head>
 <body>
     <div class="container">
-        <h1>Push to {{FEED_TITLE}}</h1>
+        <h1 id="page-title">Push to Feed</h1>
+        <h2 id="feed-name" class="feed-name">{{FEED_TITLE}}</h2>
 
         <div id="no-key" class="state" style="display: none;">
             <p class="error">No API key provided</p>
@@ -19,69 +20,99 @@
 
         <div id="ready" class="state" style="display: none;">
             <div id="drop-zone">
-                <button id="select-file" class="btn-primary">Select Audio File</button>
-                <input type="file" id="file-input" accept=".mp3,.m4a,.wav,.ogg,.flac,.aac" hidden>
-                <p class="hint drop-hint">(or drop here)</p>
+                <div class="drop-zone-inner">
+                    <button id="select-file" class="btn-primary">Select Audio File</button>
+                    <input type="file" id="file-input" accept=".mp3,.m4a,.wav,.ogg,.flac,.aac" hidden>
+                    <p class="hint drop-hint">(or drop here)</p>
+                </div>
+            </div>
+
+            <button id="history-toggle" class="history-toggle" type="button" aria-expanded="false" aria-controls="history-content" style="display: none;">
+                Recent Uploads
+            </button>
+            <div id="history-section" class="history-section" style="display: none;">
+                <div class="history-panel upload-list-container">
+                    <h3 class="history-title">Recent Uploads</h3>
+                    <div class="history-filters" role="tablist" aria-label="Filter uploads">
+                        <button class="filter-tab filter-tab--active" role="tab" aria-selected="true" data-filter="local" id="filter-local" aria-controls="history-tabpanel">This browser</button>
+                        <button class="filter-tab" role="tab" aria-selected="false" data-filter="browser" id="filter-browser" aria-controls="history-tabpanel">Browser</button>
+                        <button class="filter-tab" role="tab" aria-selected="false" data-filter="all" id="filter-all" aria-controls="history-tabpanel">All</button>
+                    </div>
+                    <div id="history-tabpanel" role="tabpanel" aria-labelledby="filter-local">
+                    <dl id="history-info" class="episode-info" style="display: none;">
+                        <dt>Title</dt>
+                        <dd id="history-info-title"></dd>
+                        <dt>File</dt>
+                        <dd id="history-info-filename"></dd>
+                        <dt>Dur.</dt>
+                        <dd id="history-info-duration"></dd>
+                        <dt>Pub.</dt>
+                        <dd id="history-info-published"></dd>
+                        <dt id="history-info-uploaded-label" class="mobile-only">Added</dt>
+                        <dd id="history-info-uploaded" class="mobile-only"></dd>
+                    </dl>
+                    <p id="history-empty" class="history-empty" style="display: none;">No uploads yet</p>
+                    <div id="history-list" class="upload-list" role="listbox" aria-label="Recent uploads"></div>
+                    </div>
+                </div>
             </div>
         </div>
 
         <div id="uploading" class="state" style="display: none;">
-            <h2 id="file-name"></h2>
             <div class="progress-container" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Upload progress">
                 <div class="progress-bar" id="upload-progress"></div>
             </div>
             <div class="progress-container progress-container-ghost">
                 <div class="progress-bar-ghost" id="upload-progress-ghost"></div>
             </div>
-            <p id="upload-status" aria-live="polite">Uploading...</p>
-            <p class="hint">&nbsp;</p>
+            <div class="progress-row">
+                <p id="upload-status" aria-live="polite">Uploading...</p>
+                <p id="file-name" class="progress-filename"></p>
+            </div>
         </div>
 
         <div id="normalizing" class="state" style="display: none;">
-            <h2 id="normalizing-file-name"></h2>
             <div class="progress-container" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Normalization progress">
                 <div class="progress-bar indeterminate" id="normalizing-progress"></div>
             </div>
             <div class="progress-container progress-container-ghost">
                 <div class="progress-bar-ghost" id="normalizing-progress-ghost"></div>
             </div>
-            <p id="normalizing-status" aria-live="polite">Initializing...</p>
-            <p class="hint">This may take a minute...</p>
+            <div class="progress-row">
+                <p id="normalizing-status" aria-live="polite">Initializing...</p>
+                <p id="normalizing-file-name" class="progress-filename"></p>
+            </div>
         </div>
 
         <div id="success" class="state" style="display: none;">
-            <div class="success-header">
-                <h2><span class="success-icon">&#10003;</span> Upload Complete</h2>
-                <button id="upload-another" class="btn-secondary">Upload Another File</button>
-            </div>
+            <button id="upload-another" class="btn-secondary">Upload Another File</button>
 
             <dl id="episode-info" class="episode-info" style="display: none;">
                 <dt>Title</dt>
                 <dd id="info-title"></dd>
                 <dt>File</dt>
                 <dd id="info-filename"></dd>
+                <dt>Dur.</dt>
+                <dd id="info-duration"></dd>
                 <dt>Pub.</dt>
                 <dd id="info-published"></dd>
-                <dt>Size</dt>
-                <dd id="info-size"></dd>
-                <dt>Len.</dt>
-                <dd id="info-duration"></dd>
                 <dt id="info-uploaded-label" class="mobile-only">Added</dt>
                 <dd id="info-uploaded" class="mobile-only"></dd>
             </dl>
 
             <p id="ep-filename" class="success-filename"></p>
 
-            <div id="recent-uploads" class="recent-uploads" style="display: none;">
+            <div id="recent-uploads" class="recent-uploads upload-list-container" style="display: none;">
                 <h3>Recent Uploads</h3>
                 <div class="upload-list"></div>
             </div>
         </div>
 
         <div id="error" class="state" style="display: none;">
-            <h2><span class="error-icon">&#10007;</span> Upload Failed</h2>
             <button id="try-another" class="btn-secondary">Try Another File</button>
-            <p id="error-message" class="error" aria-live="assertive"></p>
+            <div class="error-card">
+                <p id="error-message" class="error-text" aria-live="assertive"></p>
+            </div>
         </div>
     </div>
 
