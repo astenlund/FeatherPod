@@ -122,6 +122,11 @@ internal class Program
                     .WithExample("feed", "unset-icon", "my-podcast")
                     .WithExample("feed", "unset-icon");
 
+                feed.AddCommand<FeedCommands.CheckIntegrityCommand>("check-integrity")
+                    .WithDescription("Verify episode metadata and audio blob integrity")
+                    .WithExample("feed", "check-integrity")
+                    .WithExample("feed", "check-integrity", "-f", "my-podcast");
+
                 feed.AddBranch("config", cfg =>
                 {
                     cfg.SetDescription("Feed configuration commands");

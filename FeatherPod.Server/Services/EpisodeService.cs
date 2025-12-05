@@ -233,6 +233,85 @@ public sealed partial class EpisodeService : IDisposable
         }
     }
 
+    public async Task<List<Episode>> GetRecentUploadsAsync(string feedId, UploadSource? source, int limit)
+    {
+        await _lock.WaitAsync();
+
+        try
+        {
+            if (!_episodesByFeed.TryGetValue(feedId, out var episodes))
+            {
+                return [];
+            }
+
+            var query = episodes.AsEnumerable();
+
+            if (source.HasValue)
+            {
+                query = query.Where(e => e.Source == source.Value);
+            }
+
+            return query
+                .OrderByDescending(e => e.UploadedAt)
+                .Take(Math.Clamp(limit, 1, 50))
+                .ToList();
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Check data integrity - verifies episode metadata can be loaded and audio blobs exist.
+    /// </summary>
+    /// <param name="feedIds">Optional list of feed IDs to check. If null or empty, checks all feeds.</param>
+    public async Task<DataIntegrityReport> CheckDataIntegrityAsync(IEnumerable<string>? feedIds = null)
+    {
+        List<(string FeedId, Episode Episode)> episodesToCheck;
+
+        await _lock.WaitAsync();
+
+        try
+        {
+            var feedIdSet = feedIds?.ToHashSet();
+            episodesToCheck = _episodesByFeed
+                .Where(kvp => feedIdSet == null || feedIdSet.Count == 0 || feedIdSet.Contains(kvp.Key))
+                .SelectMany(kvp => kvp.Value.Select(e => (kvp.Key, e)))
+                .ToList();
+        }
+        finally
+        {
+            _lock.Release();
+        }
+
+        var report = new DataIntegrityReport { TotalEpisodes = episodesToCheck.Count };
+
+        foreach (var (feedId, episode) in episodesToCheck)
+        {
+            var audioExists = await _blobStorage.AudioExistsAsync(feedId, episode.FileName);
+            if (audioExists)
+            {
+                report.ValidEpisodes++;
+            }
+            else
+            {
+                report.MissingBlobs.Add(new(feedId, episode.Id, episode.FileName, episode.Title));
+            }
+        }
+
+        return report;
+    }
+
+    public record DataIntegrityReport
+    {
+        public int TotalEpisodes { get; init; }
+        public int ValidEpisodes { get; set; }
+        public List<EpisodeReference> MissingBlobs { get; init; } = [];
+    }
+
+    public record EpisodeReference(string FeedId, string EpisodeId, string FileName, string Title);
+
     public async Task<Episode> AddEpisodeAsync(
         string feedId,
         string filePath,
@@ -241,6 +320,7 @@ public sealed partial class EpisodeService : IDisposable
         string? summary = null,
         DateTime? publishedDate = null,
         string? episodeId = null,
+        UploadSource source = UploadSource.CLI,
         CancellationToken cancellationToken = default)
     {
         var fileInfo = new FileInfo(filePath);
@@ -305,7 +385,9 @@ public sealed partial class EpisodeService : IDisposable
                 FileName = fileName,
                 FileSize = fileInfo.Length,
                 Duration = duration,
-                PublishedDate = finalPublishedDate
+                PublishedDate = finalPublishedDate,
+                Source = source,
+                UploadedAt = DateTime.UtcNow
             };
 
             episodes.Add(episode);

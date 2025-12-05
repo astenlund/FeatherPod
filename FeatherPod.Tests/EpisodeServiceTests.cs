@@ -384,6 +384,141 @@ public class EpisodeServiceTests : IDisposable
         Assert.Empty(feed2Episodes);
     }
 
+    [Fact]
+    public async Task AddEpisodeAsync_ShouldSetSourceAndUploadedAt()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var testFile = Path.Combine(_testDirectory, "test.mp3");
+        await File.WriteAllTextAsync(testFile, "audio data");
+
+        // Act
+        var beforeUpload = DateTime.UtcNow;
+        var episode = await service.AddEpisodeAsync(TestFeedId, testFile, "Test", source: UploadSource.Browser);
+        var afterUpload = DateTime.UtcNow;
+
+        // Assert
+        Assert.Equal(UploadSource.Browser, episode.Source);
+        Assert.True(episode.UploadedAt >= beforeUpload && episode.UploadedAt <= afterUpload);
+    }
+
+    [Fact]
+    public async Task AddEpisodeAsync_ShouldDefaultSourceToCLI()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var testFile = Path.Combine(_testDirectory, "test.mp3");
+        await File.WriteAllTextAsync(testFile, "audio data");
+
+        // Act
+        var episode = await service.AddEpisodeAsync(TestFeedId, testFile, "Test");
+
+        // Assert
+        Assert.Equal(UploadSource.CLI, episode.Source);
+        Assert.NotEqual(default, episode.UploadedAt);
+    }
+
+    [Fact]
+    public async Task GetRecentUploadsAsync_ShouldOrderByUploadedAtDescending()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var file1 = Path.Combine(_testDirectory, "test1.mp3");
+        var file2 = Path.Combine(_testDirectory, "test2.mp3");
+        await File.WriteAllTextAsync(file1, "audio1");
+        await File.WriteAllTextAsync(file2, "audio2");
+
+        await service.AddEpisodeAsync(TestFeedId, file1, "Episode 1");
+        await Task.Delay(50); // Ensure different timestamps
+        await service.AddEpisodeAsync(TestFeedId, file2, "Episode 2");
+
+        // Act
+        var recentUploads = await service.GetRecentUploadsAsync(TestFeedId, null, 10);
+
+        // Assert
+        Assert.Equal(2, recentUploads.Count);
+        Assert.Equal("Episode 2", recentUploads[0].Title); // Most recent first
+        Assert.Equal("Episode 1", recentUploads[1].Title);
+    }
+
+    [Fact]
+    public async Task GetRecentUploadsAsync_ShouldFilterBySource()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var file1 = Path.Combine(_testDirectory, "test1.mp3");
+        var file2 = Path.Combine(_testDirectory, "test2.mp3");
+        await File.WriteAllTextAsync(file1, "audio1");
+        await File.WriteAllTextAsync(file2, "audio2");
+
+        await service.AddEpisodeAsync(TestFeedId, file1, "CLI Episode", source: UploadSource.CLI);
+        await service.AddEpisodeAsync(TestFeedId, file2, "Browser Episode", source: UploadSource.Browser);
+
+        // Act
+        var browserUploads = await service.GetRecentUploadsAsync(TestFeedId, UploadSource.Browser, 10);
+        var cliUploads = await service.GetRecentUploadsAsync(TestFeedId, UploadSource.CLI, 10);
+
+        // Assert
+        Assert.Single(browserUploads);
+        Assert.Equal("Browser Episode", browserUploads[0].Title);
+
+        Assert.Single(cliUploads);
+        Assert.Equal("CLI Episode", cliUploads[0].Title);
+    }
+
+    [Fact]
+    public async Task GetRecentUploadsAsync_ShouldRespectLimit()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        for (var i = 1; i <= 5; i++)
+        {
+            var file = Path.Combine(_testDirectory, $"test{i}.mp3");
+            await File.WriteAllTextAsync(file, $"audio{i}");
+            await service.AddEpisodeAsync(TestFeedId, file, $"Episode {i}");
+        }
+
+        // Act
+        var recentUploads = await service.GetRecentUploadsAsync(TestFeedId, null, 3);
+
+        // Assert
+        Assert.Equal(3, recentUploads.Count);
+    }
+
+    [Fact]
+    public async Task GetRecentUploadsAsync_ShouldClampLimitToValidRange()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var file = Path.Combine(_testDirectory, "test.mp3");
+        await File.WriteAllTextAsync(file, "audio");
+        await service.AddEpisodeAsync(TestFeedId, file, "Episode");
+
+        // Act - request 100 episodes (exceeds max of 50)
+        var result = await service.GetRecentUploadsAsync(TestFeedId, null, 100);
+
+        // Assert - should work (clamped to 50) and return the one episode we have
+        Assert.Single(result);
+    }
+
     public void Dispose()
     {
         // Dispose all services first to release file handles

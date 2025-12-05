@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using FeatherPod.Settings.Episode;
@@ -13,10 +14,7 @@ namespace FeatherPod.Infrastructure;
 
 internal static class EpisodeHelpers
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true, Converters = { new JsonStringEnumConverter() } };
 
     internal static List<string> ExpandFilePatterns(string input)
     {
@@ -251,11 +249,11 @@ internal static class EpisodeHelpers
                         // Add episode ID (based on original file size, before any normalization)
                         content.Add(new StringContent(episodeId), "episodeId");
 
-                        // Upload (add normalize query param if server-side normalization requested)
-                        var uploadUrl = $"/api/feeds/{feed.Id}/episodes";
+                        // Upload (add source and normalize query params)
+                        var uploadUrl = $"/api/feeds/{feed.Id}/episodes?source=CLI";
                         if (settings.ServerNormalize)
                         {
-                            uploadUrl += "?normalize=true";
+                            uploadUrl += "&normalize=true";
                         }
                         var response = await httpClient.PostAsync(uploadUrl, content);
 

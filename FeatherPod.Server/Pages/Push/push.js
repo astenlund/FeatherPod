@@ -1,19 +1,52 @@
 const FEED_ID = '{{FEED_ID}}';
+const IS_DEV = '{{IS_DEV}}' === 'true';
+const SHOW_GHOST = IS_DEV && window.location.search.includes('ghost');
+const VELOCITY_OVERRIDES = IS_DEV ? parseVelocityOverrides() : {};
 const ALLOWED_EXTENSIONS = ['.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac'];
+
+/**
+ * @typedef {Object} Episode
+ * @property {string} id - Episode ID
+ * @property {string} title - Episode title
+ * @property {string} fileName - Audio file name
+ * @property {number} [fileSize] - File size in bytes
+ * @property {string} [duration] - Duration string (e.g. "1:23:45")
+ * @property {string} [publishedDate] - ISO date string
+ * @property {string} [uploadedAt] - ISO date string
+ */
+
+/**
+ * Parse velocity override URL params (dev only).
+ * @returns {{Uploading?: number, Analyzing?: number, Normalizing?: number}}
+ */
+function parseVelocityOverrides() {
+    const params = new URLSearchParams(window.location.search);
+    const overrides = {};
+    const mapping = { vup: 'Uploading', vanal: 'Analyzing', vnorm: 'Normalizing' };
+    for (const [param, stage] of Object.entries(mapping)) {
+        const value = params.get(param);
+        if (value != null) {
+            const parsed = parseFloat(value);
+            if (!isNaN(parsed)) {
+                overrides[stage] = parsed * 1024; // kB/s to bytes/s
+            }
+        }
+    }
+
+    return overrides;
+}
 let apiKey = null;
 const states = ['no-key', 'ready', 'uploading', 'normalizing', 'success', 'error'];
 const JOB_STORAGE_KEY = 'featherpod_job_' + FEED_ID;
 
-Number.prototype.sigDig = function(minSigDigs) {
-    if (this.valueOf() === 0) return '0';
-    const magnitude = Math.floor(Math.log10(Math.abs(this)));
-    const decimals = Math.max(0, minSigDigs - 1 - magnitude);
-    return this.toFixed(decimals);
-};
+/** @type {Array<Object>|null} */
+let recentUploadsData = null;
+/** @type {string|null} */
+let selectedUploadId = null;
 
 /** @param {string} stateName */
 function showState(stateName) {
-    states.forEach(s => document.getElementById(s).style.display = s === stateName ? 'block' : 'none');
+    states.forEach(s => document.getElementById(s).style.display = s === stateName ? '' : 'none');
 }
 
 /** @param {File} file */
@@ -22,12 +55,12 @@ function isValidAudioFile(file) {
     return ALLOWED_EXTENSIONS.includes(extension);
 }
 
-function init() {
+async function init() {
     const fragment = window.location.hash.slice(1);
     if (fragment) {
         apiKey = fragment;
         sessionStorage.setItem('featherpod_api_key_' + FEED_ID, apiKey);
-        history.replaceState(null, '', window.location.pathname);
+        history.replaceState(null, '', window.location.pathname + window.location.search);
     } else {
         const storedKey = sessionStorage.getItem('featherpod_api_key_' + FEED_ID);
         if (storedKey) {
@@ -38,8 +71,15 @@ function init() {
         }
     }
 
+    // Debug: show error state with ?error query param (dev only)
+    if (IS_DEV && window.location.search.includes('error')) {
+        showError('This is a test error message');
+
+        return;
+    }
+
     // Try to restore previous job state (e.g., after page refresh)
-    if (restoreJobState()) {
+    if (await restoreJobState()) {
         return;
     }
 
@@ -137,14 +177,15 @@ async function uploadFile(file) {
                 progressAnimator.reset();
                 reject(new Error('Network error'));
             };
-            xhr.open('POST', '/api/feeds/' + FEED_ID + '/episodes?normalize=true');
+            xhr.open('POST', '/api/feeds/' + FEED_ID + '/episodes?normalize=true&source=Browser');
             xhr.setRequestHeader('X-API-Key', apiKey);
             xhr.send(formData);
         });
 
         if (response.status === 201) {
-            saveJobState({ status: 'success', fileName: file.name });
-            showSuccess(file.name);
+            const episode = JSON.parse(response.body);
+            saveJobState({ status: 'success', fileName: file.name, episode: episode });
+            await showSuccess(episode);
         } else if (response.status === 202) {
             const jobResponse = JSON.parse(response.body);
             saveJobState({
@@ -159,19 +200,332 @@ async function uploadFile(file) {
         } else if (response.status === 403) {
             showError('API key does not have access to this feed');
         } else {
-            const error = JSON.parse(response.body);
-            showError(error.error || 'Upload failed');
+            const error = tryParseJson(response.body);
+            showError(error?.error || 'Upload failed');
         }
     } catch (err) {
         showError(err.message || 'Upload failed');
     }
 }
 
-/** @param {string} fileName */
-function showSuccess(fileName) {
+Number.prototype.sigDig = function(minSigDigs) {
+    if (this.valueOf() === 0) return '0';
+    const magnitude = Math.floor(Math.log10(Math.abs(this)));
+    const decimals = Math.max(0, minSigDigs - 1 - magnitude);
+
+    return this.toFixed(decimals);
+};
+
+Number.prototype.formatBytes = function formatBytes(sigDigs = 2, unitSuffix = '') {
+    const value = this.valueOf();
+    const absValue = Math.abs(value);
+    const sign = value < 0 ? '-' : '';
+
+    if (absValue === 0) {
+        return '0 B' + unitSuffix;
+    }
+
+    const k = 1024;
+    const units = ['B', 'kB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(absValue) / Math.log(k));
+
+    if (i >= units.length) {
+        return value + ' B' + unitSuffix;
+    }
+
+    const number = parseFloat((absValue / Math.pow(k, i)).toFixed(1)).sigDig(sigDigs);
+
+    return sign + number + ' ' + units[i] + unitSuffix;
+};
+
+/**
+ * Format a duration from TimeSpan string (HH:MM:SS or similar) to human-readable.
+ * @param {string} duration - Duration in TimeSpan format
+ * @returns {string}
+ */
+function formatDuration(duration) {
+    if (!duration) {
+        return '';
+    }
+
+    // Parse TimeSpan format: "HH:MM:SS" or "D.HH:MM:SS"
+    const parts = duration.split(':');
+    if (parts.length < 2) {
+        return '';
+    }
+
+    const hours = parseInt(parts[0], 10) || 0;
+    const minutes = parseInt(parts[1], 10) || 0;
+    const seconds = parseInt(parts[2]?.split('.')[0], 10) || 0;
+
+    if (hours > 0) {
+        return hours + 'h ' + minutes + 'm';
+    } else if (minutes > 0) {
+        return minutes + 'm ' + seconds + 's';
+    }
+
+    return seconds + 's';
+}
+
+/**
+ * Display the success state and fetch recent uploads.
+ * @param {Episode|string} episodeOrFileName - Episode object or just filename string
+ */
+async function showSuccess(episodeOrFileName) {
     showState('success');
-    document.getElementById('ep-filename').textContent = fileName;
+
+    // Determine the selected episode ID (if we have full episode data)
+    const currentEpisodeId = (typeof episodeOrFileName === 'object' && episodeOrFileName !== null)
+        ? episodeOrFileName.id
+        : null;
+
+    // Update the info card with the current episode
+    updateInfoCard(episodeOrFileName);
+
+    // Fetch and display recent uploads (errors shouldn't break success state)
+    try {
+        const recentUploads = await fetchRecentUploads();
+        renderRecentUploads(recentUploads, currentEpisodeId);
+    } catch (err) {
+        console.error('Failed to display recent uploads:', err);
+    }
+
     document.getElementById('upload-another').focus();
+}
+
+/**
+ * Fetch recent browser uploads for this feed.
+ * @returns {Promise<Array<{id: string, title: string, fileName: string, fileSize: number, duration: string, uploadedAt: string|null}>>}
+ */
+async function fetchRecentUploads() {
+    try {
+        const response = await fetch('/api/feeds/' + FEED_ID + '/episodes/recent-uploads?source=Browser&limit=5', {
+            headers: { 'X-API-Key': apiKey }
+        });
+
+        if (!response.ok) {
+            console.warn('Failed to fetch recent uploads:', response.status);
+
+            return [];
+        }
+
+        return await response.json();
+    } catch (err) {
+        console.warn('Error fetching recent uploads:', err);
+
+        return [];
+    }
+}
+
+/**
+ * Fetch the most recent browser upload (used after normalization completes).
+ * @returns {Promise<Object|null>}
+ */
+async function fetchMostRecentEpisode() {
+    try {
+        const uploads = await fetchRecentUploads();
+        if (uploads && uploads.length > 0) {
+            return uploads[0];
+        }
+
+        return null;
+    } catch (err) {
+        console.warn('Error fetching most recent episode:', err);
+
+        return null;
+    }
+}
+
+/**
+ * Format a date as "28 nov 2025" (day, short month lowercase, year).
+ * @param {string|null} dateString - ISO date string or null
+ * @returns {string}
+ */
+function formatDate(dateString) {
+    if (!dateString) {
+        return '';
+    }
+
+    const date = new Date(dateString);
+    const day = date.getDate();
+    const months = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+    const month = months[date.getMonth()];
+    const year = date.getFullYear();
+
+    return `${day} ${month} ${year}`;
+}
+
+/**
+ * Format a date as relative time (e.g., "2 minutes ago", "3 hours ago").
+ * @param {string|null} dateString - ISO date string or null
+ * @returns {string}
+ */
+function formatRelativeTime(dateString) {
+    if (!dateString) {
+        return '';
+    }
+
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now - date;
+
+    // Handle future dates gracefully
+    if (diffMs < 0) {
+        return 'just now';
+    }
+
+    const diffMins = Math.floor(diffMs / 60000);
+
+    if (diffMins < 1) {
+        return 'just now';
+    }
+
+    if (diffMins < 60) {
+        return diffMins === 1 ? '1 minute ago' : diffMins + ' minutes ago';
+    }
+
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) {
+        return diffHours === 1 ? '1 hour ago' : diffHours + ' hours ago';
+    }
+
+    const diffDays = Math.floor(diffHours / 24);
+
+    return diffDays === 1 ? '1 day ago' : diffDays + ' days ago';
+}
+
+/**
+ * Update the episode info card with the given episode data.
+ * @param {Episode|string} episode - Episode object or just filename string
+ */
+function updateInfoCard(episode) {
+    const infoCard = document.getElementById('episode-info');
+    const fallbackFilename = document.getElementById('ep-filename');
+
+    if (episode && typeof episode === 'object') {
+        fallbackFilename.style.display = 'none';
+        infoCard.style.display = 'grid';
+
+        document.getElementById('info-title').textContent = episode.title || episode.fileName;
+        document.getElementById('info-filename').textContent = episode.fileName || '';
+        document.getElementById('info-published').textContent = formatDate(episode.publishedDate);
+        document.getElementById('info-duration').textContent = formatDuration(episode.duration);
+        document.getElementById('info-size').textContent = episode.fileSize ? episode.fileSize.formatBytes() : '';
+
+        // Uploaded time (shown on mobile only via CSS)
+        const uploadedTime = formatRelativeTime(episode.uploadedAt);
+        document.getElementById('info-uploaded').textContent = uploadedTime;
+        document.getElementById('info-uploaded-label').style.display = uploadedTime ? '' : 'none';
+        document.getElementById('info-uploaded').style.display = uploadedTime ? '' : 'none';
+    } else {
+        infoCard.style.display = 'none';
+        fallbackFilename.style.display = 'block';
+        fallbackFilename.textContent = episode || '';
+    }
+}
+
+/**
+ * Render the recent uploads list in the success state.
+ * @param {Array<Object>} uploads - Array of episode objects
+ * @param {string|null} [initialSelectedId] - ID of the initially selected episode
+ */
+function renderRecentUploads(uploads, initialSelectedId = null) {
+    const container = document.getElementById('recent-uploads');
+    if (!container) {
+        return;
+    }
+
+    if (!uploads || !Array.isArray(uploads) || uploads.length === 0) {
+        container.style.display = 'none';
+        recentUploadsData = null;
+
+        return;
+    }
+
+    recentUploadsData = uploads;
+    selectedUploadId = initialSelectedId;
+    container.style.display = 'block';
+    const list = container.querySelector('.upload-list');
+    list.innerHTML = '';
+
+    uploads.forEach(upload => {
+        const item = document.createElement('div');
+        item.className = 'upload-item';
+        item.dataset.id = upload.id;
+
+        if (upload.id === selectedUploadId) {
+            item.classList.add('upload-item--selected');
+        }
+
+        const title = document.createElement('span');
+        const titleText = upload.title || upload.fileName;
+        title.className = 'upload-title';
+        title.textContent = titleText;
+
+        // Scale font down for long titles
+        if (titleText.length > 60) {
+            title.classList.add('upload-title--small');
+        } else if (titleText.length > 40) {
+            title.classList.add('upload-title--medium');
+        }
+
+        const time = document.createElement('span');
+        time.className = 'upload-time';
+        time.textContent = formatRelativeTime(upload.uploadedAt);
+
+        item.appendChild(title);
+        if (upload.uploadedAt) {
+            item.appendChild(time);
+        }
+
+        item.addEventListener('click', () => selectUpload(upload.id));
+
+        list.appendChild(item);
+    });
+}
+
+/**
+ * Select an upload from the recent uploads list and update the info card.
+ * @param {string} uploadId - The ID of the upload to select
+ */
+function selectUpload(uploadId) {
+    if (!recentUploadsData) {
+        return;
+    }
+
+    const upload = recentUploadsData.find(u => u.id === uploadId);
+    if (!upload) {
+        return;
+    }
+
+    selectedUploadId = uploadId;
+
+    // Update visual selection
+    const list = document.querySelector('.upload-list');
+    if (list) {
+        list.querySelectorAll('.upload-item').forEach(item => {
+            item.classList.toggle('upload-item--selected', item.dataset.id === uploadId);
+        });
+    }
+
+    // Update info card
+    updateInfoCard(upload);
+
+    // Scroll to top so the info card is visible
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/**
+ * Safely parse JSON, returning null if parsing fails.
+ * @param {string} text
+ * @returns {Object|null}
+ */
+function tryParseJson(text) {
+    try {
+        return JSON.parse(text);
+    } catch {
+        return null;
+    }
 }
 
 /** @param {string} message */
@@ -179,15 +533,6 @@ function showError(message) {
     showState('error');
     document.getElementById('error-message').textContent = message;
     document.getElementById('try-another').focus();
-}
-
-/** @param {number} bytes */
-function formatBytes(bytes) {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'kB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
 /**
@@ -209,6 +554,10 @@ const progressAnimator = {
         'Analyzing': 100 * 1024,  // 100 kB/s
         'Normalizing': 100 * 1024 // 100 kB/s
     },
+    // Max initial velocities for animation (prevents overshoot before real data arrives)
+    MAX_INITIAL_VELOCITIES: {
+        'Uploading': 10 * 1024 * 1024 // 10 MB/s
+    },
     LEARNED_INITIAL_VELOCITY_STORAGE_KEY: 'featherpod_learned_initial_velocity',
     currentFileSize: 0,
 
@@ -216,9 +565,19 @@ const progressAnimator = {
      * Get learned initial velocity for a stage from localStorage.
      * Stored as bytes/second, converted to %/second using current file size.
      * @param {string} stage
-     * @returns {number} Velocity in %/second
+     * @returns {{velocity: number, wasClamped: boolean}} Velocity in %/second and whether it was clamped
      */
     getLearnedInitialVelocity(stage) {
+        // Check URL overrides first (dev only)
+        if (VELOCITY_OVERRIDES[stage] != null) {
+            const bytesPerSec = VELOCITY_OVERRIDES[stage];
+            if (this.currentFileSize > 0) {
+                return { velocity: (bytesPerSec / this.currentFileSize) * 100, wasClamped: false };
+            }
+
+            return { velocity: 1, wasClamped: false };
+        }
+
         let bytesPerSec = this.DEFAULT_INITIAL_VELOCITIES[stage] ?? 100 * 1024;
 
         try {
@@ -233,11 +592,19 @@ const progressAnimator = {
             // Ignore localStorage errors
         }
 
-        if (this.currentFileSize > 0) {
-            return (bytesPerSec / this.currentFileSize) * 100;
+        // Cap initial velocity for animation (still learn the real value, just don't overshoot)
+        const maxBytesPerSec = this.MAX_INITIAL_VELOCITIES[stage];
+        let wasClamped = false;
+        if (maxBytesPerSec != null && bytesPerSec > maxBytesPerSec) {
+            bytesPerSec = maxBytesPerSec;
+            wasClamped = true;
         }
 
-        return 1; // Fallback if no file size set
+        if (this.currentFileSize > 0) {
+            return { velocity: (bytesPerSec / this.currentFileSize) * 100, wasClamped };
+        }
+
+        return { velocity: 1, wasClamped: false }; // Fallback if no file size set
     },
 
     /**
@@ -270,10 +637,10 @@ const progressAnimator = {
             values[stage] = updatedBytesPerSec;
             localStorage.setItem(this.LEARNED_INITIAL_VELOCITY_STORAGE_KEY, JSON.stringify(values));
 
-            const currentKbps = (currentBytesPerSec / 1024).sigDig(2);
-            const updatedKbps = (updatedBytesPerSec / 1024).sigDig(2);
-            const actualKbps = (actualBytesPerSec / 1024).sigDig(2);
-            console.log(`[progress] Updating learned initial velocity (kB/s) for ${stage}: ${currentKbps} -> ${updatedKbps} (actual: ${actualKbps})`);
+            const current = currentBytesPerSec.formatBytes(2, '/s');
+            const updated = updatedBytesPerSec.formatBytes(2, '/s');
+            const actual = actualBytesPerSec.formatBytes(2, '/s');
+            console.log(`[${stage}] Initial velocity: ${current} -> ${updated} (actual: ${actual})`);
 
             return true;
         } catch (e) {
@@ -293,6 +660,7 @@ const progressAnimator = {
     speedFactor: 1,
     animationId: null,
     progressBar: null,
+    ghostBar: null,
     currentStage: null,
     awaitingFirstUpdate: false,
     isRestoring: false,
@@ -319,11 +687,14 @@ const progressAnimator = {
             this.awaitingFirstUpdate = true;
             this.isRestoring = true;
         } else {
-            const learnedInitialVelocity = this.getLearnedInitialVelocity(stage);
+            const { velocity: learnedInitialVelocity, wasClamped } = this.getLearnedInitialVelocity(stage);
             this.targetValue = learnedInitialVelocity;
             this.velocity = learnedInitialVelocity;
             this.displayVelocity = learnedInitialVelocity;
             this.awaitingFirstUpdate = true;
+            const bytesPerSec = (learnedInitialVelocity / 100) * this.currentFileSize;
+            const clampedSuffix = wasClamped ? ' (clamped)' : '';
+            console.log(`[${stage}] Initial velocity: ${bytesPerSec.formatBytes(2, '/s')}${clampedSuffix}`);
             this.start(progressBar);
         }
     },
@@ -340,7 +711,7 @@ const progressAnimator = {
             const dt = (now - this.lastUpdateTime) / 1000;
 
             if (this.isRestoring) {
-                const learnedVelocity = this.getLearnedInitialVelocity(stage);
+                const { velocity: learnedVelocity } = this.getLearnedInitialVelocity(stage);
                 this.currentValue = value;
                 this.targetValue = value;
                 this.velocity = learnedVelocity;
@@ -390,10 +761,22 @@ const progressAnimator = {
 
             const instantAcceleration = (this.velocity - prevVelocity) / dt;
             this.acceleration = this.acceleration * 0.5 + instantAcceleration * 0.5;
+
+            if (SHOW_GHOST) {
+                const bytesPerSec = (instantVelocity / 100) * this.currentFileSize;
+                const deltaBytesPerSec = ((this.displayVelocity - instantVelocity) / 100) * this.currentFileSize;
+                const deltaSign = deltaBytesPerSec >= 0 ? '+' : '';
+                console.log(`[${stage}] Instant velocity: ${bytesPerSec.formatBytes(2, '/s')} (${deltaSign}${deltaBytesPerSec.formatBytes(2, '/s')})`);
+            }
         }
 
         this.targetValue = value;
         this.lastUpdateTime = now;
+
+        // Update ghost bar immediately (it shows unfiltered value)
+        if (this.ghostBar) {
+            this.ghostBar.style.width = value + '%';
+        }
     },
 
     /**
@@ -402,6 +785,14 @@ const progressAnimator = {
      */
     start(progressBar) {
         this.progressBar = progressBar;
+        // Set up ghost bar if enabled
+        if (SHOW_GHOST && progressBar) {
+            const ghostId = progressBar.id + '-ghost';
+            this.ghostBar = document.getElementById(ghostId);
+            if (this.ghostBar) {
+                this.ghostBar.parentElement.classList.add('visible');
+            }
+        }
         if (!this.animationId) {
             this.lastFrameTime = performance.now();
             this.animate();
@@ -427,6 +818,10 @@ const progressAnimator = {
         this.speedFactor = 1;
         this.currentStage = null;
         this.awaitingFirstUpdate = false;
+        if (this.ghostBar) {
+            this.ghostBar.parentElement.classList.remove('visible');
+            this.ghostBar = null;
+        }
         // isRestoring survives reset() - cleared in setTarget() after use
     },
 
@@ -468,14 +863,21 @@ const progressAnimator = {
         const error = compensatedTarget - this.currentValue;
 
         // Ease speed factor based on position error
-        const targetSpeedFactor = 1 + Math.max(-0.3, Math.min(0.3, error * 0.3));
-        this.speedFactor += (targetSpeedFactor - this.speedFactor) * Math.min(1, 3 * dt);
+        // Increase clamp limits and easing rate as target approaches 100% for faster convergence
+        const progressFactor = Math.max(0, (this.targetValue - 67) / 33); // 0 at ≤67%, 1 at 100%
+        const maxSpeedAdjust = 0.3 + progressFactor * 0.7; // 0.3 normally, up to 1.0 at 100%
+        const targetSpeedFactor = 1 + Math.max(-maxSpeedAdjust, Math.min(maxSpeedAdjust, error * 0.3));
+        const easingRate = 3 + progressFactor * 3; // 3 normally, up to 6 at 100%
+        this.speedFactor += (targetSpeedFactor - this.speedFactor) * Math.min(1, easingRate * dt);
 
         this.currentValue += this.displayVelocity * dt * this.speedFactor;
         this.currentValue = Math.max(0, Math.min(100, this.currentValue));
 
         if (this.progressBar) {
             this.progressBar.style.width = this.currentValue + '%';
+        }
+        if (this.ghostBar) {
+            this.ghostBar.style.width = this.targetValue + '%';
         }
 
         if (this.currentValue < 99.9) {
@@ -499,7 +901,8 @@ function updateNormalizingStatus(job) {
         const stagesWithProgress = ['Analyzing', 'Normalizing'];
         const isProgressStage = stagesWithProgress.includes(job.stage);
 
-        statusEl.textContent = job.stage + '...';
+        const ellipsis = job.stage.endsWith('ing') ? '...' : '';
+        statusEl.textContent = job.stage + ellipsis;
 
         if (isProgressStage) {
             progressBar.classList.remove('indeterminate');
@@ -519,6 +922,15 @@ function updateNormalizingStatus(job) {
             progressBar.classList.add('indeterminate');
             progressBar.style.width = '';
             progressContainer.setAttribute('aria-valuenow', '0');
+
+            // Show ghost bar at 100% during indeterminate stages to prevent layout jump
+            if (SHOW_GHOST) {
+                const ghostBar = document.getElementById('normalizing-progress-ghost');
+                if (ghostBar) {
+                    ghostBar.style.width = '100%';
+                    ghostBar.parentElement.classList.add('visible');
+                }
+            }
         }
     }
 }
@@ -565,17 +977,22 @@ function monitorNormalizationJob(jobId, fileName, fileSize) {
     };
 
     eventSource.addEventListener('progress', (e) => {
-        lastStatus = JSON.parse(e.data);
-        updateNormalizingStatus(lastStatus);
+        const parsed = tryParseJson(e.data);
+        if (parsed) {
+            lastStatus = parsed;
+            updateNormalizingStatus(lastStatus);
+        }
     });
 
-    eventSource.addEventListener('done', () => {
+    eventSource.addEventListener('done', async () => {
         clearTimeout(connectionTimeout);
         jobFinished = true;
         eventSource.close();
         if (lastStatus?.status === 'Completed') {
-            saveJobState({ status: 'success', fileName });
-            showSuccess(fileName);
+            // Fetch the episode details for the info card
+            const episode = await fetchMostRecentEpisode();
+            saveJobState({ status: 'success', fileName, episode: episode });
+            await showSuccess(episode || fileName);
         } else {
             const errorMsg = lastStatus?.error || 'Normalization failed';
             saveJobState({ status: 'error', fileName, error: errorMsg });
@@ -589,9 +1006,10 @@ function monitorNormalizationJob(jobId, fileName, fileSize) {
         clearTimeout(connectionTimeout);
         jobFinished = true;
         eventSource.close();
-        const data = JSON.parse(e.data);
-        saveJobState({ status: 'error', fileName, error: data.error });
-        showError(data.error);
+        const data = tryParseJson(e.data);
+        const errorMsg = data?.error || 'An error occurred';
+        saveJobState({ status: 'error', fileName, error: errorMsg });
+        showError(errorMsg);
     });
 
     // Connection error (network failure or unexpected disconnect) - fall back to polling
@@ -634,8 +1052,9 @@ async function pollNormalizationJobFallback(jobId, fileName, fileSize) {
             const job = await response.json();
 
             if (job.status === 'Completed') {
-                saveJobState({ status: 'success', fileName });
-                showSuccess(fileName);
+                const episode = await fetchMostRecentEpisode();
+                saveJobState({ status: 'success', fileName, episode: episode });
+                await showSuccess(episode || fileName);
 
                 return;
             } else if (job.status === 'Failed') {
@@ -667,16 +1086,22 @@ function clearJobState() {
     sessionStorage.removeItem(JOB_STORAGE_KEY);
 }
 
-function restoreJobState() {
+async function restoreJobState() {
     const saved = sessionStorage.getItem(JOB_STORAGE_KEY);
     if (!saved) {
         return false;
     }
 
-    const job = JSON.parse(saved);
+    const job = tryParseJson(saved);
+    if (!job) {
+        clearJobState();
+
+        return false;
+    }
 
     if (job.status === 'success') {
-        showSuccess(job.fileName);
+        await showSuccess(job.episode || job.fileName);
+
         return true;
     } else if (job.status === 'error') {
         showError(job.error);

@@ -51,6 +51,35 @@ public class EpisodesController : ControllerBase
         return Ok(episodesWithUrls);
     }
 
+    [HttpGet("recent-uploads")]
+    [ProducesResponseType<List<Episode>>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetRecentUploads(
+        string feedId,
+        [FromQuery] UploadSource? source = null,
+        [FromQuery] int limit = 10)
+    {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
+        var feed = await _episodeService.GetFeedAsync(feedId);
+        if (feed == null)
+        {
+            return NotFound(new { error = $"Feed '{feedId}' not found" });
+        }
+
+        var episodes = await _episodeService.GetRecentUploadsAsync(feedId, source, limit);
+
+        var episodesWithUrls = episodes
+            .Select(e => e with { Url = e.GetAudioUrl(_baseUrl) })
+            .ToList();
+
+        return Ok(episodesWithUrls);
+    }
+
     [HttpPost]
     [ProducesResponseType<Episode>(StatusCodes.Status201Created)]
     [ProducesResponseType<JobStatusResponse>(StatusCodes.Status202Accepted)]
@@ -67,7 +96,8 @@ public class EpisodesController : ControllerBase
         [FromForm] string? summary,
         [FromForm] DateTime? publishedDate,
         [FromForm] string? episodeId,
-        [FromQuery] bool normalize = false)
+        [FromQuery] bool normalize = false,
+        [FromQuery] UploadSource source = UploadSource.CLI)
     {
         if (!InputValidation.IsValidFeedId(feedId))
         {
@@ -129,7 +159,8 @@ public class EpisodesController : ControllerBase
                     Description = description,
                     Summary = summary,
                     PublishedDate = effectivePublishedDate,
-                    QueuedAt = DateTime.UtcNow
+                    QueuedAt = DateTime.UtcNow,
+                    Source = source
                 };
 
                 await _jobService.QueueNormalizationJobAsync(job, HttpContext.RequestAborted);
@@ -148,7 +179,7 @@ public class EpisodesController : ControllerBase
             }
 
             // Synchronous upload (no normalization)
-            var episode = await _episodeService.AddEpisodeAsync(feedId, tempPath, title, description, summary, publishedDate, episodeId, HttpContext.RequestAborted);
+            var episode = await _episodeService.AddEpisodeAsync(feedId, tempPath, title, description, summary, publishedDate, episodeId, source, HttpContext.RequestAborted);
             var episodeWithUrl = episode with { Url = episode.GetAudioUrl(_baseUrl) };
 
             return CreatedAtAction(nameof(ListEpisodes), new { feedId }, episodeWithUrl);

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using FeatherPod.Infrastructure;
 using FeatherPod.Settings.Episode;
 using FeatherPod.Shared.Models;
@@ -13,7 +14,7 @@ namespace FeatherPod.Commands.Episode;
 
 internal sealed class ListCommand : AsyncCommand<ListSettings>
 {
-    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true, Converters = { new JsonStringEnumConverter() } };
 
     /// <summary>
     /// Core list operation - fetches and displays episodes. Returns the episode list.

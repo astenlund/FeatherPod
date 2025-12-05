@@ -51,6 +51,8 @@ public class PatternMatchingTests
 
     private static List<Episode> CreateTestEpisodes()
     {
+        var now = DateTime.UtcNow;
+
         return
         [
             new Episode
@@ -61,7 +63,9 @@ public class PatternMatchingTests
                 FileName = "episode_001.mp3",
                 FileSize = 1000,
                 Duration = TimeSpan.FromMinutes(5),
-                PublishedDate = DateTime.UtcNow
+                PublishedDate = now,
+                Source = UploadSource.CLI,
+                UploadedAt = now
             },
             new Episode
             {
@@ -71,7 +75,9 @@ public class PatternMatchingTests
                 FileName = "episode_002.mp3",
                 FileSize = 2000,
                 Duration = TimeSpan.FromMinutes(10),
-                PublishedDate = DateTime.UtcNow
+                PublishedDate = now,
+                Source = UploadSource.CLI,
+                UploadedAt = now
             },
             new Episode
             {
@@ -81,7 +87,9 @@ public class PatternMatchingTests
                 FileName = "NotebookLM_Audio.mp3",
                 FileSize = 3000,
                 Duration = TimeSpan.FromMinutes(15),
-                PublishedDate = DateTime.UtcNow
+                PublishedDate = now,
+                Source = UploadSource.CLI,
+                UploadedAt = now
             },
             new Episode
             {
@@ -91,7 +99,9 @@ public class PatternMatchingTests
                 FileName = "special_episode_part1.mp3",
                 FileSize = 4000,
                 Duration = TimeSpan.FromMinutes(20),
-                PublishedDate = DateTime.UtcNow
+                PublishedDate = now,
+                Source = UploadSource.CLI,
+                UploadedAt = now
             }
         ];
     }

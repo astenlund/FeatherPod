@@ -163,6 +163,7 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 | `/api/feeds/{feedId}` | PUT | Admin/Owner | Update feed metadata |
 | `/api/feeds/{feedId}/rename?newId=...` | POST | Admin | Rename feed ID |
 | `/api/feeds/{feedId}` | DELETE | Admin | Delete feed and all episodes |
+| `/api/feeds/check-integrity` | GET | Admin/Owner | Verify episode metadata and audio blobs exist |
 
 ### Episode Management
 
@@ -170,6 +171,7 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 |----------|--------|------|-------------|
 | `/api/feeds/{feedId}/episodes` | GET | Admin/Owner | List episodes for feed |
 | `/api/feeds/{feedId}/episodes` | POST | Admin/Owner | Upload episode (201), or with `?normalize=true` for async normalization (202) |
+| `/api/feeds/{feedId}/episodes/recent-uploads` | GET | Admin/Owner | Recent uploads with optional `?source=Browser&limit=5` |
 | `/api/feeds/{feedId}/episodes/{id}` | DELETE | Admin/Owner | Delete episode |
 | `/api/feeds/{feedId}/episodes/{id}/move` | POST | Admin/Owner | Move episode between feeds |
 | `/api/feeds/{feedId}/episodes/{id}/copy` | POST | Admin/Owner | Copy episode between feeds |
@@ -269,6 +271,10 @@ FeatherPod user delete
 FeatherPod user rotate-key
 FeatherPod user grant
 FeatherPod user revoke
+
+# Data integrity
+FeatherPod feed check-integrity             # Verify all accessible feeds have valid audio blobs
+FeatherPod feed check-integrity -f my-podcast  # Check a specific feed
 
 # Preferences
 FeatherPod preferences show                      # Show all preferences

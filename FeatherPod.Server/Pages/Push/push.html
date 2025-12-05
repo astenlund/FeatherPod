@@ -30,7 +30,11 @@
             <div class="progress-container" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Upload progress">
                 <div class="progress-bar" id="upload-progress"></div>
             </div>
+            <div class="progress-container progress-container-ghost">
+                <div class="progress-bar-ghost" id="upload-progress-ghost"></div>
+            </div>
             <p id="upload-status" aria-live="polite">Uploading...</p>
+            <p class="hint">&nbsp;</p>
         </div>
 
         <div id="normalizing" class="state" style="display: none;">
@@ -38,20 +42,46 @@
             <div class="progress-container" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Normalization progress">
                 <div class="progress-bar indeterminate" id="normalizing-progress"></div>
             </div>
+            <div class="progress-container progress-container-ghost">
+                <div class="progress-bar-ghost" id="normalizing-progress-ghost"></div>
+            </div>
             <p id="normalizing-status" aria-live="polite">Initializing...</p>
             <p class="hint">This may take a minute...</p>
         </div>
 
         <div id="success" class="state" style="display: none;">
-            <h2><span class="success-icon">&#10003;</span> Upload Complete</h2>
+            <div class="success-header">
+                <h2><span class="success-icon">&#10003;</span> Upload Complete</h2>
+                <button id="upload-another" class="btn-secondary">Upload Another File</button>
+            </div>
+
+            <dl id="episode-info" class="episode-info" style="display: none;">
+                <dt>Title</dt>
+                <dd id="info-title"></dd>
+                <dt>File</dt>
+                <dd id="info-filename"></dd>
+                <dt>Pub.</dt>
+                <dd id="info-published"></dd>
+                <dt>Size</dt>
+                <dd id="info-size"></dd>
+                <dt>Len.</dt>
+                <dd id="info-duration"></dd>
+                <dt id="info-uploaded-label" class="mobile-only">Added</dt>
+                <dd id="info-uploaded" class="mobile-only"></dd>
+            </dl>
+
             <p id="ep-filename" class="success-filename"></p>
-            <button id="upload-another" class="btn-secondary">Upload Another File</button>
+
+            <div id="recent-uploads" class="recent-uploads" style="display: none;">
+                <h3>Recent Uploads</h3>
+                <div class="upload-list"></div>
+            </div>
         </div>
 
         <div id="error" class="state" style="display: none;">
             <h2><span class="error-icon">&#10007;</span> Upload Failed</h2>
-            <p id="error-message" class="error" aria-live="assertive"></p>
             <button id="try-another" class="btn-secondary">Try Another File</button>
+            <p id="error-message" class="error" aria-live="assertive"></p>
         </div>
     </div>
 

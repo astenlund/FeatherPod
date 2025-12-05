@@ -11,14 +11,7 @@ var builder = WebApplication.CreateBuilder(args);
 // Configure port from environment variable (for Azure App Service)
 // Use 0.0.0.0 in Azure (PORT is set), localhost for local dev (clickable URL)
 var port = Environment.GetEnvironmentVariable("PORT");
-if (port != null)
-{
-    builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
-}
-else
-{
-    builder.WebHost.UseUrls("http://localhost:8080");
-}
+builder.WebHost.UseUrls(port != null ? $"http://0.0.0.0:{port}" : "http://localhost:8080");
 
 // Configure Kestrel for large file uploads
 builder.WebHost.ConfigureKestrel(options =>
@@ -160,7 +153,7 @@ app.MapGet("/{feedId}/icon.png", async (string feedId, IBlobStorageService servi
 .Produces(404);
 
 // Browser-based upload page for quick mobile uploads
-app.MapGet("/{feedId}/push", async (string feedId, EpisodeService episodeService) =>
+app.MapGet("/{feedId}/push", async (string feedId, EpisodeService episodeService, IWebHostEnvironment env) =>
 {
     if (!InputValidation.IsValidFeedId(feedId))
     {
@@ -173,7 +166,7 @@ app.MapGet("/{feedId}/push", async (string feedId, EpisodeService episodeService
         return Results.NotFound($"Feed '{feedId}' not found");
     }
 
-    return Results.Content(GeneratePushPageHtml(feedId, feed.Title), "text/html");
+    return Results.Content(GeneratePushPageHtml(feedId, feed.Title, env), "text/html");
 })
 .WithName("GetPushPage")
 .Produces(200, contentType: "text/html")
@@ -290,20 +283,35 @@ app.Run();
 // PUSH PAGE HTML GENERATION
 // ============================================================================
 
-static string GeneratePushPageHtml(string feedId, string feedTitle)
+static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvironment env)
 {
     var escapedTitle = System.Net.WebUtility.HtmlEncode(feedTitle);
-    var assembly = typeof(Program).Assembly;
 
-    var html = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.html");
-    var css = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.css");
-    var js = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.js");
+    string html, css, js;
+
+    if (env.IsDevelopment())
+    {
+        // In development, read from disk for hot-reload
+        var pushDir = Path.Combine(env.ContentRootPath, "Pages", "Push");
+        html = File.ReadAllText(Path.Combine(pushDir, "push.html"));
+        css = File.ReadAllText(Path.Combine(pushDir, "push.css"));
+        js = File.ReadAllText(Path.Combine(pushDir, "push.js"));
+    }
+    else
+    {
+        // In production, use embedded resources
+        var assembly = typeof(Program).Assembly;
+        html = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.html");
+        css = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.css");
+        js = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.js");
+    }
 
     return html
         .Replace("/* {{CSS}} */", css)
         .Replace("/* {{JS}} */", js)
         .Replace("{{FEED_ID}}", feedId)
-        .Replace("{{FEED_TITLE}}", escapedTitle);
+        .Replace("{{FEED_TITLE}}", escapedTitle)
+        .Replace("{{IS_DEV}}", env.IsDevelopment().ToString().ToLowerInvariant());
 }
 
 static string ReadResource(System.Reflection.Assembly assembly, string name)

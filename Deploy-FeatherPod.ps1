@@ -45,6 +45,19 @@ function Main {
         [switch]$Infrastructure
     )
 
+    # Check for uncommitted changes - version number includes commit hash
+    $gitStatus = git status --porcelain
+    if ($gitStatus) {
+        Write-Host "`nError: Git workspace has uncommitted changes.`n" -ForegroundColor Red
+        Write-Host "The deployed version number includes the commit hash, which would not" -ForegroundColor Yellow
+        Write-Host "reflect the actual content being deployed. Please commit or stash your" -ForegroundColor Yellow
+        Write-Host "changes before deploying.`n" -ForegroundColor Yellow
+        Write-Host "Changed files:" -ForegroundColor Gray
+        $gitStatus | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+        Write-Host ""
+        throw "Deployment aborted: uncommitted changes detected."
+    }
+
     if ($Environment -eq "All") {
         $environments = @("Test", "Prod")
         foreach ($env in $environments) { Deploy-Environment -TargetEnvironment $env -Infrastructure:$Infrastructure }

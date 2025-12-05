@@ -33,7 +33,7 @@ public class NormalizationFunction
     private const string TableName = "normalizationjobs";
     private const string QueueName = "normalization-jobs";
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan ProgressUpdateThrottle = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan ProgressUpdateThrottle = TimeSpan.FromMilliseconds(500);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
 
     public NormalizationFunction(
@@ -121,6 +121,7 @@ public class NormalizationFunction
             _telemetryClient.Flush();
 
             var lastProgressUpdate = DateTime.MinValue;
+            Task? pendingProgressUpdate = null;
             var analysisResult = await _normalizationService.AnalyzeAudioAsync(
                 tempInputFile,
                 progressCallback: progress =>
@@ -133,7 +134,7 @@ public class NormalizationFunction
                     lastProgressUpdate = now;
 
                     _logger.LogDebug("Progress callback: {Stage} {Percent}%", progress.Stage, progress.ProgressPercent);
-                    _ = UpdateProgressAsync(tableClient, job.JobId, progress)
+                    pendingProgressUpdate = UpdateProgressAsync(tableClient, job.JobId, progress)
                         .ContinueWith(t => _logger.LogError(t.Exception, "Analysis progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
                 },
                 cancellationToken);
@@ -142,6 +143,19 @@ public class NormalizationFunction
             {
                 throw new InvalidOperationException("Audio analysis failed - no result produced");
             }
+
+            // Wait for any pending progress update, then ensure 100% is written
+            if (pendingProgressUpdate != null)
+            {
+                try { await pendingProgressUpdate; } catch { /* ignore */ }
+            }
+
+            await UpdateProgressAsync(tableClient, job.JobId, new()
+            {
+                Stage = NormalizationStage.Analyzing,
+                ProgressPercent = 100,
+                Message = "Analysis complete"
+            });
 
             _logger.LogInformation("Analysis complete for {FileName}: {InputLufs} LUFS, duration {Duration}",
                 job.FileName, analysisResult.Analysis.InputI, analysisResult.Duration);
@@ -208,6 +222,7 @@ public class NormalizationFunction
             _telemetryClient.Flush();
 
             var lastProgressUpdate = DateTime.MinValue;
+            Task? pendingProgressUpdate = null;
             normalizedFile = await _normalizationService.ApplyNormalizationAsync(
                 tempInputFile,
                 analysis,
@@ -222,7 +237,7 @@ public class NormalizationFunction
                     lastProgressUpdate = now;
 
                     _logger.LogDebug("Progress callback: {Stage} {Percent}%", progress.Stage, progress.ProgressPercent);
-                    _ = UpdateProgressAsync(tableClient, job.JobId, progress)
+                    pendingProgressUpdate = UpdateProgressAsync(tableClient, job.JobId, progress)
                         .ContinueWith(t => _logger.LogError(t.Exception, "Normalization progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
                 },
                 cancellationToken);
@@ -231,6 +246,19 @@ public class NormalizationFunction
             {
                 throw new InvalidOperationException("Normalization failed - no output file produced");
             }
+
+            // Wait for any pending progress update, then ensure 100% is written
+            if (pendingProgressUpdate != null)
+            {
+                try { await pendingProgressUpdate; } catch { /* ignore */ }
+            }
+
+            await UpdateProgressAsync(tableClient, job.JobId, new()
+            {
+                Stage = NormalizationStage.Normalizing,
+                ProgressPercent = 100,
+                Message = "Normalization complete"
+            });
 
             // Get duration from normalized file
             var mediaInfo = await FFProbe.AnalyseAsync(normalizedFile, cancellationToken: cancellationToken);
@@ -251,13 +279,13 @@ public class NormalizationFunction
             var uploadProgress = new Progress<long>(bytesUploaded =>
             {
                 var now = DateTime.UtcNow;
-                if (now - uploadLastUpdate < ProgressUpdateThrottle)
+                var percent = normalizedFileSize > 0 ? (int)(bytesUploaded * 100 / normalizedFileSize) : 0;
+                if (percent < 100 && now - uploadLastUpdate < ProgressUpdateThrottle)
                 {
                     return;
                 }
                 uploadLastUpdate = now;
 
-                var percent = normalizedFileSize > 0 ? (int)(bytesUploaded * 100 / normalizedFileSize) : 0;
                 _logger.LogDebug("Upload progress callback: {Percent}%", percent);
                 _ = UpdateProgressAsync(tableClient, job.JobId, new()
                 {
@@ -293,7 +321,9 @@ public class NormalizationFunction
                 FileName = job.FileName,
                 FileSize = normalizedFileSize,
                 Duration = duration,
-                PublishedDate = job.PublishedDate
+                PublishedDate = job.PublishedDate,
+                Source = job.Source,
+                UploadedAt = DateTime.UtcNow
             };
 
             await UpdateProgressAsync(tableClient, job.JobId, new()
@@ -370,13 +400,13 @@ public class NormalizationFunction
         var downloadProgress = new Progress<long>(bytesDownloaded =>
         {
             var now = DateTime.UtcNow;
-            if (now - downloadLastUpdate < ProgressUpdateThrottle)
+            var percent = downloadSize > 0 ? (int)(bytesDownloaded * 100 / downloadSize) : 0;
+            if (percent < 100 && now - downloadLastUpdate < ProgressUpdateThrottle)
             {
                 return;
             }
             downloadLastUpdate = now;
 
-            var percent = downloadSize > 0 ? (int)(bytesDownloaded * 100 / downloadSize) : 0;
             _logger.LogDebug("Download progress callback: {Percent}%", percent);
             _ = UpdateProgressAsync(tableClient, job.JobId, new()
             {
@@ -391,13 +421,16 @@ public class NormalizationFunction
         return tempInputFile;
     }
 
-    private static string SanitizeErrorMessage(Exception ex) => ex switch
+    private static string SanitizeErrorMessage(Exception ex)
     {
-        InvalidOperationException => ex.Message,
-        FileNotFoundException => "Input file not found",
-        IOException => "File processing error",
-        _ => "An internal error occurred during audio normalization"
-    };
+        return ex switch
+        {
+            InvalidOperationException => ex.Message,
+            FileNotFoundException => "Input file not found",
+            IOException => "File processing error",
+            _ => "An internal error occurred during audio normalization"
+        };
+    }
 
     /// <summary>
     /// Handle messages that have failed all retry attempts.

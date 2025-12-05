@@ -122,11 +122,79 @@ public class FeedsController : ControllerBase
         try
         {
             await _episodeService.DeleteFeedAsync(feedId);
+
             return Ok(new { message = $"Feed '{feedId}' deleted" });
         }
         catch (InvalidOperationException ex)
         {
             return NotFound(new { error = ex.Message });
         }
+    }
+
+    /// <summary>
+    /// Check data integrity - verifies episode metadata loads correctly and audio blobs exist.
+    /// Admins can check all feeds or filter by feedId. FeedOwners can only check their owned feeds.
+    /// </summary>
+    [HttpGet("check-integrity")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> CheckDataIntegrity([FromQuery] string? feedId = null)
+    {
+        if (HttpContext.Items["User"] is not User user)
+        {
+            return Unauthorized();
+        }
+
+        var feedsToCheck = GetAccessibleFeeds(user, feedId);
+        if (feedsToCheck == null)
+        {
+            return Forbid();
+        }
+
+        var report = await _episodeService.CheckDataIntegrityAsync(feedsToCheck);
+
+        return Ok(new
+        {
+            totalEpisodes = report.TotalEpisodes,
+            validEpisodes = report.ValidEpisodes,
+            missingBlobs = report.MissingBlobs.Count,
+            issues = report.MissingBlobs.Select(e => new
+            {
+                e.FeedId,
+                e.EpisodeId,
+                e.FileName,
+                e.Title
+            })
+        });
+    }
+
+    /// <summary>
+    /// Determines which feeds the user can access for integrity check.
+    /// Returns null if the user doesn't have access to the requested feed.
+    /// Returns empty list to check all accessible feeds.
+    /// </summary>
+    private static List<string>? GetAccessibleFeeds(User user, string? requestedFeedId)
+    {
+        if (user.Role == UserRole.Admin)
+        {
+            // Admin can check any feed, or all feeds if none specified
+            return requestedFeedId != null ? [requestedFeedId] : [];
+        }
+
+        // FeedOwner can only check owned feeds
+        if (requestedFeedId != null)
+        {
+            // Check if they own the requested feed
+            if (user.OwnedFeeds.Contains(requestedFeedId))
+            {
+                return [requestedFeedId];
+            }
+
+            return null; // No access
+        }
+
+        // No feed specified - return all owned feeds
+        return user.OwnedFeeds.ToList();
     }
 }

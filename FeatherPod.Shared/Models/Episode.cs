@@ -15,6 +15,8 @@ public record Episode
     public TimeSpan Duration { get; init; }
     public DateTime PublishedDate { get; init; }
     public string? Url { get; init; }
+    required public UploadSource Source { get; init; }
+    required public DateTime UploadedAt { get; init; }
 
     public static string GenerateId(string feedId, string fileName, long fileSize)
     {

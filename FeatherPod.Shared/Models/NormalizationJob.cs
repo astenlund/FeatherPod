@@ -27,34 +27,34 @@ public record NormalizationJob
     /// <summary>
     /// Unique job identifier (GUID).
     /// </summary>
-    public required string JobId { get; init; }
+    required public string JobId { get; init; }
 
     /// <summary>
     /// The feed this episode belongs to.
     /// </summary>
-    public required string FeedId { get; init; }
+    required public string FeedId { get; init; }
 
     /// <summary>
     /// Original filename of the uploaded audio file.
     /// </summary>
-    public required string FileName { get; init; }
+    required public string FileName { get; init; }
 
     /// <summary>
     /// Original file size in bytes (before normalization).
     /// Used for Episode ID generation.
     /// </summary>
-    public required long OriginalFileSize { get; init; }
+    required public long OriginalFileSize { get; init; }
 
     /// <summary>
     /// Pre-computed Episode ID: SHA256(feedId:fileName:originalFileSize).
     /// Computed in App Service before queueing to ensure consistency.
     /// </summary>
-    public required string EpisodeId { get; init; }
+    required public string EpisodeId { get; init; }
 
     /// <summary>
     /// Resolved episode title (with fallback logic already applied).
     /// </summary>
-    public required string Title { get; init; }
+    required public string Title { get; init; }
 
     /// <summary>
     /// Full description for RSS feed (optional).
@@ -69,12 +69,17 @@ public record NormalizationJob
     /// <summary>
     /// Published date extracted from original file metadata (before normalization).
     /// </summary>
-    public required DateTime PublishedDate { get; init; }
+    required public DateTime PublishedDate { get; init; }
 
     /// <summary>
     /// Timestamp when the job was queued.
     /// </summary>
-    public required DateTime QueuedAt { get; init; }
+    required public DateTime QueuedAt { get; init; }
+
+    /// <summary>
+    /// Upload source for tracking (CLI, Browser).
+    /// </summary>
+    public UploadSource Source { get; init; } = UploadSource.CLI;
 
     /// <summary>
     /// Current phase of the normalization process.
@@ -98,33 +103,39 @@ public record NormalizationJob
 /// </summary>
 public record LoudnessAnalysisData
 {
-    public required string InputI { get; init; }
-    public required string InputTp { get; init; }
-    public required string InputLra { get; init; }
-    public required string InputThresh { get; init; }
-    public required string TargetOffset { get; init; }
+    required public string InputI { get; init; }
+    required public string InputTp { get; init; }
+    required public string InputLra { get; init; }
+    required public string InputThresh { get; init; }
+    required public string TargetOffset { get; init; }
 
     /// <summary>
     /// Create from FFmpeg LoudnessAnalysis result.
     /// </summary>
-    public static LoudnessAnalysisData FromAnalysis(LoudnessAnalysis analysis) => new()
+    public static LoudnessAnalysisData FromAnalysis(LoudnessAnalysis analysis)
     {
-        InputI = analysis.InputI,
-        InputTp = analysis.InputTp,
-        InputLra = analysis.InputLra,
-        InputThresh = analysis.InputThresh,
-        TargetOffset = analysis.TargetOffset
-    };
+        return new()
+        {
+            InputI = analysis.InputI,
+            InputTp = analysis.InputTp,
+            InputLra = analysis.InputLra,
+            InputThresh = analysis.InputThresh,
+            TargetOffset = analysis.TargetOffset
+        };
+    }
 
     /// <summary>
     /// Convert to LoudnessAnalysis for use with normalization service.
     /// </summary>
-    public LoudnessAnalysis ToLoudnessAnalysis() => new()
+    public LoudnessAnalysis ToLoudnessAnalysis()
     {
-        InputI = InputI,
-        InputTp = InputTp,
-        InputLra = InputLra,
-        InputThresh = InputThresh,
-        TargetOffset = TargetOffset
-    };
+        return new()
+        {
+            InputI = InputI,
+            InputTp = InputTp,
+            InputLra = InputLra,
+            InputThresh = InputThresh,
+            TargetOffset = TargetOffset
+        };
+    }
 }

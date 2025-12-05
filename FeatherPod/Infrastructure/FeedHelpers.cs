@@ -1,5 +1,6 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using FeatherPod.Shared.Models;
 using Spectre.Console;
 
@@ -9,10 +10,7 @@ namespace FeatherPod.Infrastructure;
 
 internal static class FeedHelpers
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true, Converters = { new JsonStringEnumConverter() } };
 
     /// <summary>
     /// Resolves environment, sets up HTTP client, and fetches a feed by ID (prompting if not provided).
