@@ -70,6 +70,35 @@
     /* Transitions */
     --transition-fast: 0.15s ease;
     --transition-normal: 0.2s ease;
+
+    /*
+     * History panel expand/collapse animation choreography:
+     *
+     * EXPAND SEQUENCE:
+     *   0ms:   CTA "falls into depth" (blur + translateZ) + border blurs out
+     *   150ms: Pause (drop zone hidden, panel swap begins)
+     *   250ms: Panel morphs from 500x280 to full width, content reveals with stagger
+     *   650ms: Settled (inline styles cleared, --settled class added)
+     *
+     * COLLAPSE SEQUENCE:
+     *   0ms:   Content fades, panel morphs back to 500x280, CTA rises back
+     *   400ms: Complete (classes cleared, drop zone visible)
+     *
+     * Mobile uses frosted overlay instead of morph animation.
+     * JS timing constants (H_CTA_FALL, H_PAUSE, H_MORPH) must match these values.
+     */
+    --h-cta-fall: 0.15s;
+    --h-pause: 0.1s;
+    --h-morph: 0.4s;
+    --h-stagger: 0.05s;
+
+    /* Cumulative delays (when each step starts) */
+    --h-after-cta: var(--h-cta-fall);                          /* 0.15s */
+    --h-after-pause: calc(var(--h-cta-fall) + var(--h-pause)); /* 0.25s */
+
+    /* Layout dimensions (set by JS, fallback for static analysis) */
+    --history-container-width: 100%;
+    --history-collapsed-margin: calc((100% - 500px) / 2);
 }
 
 /* ============================================================================
@@ -83,7 +112,7 @@
 }
 
 body {
-    font-family: var(--font-body);
+    font-family: var(--font-body), sans-serif;
     background: var(--bg-base);
     /* Multi-stop gradient with subtle hue shifts to reduce banding */
     background-image: radial-gradient(
@@ -117,7 +146,7 @@ body {
    ============================================================================ */
 
 h1 {
-    font-family: var(--font-display);
+    font-family: var(--font-display), sans-serif;
     font-size: 1.8rem;
     font-weight: 700;
     margin-bottom: 1rem;
@@ -126,11 +155,12 @@ h1 {
     text-align: left;
     /* Align with drop zone left edge: (container - drop zone) / 2 */
     margin-left: calc((100% - 500px) / 2);
-    transition: margin-left 0.25s ease;
+    /* Step 4: move with history panel */
+    transition: margin-left var(--h-morph) ease var(--h-after-pause);
 }
 
 h2 {
-    font-family: var(--font-display);
+    font-family: var(--font-display), sans-serif;
     font-size: 1.3rem;
     font-weight: 500;
     margin-bottom: 1.8rem;
@@ -143,7 +173,8 @@ h2 {
 .feed-name {
     margin-bottom: 2.4rem;
     margin-left: calc((100% - 500px) / 2);
-    transition: margin-left 0.25s ease;
+    /* Step 4: move with history panel */
+    transition: margin-left var(--h-morph) ease var(--h-after-pause);
 }
 
 /* ============================================================================
@@ -155,7 +186,7 @@ h2 {
     color: white;
     border: 2px solid var(--primary-400);
     padding: 1.2rem 1.5rem;
-    font-family: var(--font-display);
+    font-family: var(--font-display), sans-serif;
     font-size: clamp(0.9rem, 4.5vw, 1.3rem);
     font-weight: 500;
     border-radius: var(--radius-xl);
@@ -209,7 +240,7 @@ h2 {
     color: var(--text-tertiary);
     border: 2px solid var(--primary-500);
     padding: 0.8rem 1.6rem;
-    font-family: var(--font-display);
+    font-family: var(--font-display), sans-serif;
     font-size: 1rem;
     font-weight: 500;
     border-radius: var(--radius-lg);
@@ -271,13 +302,8 @@ h1 {
     animation: blur-fade-in 0.5s ease both;
 }
 
-#normalizing {
-    animation: none;
-}
-
-/* Constrain uploading/normalizing to drop zone width */
-#uploading,
-#normalizing {
+/* Constrain processing state to drop zone width */
+#processing {
     max-width: 500px;
     margin: 0 auto;
 }
@@ -388,8 +414,7 @@ h1 {
     max-width: 80%;
 }
 
-#upload-status,
-#normalizing-status {
+#processing-status {
     text-align: left;
     margin: 0;
     flex-shrink: 0;
@@ -495,8 +520,7 @@ h1 {
 #success .btn-secondary {
     grid-column: 2;
     grid-row: 2;
-    margin: 0;
-    margin-bottom: 1.5rem;
+    margin: 0 0 1.5rem;
 }
 
 #success .episode-info,
@@ -541,8 +565,7 @@ h1 {
 #error .btn-secondary {
     grid-column: 2;
     grid-row: 2;
-    margin: 0;
-    margin-bottom: 1.5rem;
+    margin: 0 0 1.5rem;
 }
 
 .error-card {
@@ -566,10 +589,11 @@ h1 {
    ============================================================================ */
 
 #drop-zone {
-    width: 100%;
-    max-width: 500px;
+    /* Use JS-calculated margins for animatable centering (margin: auto can't animate) */
+    width: 500px;
     height: 280px;
-    margin: 0 auto;
+    margin-left: var(--history-collapsed-margin, calc((100% - 500px) / 2));
+    margin-right: var(--history-collapsed-margin, calc((100% - 500px) / 2));
     /* Leave space for the history toggle below */
     margin-bottom: 2.5rem;
 }
@@ -580,26 +604,37 @@ h1 {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 1.5rem;
     padding-top: 1.5rem;
     border: none;
     border-radius: var(--radius-2xl);
     overflow: visible;
-    transition: background-color var(--transition-normal), box-shadow var(--transition-normal), opacity 0.15s ease;
+    transition: background-color var(--transition-normal), box-shadow var(--transition-normal);
     position: relative;
 }
 
-/* SVG dashed border with customizable dash size */
+/* Dashed border */
 .drop-zone-inner::before {
     content: '';
     position: absolute;
     inset: 0;
     pointer-events: none;
-    /* 12px dash, 12px gap, 4px stroke, rounded caps */
     border: 4px dashed var(--border-muted);
     border-radius: var(--radius-2xl);
     opacity: 0;
-    transition: opacity var(--transition-normal);
+    filter: blur(0);
+    /* Border blurs/fades together with CTA fall */
+    transition: opacity var(--h-cta-fall) ease-in, filter var(--h-cta-fall) ease-in, border-color 0.3s ease;
+}
+
+/* Blur and fade out the border when history expands */
+#ready:has(.history-section--expanded) .drop-zone-inner::before {
+    opacity: 0;
+    filter: blur(60px);
+}
+
+/* Collapsing: border animates back without delay */
+#ready:has(.history-section--collapsing) .drop-zone-inner::before {
+    transition: opacity var(--h-morph) ease, filter var(--h-morph) ease, border-color 0.3s ease;
 }
 
 #drop-zone.drag-over .drop-zone-inner {
@@ -628,34 +663,13 @@ h1 {
 }
 
 /* ============================================================================
-   EPISODE DETAILS / INFO CARDS
+   EPISODE INFO CARDS
    ============================================================================ */
-
-.episode-details {
-    background: var(--bg-elevated);
-    border-radius: var(--radius-lg);
-    padding: 1.25rem 1.5rem;
-    text-align: left;
-    margin: 0;
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 0.875rem 1.25rem;
-}
-
-.episode-details dt {
-    color: var(--text-muted);
-}
-
-.episode-details dd {
-    color: var(--text-primary);
-    margin: 0;
-    word-break: break-word;
-}
 
 .episode-info {
     background: var(--bg-elevated);
     border-radius: var(--radius-lg);
-    padding: 1.25rem 1.25rem;
+    padding: 1.25rem;
     text-align: left;
     margin: 0 0 1.5rem 0;
     display: grid;
@@ -694,7 +708,7 @@ h1 {
 
 .upload-list-container h3 {
     margin: 0 0 0.75rem 0;
-    font-family: var(--font-display);
+    font-family: var(--font-display), sans-serif;
     font-size: 0.9rem;
     font-weight: 500;
     color: var(--text-muted);
@@ -804,10 +818,11 @@ h1 {
     grid-row: 2;
     /* Align to right edge of drop zone: margin from left + 500px width */
     margin-left: auto;
-    margin-right: calc((100% - 500px) / 2);
+    margin-right: var(--history-collapsed-margin, calc((100% - 500px) / 2));
     align-self: end;
     margin-bottom: 1.125rem;
-    transition: margin-right 0.25s ease, opacity 0.25s ease;
+    /* Step 4: move with history panel; also support text swap animation */
+    transition: margin-right var(--h-morph) ease var(--h-after-pause), color 0.15s ease, width 0.15s ease;
 }
 
 .container.state-ready #ready {
@@ -817,28 +832,73 @@ h1 {
 #drop-zone {
     grid-column: 1 / -1;
     grid-row: 3;
-    justify-self: center;
-    transition: opacity 0.25s ease;
 }
 
 .history-section {
     grid-column: 1 / -1;
     grid-row: 3;
     text-align: left;
-    opacity: 0;
     pointer-events: none;
-    transition: opacity 0.25s ease;
+    /* Start with drop zone dimensions, centered via JS-calculated margins */
+    width: 500px;
+    height: 280px;
+    margin-left: var(--history-collapsed-margin, calc((100% - 500px) / 2));
+    margin-right: var(--history-collapsed-margin, calc((100% - 500px) / 2));
+    border: none;
+    border-radius: var(--radius-2xl);
+    overflow: hidden;
+    position: relative;
+    opacity: 0;
+    /* Step 4: History panel grows and fades in after pause */
+    transition:
+        opacity 0.2s ease var(--h-after-pause),
+        width var(--h-morph) ease var(--h-after-pause),
+        height var(--h-morph) ease var(--h-after-pause),
+        margin-left var(--h-morph) ease var(--h-after-pause),
+        margin-right var(--h-morph) ease var(--h-after-pause),
+        border-radius 0.3s ease calc(var(--h-after-pause) + 0.2s);
 }
 
 .history-section--expanded {
-    opacity: 1;
     pointer-events: auto;
+    opacity: 1;
+    /* Width expands to full content area */
+    width: 100%;
+    margin-left: 0;
+    margin-right: 0;
+    border-radius: var(--radius-lg);
 }
 
-/* When expanded: hide drop zone */
+/* Step 3: Hide drop zone after border blurs out + pause */
 #ready:has(.history-section--expanded) #drop-zone {
-    opacity: 0 !important;
-    pointer-events: none;
+    visibility: hidden;
+    transition: visibility 0s linear var(--h-after-pause);
+}
+
+/* "Falling into depth" effect for CTA and hint when history is expanded */
+.drop-zone-inner {
+    perspective: 800px;
+}
+
+.drop-zone-cta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+    transform-style: preserve-3d;
+    transform: translateZ(0);
+    opacity: 1;
+    filter: blur(0) brightness(1);
+    /* Step 1: CTA falls away */
+    transition: opacity var(--h-cta-fall) cubic-bezier(0.6, 0.04, 0.98, 0.335),
+                filter var(--h-cta-fall) cubic-bezier(0.6, 0.04, 0.98, 0.335),
+                transform var(--h-cta-fall) cubic-bezier(0.6, 0.04, 0.98, 0.335);
+}
+
+#ready:has(.history-section--expanded) .drop-zone-cta {
+    opacity: 0;
+    filter: blur(12px) brightness(0);
+    transform: translateZ(-2000px);
 }
 
 /* When expanded: move toggle to right edge and change to back button */
@@ -858,12 +918,31 @@ h1 {
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-lg);
     padding: 0.6rem 1.25rem;
-    font-family: var(--font-display);
+    font-family: var(--font-display), sans-serif;
     font-size: 0.8rem;
     font-weight: 500;
     color: var(--text-tertiary);
     cursor: pointer;
-    transition: color var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), opacity 0.25s ease;
+    overflow: hidden;
+    transition:
+        color var(--transition-fast),
+        background-color var(--transition-fast),
+        border-color var(--transition-fast),
+        box-shadow var(--transition-fast),
+        opacity 0.15s ease,
+        width 0.15s ease;
+    animation: blur-fade-in 0.4s ease 0.15s both;
+}
+
+/* Text span inside toggle button */
+.history-toggle-text {
+    opacity: 1;
+    transition: opacity 0.15s ease;
+    white-space: nowrap;
+}
+
+.history-toggle.text-fading .history-toggle-text {
+    opacity: 0;
 }
 
 .history-toggle:hover {
@@ -886,14 +965,15 @@ h1 {
     border-color: var(--primary-500);
 }
 
-/* Subtle entrance animation for the toggle */
-.history-toggle {
-    animation: blur-fade-in 0.4s ease 0.15s both;
-}
-
-/* History panel */
+/* History panel content - fades in with the section */
 .history-panel {
     overflow: hidden;
+    opacity: 0;
+    transition: opacity 0.3s ease calc(var(--h-after-pause) + var(--h-stagger));
+}
+
+.history-section--expanded .history-panel {
+    opacity: 1;
 }
 
 /* Staggered reveal animation for history panel contents */
@@ -908,24 +988,79 @@ h1 {
     }
 }
 
+/* Base state: hidden (prevents flash when animation is removed on collapse) */
+.history-title,
+.history-filters,
+#history-info,
+#history-empty,
+#history-list {
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
 .history-section--expanded .history-title {
-    animation: history-reveal 0.3s ease both;
+    animation: history-reveal 0.3s ease calc(var(--h-after-pause) + var(--h-stagger) * 2) both;
 }
 
 .history-section--expanded .history-filters {
-    animation: history-reveal 0.3s ease 0.05s both;
+    animation: history-reveal 0.3s ease calc(var(--h-after-pause) + var(--h-stagger) * 3) both;
 }
 
 .history-section--expanded #history-info {
-    animation: history-reveal 0.3s ease 0.1s both;
+    animation: history-reveal 0.3s ease calc(var(--h-after-pause) + var(--h-stagger) * 4) both;
 }
 
 .history-section--expanded #history-empty {
-    animation: history-reveal 0.3s ease 0.1s both;
+    animation: history-reveal 0.3s ease calc(var(--h-after-pause) + var(--h-stagger) * 4) both;
 }
 
 .history-section--expanded #history-list {
-    animation: history-reveal 0.3s ease 0.15s both;
+    animation: history-reveal 0.3s ease calc(var(--h-after-pause) + var(--h-stagger) * 5) both;
+}
+
+/* Collapsing: override transitions to remove delays, animate dimensions immediately */
+.history-section--collapsing {
+    transition:
+        opacity 0.2s ease,
+        width var(--h-morph) ease,
+        height var(--h-morph) ease,
+        margin-left var(--h-morph) ease,
+        margin-right var(--h-morph) ease,
+        border-radius 0.3s ease;
+}
+
+/* Collapsing: h1/h2, toggle, and CTA animate back at same speed without delays */
+.container.state-ready:has(.history-section--collapsing) h1,
+.container.state-ready:has(.history-section--collapsing) .feed-name {
+    transition: margin-left var(--h-morph) ease;
+}
+
+.container.state-ready:has(.history-section--collapsing) .history-toggle {
+    transition: margin-right var(--h-morph) ease, color 0.15s ease, width 0.15s ease;
+}
+
+#ready:has(.history-section--collapsing) .drop-zone-cta {
+    transition: opacity var(--h-morph) ease, filter var(--h-morph) ease, transform var(--h-morph) ease;
+}
+
+/* Collapsing: keep content visible while fading out */
+.history-section--collapsing .history-title,
+.history-section--collapsing .history-filters,
+.history-section--collapsing #history-info,
+.history-section--collapsing #history-empty,
+.history-section--collapsing #history-list,
+.history-section--collapsing #history-list .upload-item {
+    opacity: 1;
+    animation: none;
+}
+
+.history-section--collapsing.history-section--fade-out .history-title,
+.history-section--collapsing.history-section--fade-out .history-filters,
+.history-section--collapsing.history-section--fade-out #history-info,
+.history-section--collapsing.history-section--fade-out #history-empty,
+.history-section--collapsing.history-section--fade-out #history-list,
+.history-section--collapsing.history-section--fade-out #history-list .upload-item {
+    opacity: 0;
 }
 
 /* Items start hidden, animation reveals them */
@@ -936,7 +1071,12 @@ h1 {
 
 .history-section--expanded #history-list .upload-item {
     animation: history-reveal 0.25s ease both;
-    animation-delay: calc(0.15s + var(--stagger-index) * 0.03s);
+    animation-delay: calc(var(--h-after-pause) + var(--h-stagger) * 5 + var(--stagger-index) * 0.03s);
+}
+
+/* When settled (after expand animation), items appear immediately with minimal stagger */
+.history-section--expanded.history-section--settled #history-list .upload-item {
+    animation-delay: calc(var(--stagger-index) * 0.02s);
 }
 
 /* Scrollable list with fade hint */
@@ -944,19 +1084,25 @@ h1 {
     max-height: 280px;
     overflow-y: auto;
     position: relative;
-    /* Subtle inset shadow at bottom when scrollable */
-    mask-image: linear-gradient(to bottom, black calc(100% - 24px), transparent 100%);
-    -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 24px), transparent 100%);
     /* Space between items and scrollbar */
     padding-right: 0.5rem;
     margin-right: -0.5rem;
 }
 
-/* Remove fade mask when scrolled to bottom or not scrollable */
-#history-list.scrolled-to-bottom,
-#history-list.not-scrollable {
-    mask-image: none;
-    -webkit-mask-image: none;
+/* Scroll fade masks - controlled by JS classes */
+#history-list.fade-bottom {
+    mask-image: linear-gradient(to bottom, black calc(100% - 24px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, black calc(100% - 24px), transparent 100%);
+}
+
+#history-list.fade-top {
+    mask-image: linear-gradient(to bottom, transparent 0%, black 24px);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 24px);
+}
+
+#history-list.fade-both {
+    mask-image: linear-gradient(to bottom, transparent 0%, black 24px, black calc(100% - 24px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 24px, black calc(100% - 24px), transparent 100%);
 }
 
 /* Custom scrollbar styling */
@@ -985,7 +1131,7 @@ h1 {
 
 .history-title {
     margin: 0 0 1rem 0;
-    font-family: var(--font-display);
+    font-family: var(--font-display), sans-serif;
     font-size: 0.9rem;
     font-weight: 500;
     color: var(--text-muted);
@@ -1010,7 +1156,7 @@ h1 {
     color: var(--text-muted);
     font-size: 0.75rem;
     font-weight: 500;
-    font-family: var(--font-display);
+    font-family: var(--font-display), sans-serif;
     cursor: pointer;
     transition: color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
     white-space: nowrap;
@@ -1073,13 +1219,40 @@ h1 {
 }
 
 /* ============================================================================
+   FROSTED OVERLAY (mobile only)
+   ============================================================================ */
+
+.frosted-overlay {
+    display: none;
+}
+
+/* ============================================================================
    RESPONSIVE: TABLET & BELOW (max-width: 768px)
    ============================================================================ */
 
 @media (max-width: 768px) {
+    /* Frosted glass overlay - sits below toggle button, above content */
+    .frosted-overlay {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 99;
+        pointer-events: none;
+        opacity: 0;
+        background: rgba(26, 26, 46, 0.7);
+        backdrop-filter: blur(0);
+        -webkit-backdrop-filter: blur(0);
+        transition: opacity 0.3s ease, backdrop-filter 0.3s ease, -webkit-backdrop-filter 0.3s ease;
+    }
+
+    .frosted-overlay--active {
+        pointer-events: auto;
+        opacity: 1;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+    }
     body {
-        padding: 1rem;
-        padding-bottom: 2rem;
+        padding: 1rem 1rem 2rem;
     }
 
     .container {
@@ -1094,10 +1267,9 @@ h1 {
         font-size: 1rem;
     }
 
-    /* States with fixed h1/h2: ready, uploading, normalizing, no-key */
+    /* States with fixed h1/h2: ready, processing, no-key */
     .container.state-ready h1,
-    .container.state-uploading h1,
-    .container.state-normalizing h1,
+    .container.state-processing h1,
     .container.state-no-key h1 {
         position: fixed;
         top: 10svh;
@@ -1108,8 +1280,7 @@ h1 {
     }
 
     .container.state-ready .feed-name,
-    .container.state-uploading .feed-name,
-    .container.state-normalizing .feed-name,
+    .container.state-processing .feed-name,
     .container.state-no-key .feed-name {
         position: fixed;
         top: calc(10svh + 2.5rem);
@@ -1159,15 +1330,13 @@ h1 {
         margin-bottom: 1.5rem;
     }
 
-    /* Uploading/normalizing: filename above progress bar on mobile */
-    #uploading,
-    #normalizing {
+    /* Processing: filename above progress bar on mobile */
+    #processing {
         display: flex;
         flex-direction: column;
     }
 
-    #uploading .progress-filename,
-    #normalizing .progress-filename {
+    #processing .progress-filename {
         order: -1;
         max-width: 100%;
         text-align: left;
@@ -1240,40 +1409,164 @@ h1 {
 
     .history-toggle {
         position: fixed;
-        bottom: 6svh;
+        bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
         left: 1rem;
         right: 1rem;
-        width: fit-content;
-        margin: 0 auto !important;
+        width: auto;
+        margin: 0 !important;
         z-index: 101;
     }
 
-    /* When expanded: full-width back button at bottom */
-    .container.state-ready:has(.history-section--expanded) .history-toggle {
-        bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
-        width: auto;
-    }
-
-    /* History section mobile: fullscreen overlay */
+    /* History section mobile: fades in over frosted overlay */
     .history-section {
+        /* Reset desktop sizing - mobile uses fixed positioning */
+        width: auto;
+        height: auto;
         margin-top: 0;
+        margin-left: 0;
+        margin-right: 0;
         position: fixed;
         inset: 0;
         z-index: 100;
-        padding: 1rem;
-        padding-bottom: env(safe-area-inset-bottom, 1rem);
-        background: var(--bg-base);
+        padding: 1rem 1rem env(safe-area-inset-bottom, 1rem);
+        /* Start hidden and blurred */
+        background: transparent;
+        opacity: 0;
+        filter: blur(12px) brightness(1);
+        /* Delay fade-in until frosted overlay is visible */
+        transition: opacity 0.3s ease 0.2s, filter 0.3s ease 0.2s;
     }
 
     /* Leave space for the back button at the bottom when expanded */
     .history-section--expanded {
         padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+        opacity: 1;
+        filter: blur(0) brightness(1.1);
+        /* No delay when collapsing */
+        transition: opacity 0.3s ease, filter 0.3s ease;
+    }
+
+    /* Semi-transparent backgrounds, but keep text fully opaque */
+    /* Apply to both expanded and collapsing states */
+    .history-section--expanded .history-panel,
+    .history-section--collapsing .history-panel {
+        background: transparent;
+    }
+
+    .history-section--expanded .history-title,
+    .history-section--expanded .filter-tab,
+    .history-section--expanded .episode-info,
+    .history-section--expanded .upload-item,
+    .history-section--collapsing .history-title,
+    .history-section--collapsing .filter-tab,
+    .history-section--collapsing .episode-info,
+    .history-section--collapsing .upload-item {
+        opacity: 1;
+    }
+
+    .history-section--expanded .filter-tab,
+    .history-section--collapsing .filter-tab {
+        background: rgba(37, 37, 65, 0.6);
+    }
+
+    .history-section--expanded .filter-tab--active,
+    .history-section--collapsing .filter-tab--active {
+        background: rgba(55, 48, 163, 0.8);
+    }
+
+    .history-section--expanded .upload-item,
+    .history-section--collapsing .upload-item {
+        background: rgba(42, 42, 80, 0.5);
+    }
+
+    .history-section--expanded .upload-item--selected,
+    .history-section--collapsing .upload-item--selected {
+        background: rgba(55, 48, 163, 0.7);
+    }
+
+    .history-section--expanded #history-info,
+    .history-section--collapsing #history-info {
+        background: rgba(42, 42, 80, 0.5);
+    }
+
+    /* Disable desktop animations on mobile - content stays visible under frosted glass */
+    .container.state-ready h1,
+    .container.state-ready .feed-name,
+    .container.state-ready #ready #select-file {
+        animation: none !important;
+        transition: none !important;
+    }
+
+    /* Override desktop "falling" effect - keep content visible on mobile */
+    .container.state-ready:has(.history-section--expanded) h1,
+    .container.state-ready:has(.history-section--expanded) .feed-name {
+        opacity: 1 !important;
+        filter: none !important;
+        transform: none !important;
+    }
+
+    .container.state-ready:has(.history-section--expanded) #ready #select-file {
+        opacity: 1 !important;
+        filter: none !important;
+        /* Preserve centering transform */
+        transform: translateX(-50%) !important;
+    }
+
+    /* Keep drop zone CTA visible on mobile */
+    #ready:has(.history-section--expanded) .drop-zone-cta {
+        opacity: 1 !important;
+        filter: none !important;
+        transform: none !important;
+    }
+
+    /* Keep drop zone visible on mobile */
+    #ready:has(.history-section--expanded) #drop-zone {
+        visibility: visible !important;
+    }
+
+    /* During collapse, hide h1/h2/CTA so they don't show through semi-transparent panel */
+    .container.state-ready:has(.history-section--collapsing) h1,
+    .container.state-ready:has(.history-section--collapsing) .feed-name,
+    .container.state-ready:has(.history-section--collapsing) #ready #select-file {
+        visibility: hidden !important;
+    }
+
+    /* Hide dashed border on mobile - it's only for desktop */
+    .drop-zone-inner::before {
+        display: none;
+    }
+
+    /* Override desktop collapsing transition */
+    /* Keep expanded state until fade-out triggers, prevent size jump */
+    /* Use !important to override base .history-section mobile rules */
+    .history-section--collapsing {
+        padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+        opacity: 1 !important;
+        filter: blur(0) brightness(1.1) !important;
+        transition: opacity 0.3s ease, filter 0.3s ease !important;
+    }
+
+    /* Fade out the whole panel */
+    .history-section--collapsing.history-section--fade-out {
+        opacity: 0 !important;
+        filter: blur(12px) brightness(1) !important;
+    }
+
+    /* Skip content fade on mobile - the whole panel fades out */
+    .history-section--collapsing.history-section--fade-out .history-title,
+    .history-section--collapsing.history-section--fade-out .history-filters,
+    .history-section--collapsing.history-section--fade-out #history-info,
+    .history-section--collapsing.history-section--fade-out #history-empty,
+    .history-section--collapsing.history-section--fade-out #history-list,
+    .history-section--collapsing.history-section--fade-out #history-list .upload-item {
+        opacity: 1;
     }
 
     .history-panel {
         height: 100%;
         display: flex;
         flex-direction: column;
+        padding: 0;
     }
 
     #history-tabpanel {
@@ -1300,6 +1593,20 @@ h1 {
     .filter-tab {
         font-size: 0.7rem;
         padding: 0.4rem 0.25rem;
+    }
+}
+
+/* ============================================================================
+   RESPONSIVE: DESKTOP VERTICAL ALIGNMENT (min-width: 769px)
+   ============================================================================ */
+
+/* On desktop, fix h1 vertical position so it doesn't shift between states.
+   The body centers content vertically, but states have different heights,
+   causing h1 to appear lower in the processing state. */
+@media (min-width: 769px) {
+    body {
+        align-items: flex-start;
+        padding-top: 15vh;
     }
 }
 

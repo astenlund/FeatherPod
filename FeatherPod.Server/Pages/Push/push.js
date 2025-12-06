@@ -1,6 +1,7 @@
 const FEED_ID = '{{FEED_ID}}';
 const IS_DEV = '{{IS_DEV}}' === 'true';
 const SHOW_GHOST = IS_DEV && window.location.search.includes('ghost');
+const DEBUG_TITLE_ANIMATION = IS_DEV && window.location.search.includes('alive');
 const VELOCITY_OVERRIDES = IS_DEV ? parseVelocityOverrides() : {};
 const ALLOWED_EXTENSIONS = ['.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac'];
 
@@ -36,7 +37,7 @@ function parseVelocityOverrides() {
     return overrides;
 }
 let apiKey = null;
-const states = ['no-key', 'ready', 'uploading', 'normalizing', 'success', 'error'];
+const states = ['no-key', 'ready', 'processing', 'success', 'error'];
 const JOB_STORAGE_KEY = 'featherpod_job_' + FEED_ID;
 const HISTORY_STORAGE_KEY = 'featherpod_history_' + FEED_ID;
 const HISTORY_FILTER_KEY = 'featherpod_history_filter_' + FEED_ID;
@@ -56,6 +57,88 @@ let historyFilter = 'local';
 /** @type {number} - Counter for tracking pending filter requests (prevents race conditions) */
 let pendingFilterRequest = 0;
 
+/** @type {number|null} - Animation ID for title text animation */
+let titleAnimationId = null;
+/** @type {string} - Current first word of title (for animation) */
+let currentTitleText = 'Push';
+/** @type {boolean} - Skip animation on first showState call (page load) */
+let isFirstStateChange = true;
+
+// Title animation timing (ms)
+const TITLE_ANIMATION_CHAR_DELAY = 150;
+const TITLE_ANIMATION_LOAD_DELAY = 600;
+const TITLE_ANIMATION_PAUSE_DELAY = 300;
+
+/**
+ * Animate the first word of the page title character by character.
+ * Removes characters to find common prefix, then adds characters to reach target.
+ * The suffix " to Feed" remains static. Timing controlled by TITLE_ANIMATION_* constants.
+ * @param {string} targetWord - The target first word (e.g., "Push", "Pushing", "Pushed")
+ */
+function animateTitle(targetWord) {
+    const titleEl = document.getElementById('page-title');
+    if (!titleEl) {
+        return;
+    }
+
+    const suffix = ' to Feed';
+
+    // Cancel any in-progress animation
+    if (titleAnimationId != null) {
+        clearTimeout(titleAnimationId);
+        titleAnimationId = null;
+    }
+
+    // Find common prefix length
+    let commonLength = 0;
+    while (commonLength < currentTitleText.length &&
+           commonLength < targetWord.length &&
+           currentTitleText[commonLength] === targetWord[commonLength]) {
+        commonLength++;
+    }
+
+    // Build animation steps: remove chars down to common prefix, pause, then add chars to target
+    const steps = [];
+
+    // Remove characters (from current down to common prefix)
+    for (let i = currentTitleText.length; i > commonLength; i--) {
+        steps.push({ text: currentTitleText.slice(0, i - 1), pause: false });
+    }
+
+    // Add a pause after erasing (if we erased anything and have chars to add)
+    const hasErased = currentTitleText.length > commonLength;
+    const hasToAdd = targetWord.length > commonLength;
+    if (hasErased && hasToAdd) {
+        steps.push({ text: currentTitleText.slice(0, commonLength), pause: true });
+    }
+
+    // Add characters (from common prefix up to target)
+    for (let i = commonLength + 1; i <= targetWord.length; i++) {
+        steps.push({ text: targetWord.slice(0, i), pause: false });
+    }
+
+    let stepIndex = 0;
+
+    function nextStep() {
+        if (stepIndex >= steps.length) {
+            titleAnimationId = null;
+
+            return;
+        }
+
+        const step = steps[stepIndex];
+        titleEl.textContent = step.text + suffix;
+        currentTitleText = step.text; // Update immediately so interrupts work correctly
+        stepIndex++;
+        const delay = step.pause ? TITLE_ANIMATION_PAUSE_DELAY : TITLE_ANIMATION_CHAR_DELAY;
+        titleAnimationId = setTimeout(nextStep, delay);
+    }
+
+    if (steps.length > 0) {
+        nextStep();
+    }
+}
+
 /** @param {string} stateName */
 function showState(stateName) {
     states.forEach(s => document.getElementById(s).style.display = s === stateName ? '' : 'none');
@@ -67,17 +150,47 @@ function showState(stateName) {
         container.classList.add('state-' + stateName);
     }
 
-    // Update page title based on state
-    const titleEl = document.getElementById('page-title');
-    if (titleEl) {
-        if (stateName === 'uploading' || stateName === 'normalizing') {
-            titleEl.textContent = 'Pushing to Feed';
-        } else if (stateName === 'success') {
-            titleEl.textContent = 'Pushed to Feed';
+    // Update page title based on state (animate first word only)
+    let targetWord;
+    if (stateName === 'processing') {
+        targetWord = 'Pushing';
+    } else if (stateName === 'success') {
+        targetWord = 'Pushed';
+    } else {
+        targetWord = 'Push';
+    }
+
+    // Debug mode: set starting word before comparison so animation triggers
+    if (isFirstStateChange && DEBUG_TITLE_ANIMATION) {
+        let startWord;
+        if (stateName === 'processing') {
+            startWord = 'Push';
+        } else if (stateName === 'success' || stateName === 'error') {
+            startWord = 'Pushing';
         } else {
-            titleEl.textContent = 'Push to Feed';
+            startWord = 'Pushed';
+        }
+        currentTitleText = startWord;
+        const titleEl = document.getElementById('page-title');
+        if (titleEl) {
+            titleEl.textContent = startWord + ' to Feed';
         }
     }
+
+    if (targetWord !== currentTitleText) {
+        if (isFirstStateChange && !DEBUG_TITLE_ANIMATION) {
+            // On page load, set title immediately without animation
+            const titleEl = document.getElementById('page-title');
+            if (titleEl) {
+                titleEl.textContent = targetWord + ' to Feed';
+            }
+            currentTitleText = targetWord;
+        } else {
+            // Delay to let h1/h2 position transition complete before animating
+            setTimeout(() => animateTitle(targetWord), TITLE_ANIMATION_LOAD_DELAY);
+        }
+    }
+    isFirstStateChange = false;
 }
 
 /** @param {File} file */
@@ -88,7 +201,36 @@ function isValidAudioFile(file) {
 }
 
 
+/** @type {number} - Cached container width for consistent animations */
+let cachedContainerWidth = 0;
+/** @type {number} - Cached collapsed margin for consistent animations */
+let cachedCollapsedMargin = 0;
+/** @type {number} - Width of the collapsed drop zone / history section */
+const COLLAPSED_WIDTH = 500;
+/** @type {number} - Height of the collapsed drop zone / history section */
+const COLLAPSED_HEIGHT = 280;
+
+/**
+ * Calculate and cache layout dimensions used for history panel animations.
+ * Call this once after the page renders to get consistent values.
+ */
+function cacheLayoutDimensions() {
+    const container = document.querySelector('.container');
+    // Use clientWidth to get content area (excludes padding), matching CSS 100%
+    cachedContainerWidth = container?.clientWidth || 800;
+    cachedCollapsedMargin = Math.max(0, (cachedContainerWidth - COLLAPSED_WIDTH) / 2);
+
+    // Set CSS custom properties so CSS uses the same values
+    document.documentElement.style.setProperty('--history-container-width', cachedContainerWidth + 'px');
+    document.documentElement.style.setProperty('--history-collapsed-margin', cachedCollapsedMargin + 'px');
+}
+
 async function init() {
+    // Cache layout dimensions for consistent animations
+    cacheLayoutDimensions();
+    // Recalculate on resize
+    window.addEventListener('resize', cacheLayoutDimensions);
+
     const fragment = window.location.hash.slice(1);
     if (fragment) {
         apiKey = fragment;
@@ -179,12 +321,13 @@ dropZone.addEventListener('drop', async (e) => {
 /** @param {File} file */
 async function uploadFile(file) {
     clearJobState();
-    showState('uploading');
-    document.getElementById('file-name').textContent = file.name;
-    document.getElementById('upload-status').textContent = 'Uploading...';
-    const progressBar = document.getElementById('upload-progress');
+    showState('processing');
+    document.getElementById('processing-filename').textContent = file.name;
+    document.getElementById('processing-status').textContent = 'Uploading...';
+    const progressBar = document.getElementById('processing-progress');
     const progressContainer = progressBar.parentElement;
     progressContainer.setAttribute('aria-valuenow', '0');
+    progressBar.classList.remove('indeterminate');
     progressAnimator.startWithAssumption('Uploading', progressBar, file.size);
     const formData = new FormData();
     formData.append('file', file);
@@ -219,7 +362,7 @@ async function uploadFile(file) {
         } else if (response.status === 202) {
             const jobResponse = JSON.parse(response.body);
             saveJobState({
-                status: 'normalizing',
+                status: 'processing',
                 jobId: jobResponse.jobId,
                 fileName: file.name,
                 fileSize: file.size
@@ -640,18 +783,27 @@ function saveFilterPreference(filter) {
     }
 }
 
+// Animation timing constants (match CSS --h-* variables)
+// Step 1: CTA + border fall/blur together
+const H_CTA_FALL = 150;
+// Step 2: Pause before swap
+const H_PAUSE = 100;
+// Step 3: History panel morphs
+const H_MORPH = 400;
+const HISTORY_TRANSITION_DURATION = H_CTA_FALL + H_PAUSE + H_MORPH;
+
 /**
- * Toggle the history section collapsed/expanded state.
- * Updates ARIA attributes, toggles the expanded class on the section,
- * and disables the select-file button when expanded (since it's hidden).
- * When expanding, focuses the selected item in the list for keyboard navigation.
- * When collapsing, returns focus to the toggle button.
+ * Toggle the history section collapsed/expanded state with animation.
+ * On desktop: morphs from drop zone size to full width with staggered content reveal.
+ * On mobile: slides down as fullscreen overlay.
+ * Drop zone fades out/in via CSS, history section handles its own animated border.
  * @param {boolean} [expand] - Force expand (true) or collapse (false). If omitted, toggles.
  */
 function toggleHistorySection(expand) {
     const section = document.getElementById('history-section');
     const toggle = document.getElementById('history-toggle');
     const selectFileBtn = document.getElementById('select-file');
+    const isMobile = window.matchMedia('(max-width: 768px)').matches;
     if (!section || !toggle) {
         return;
     }
@@ -660,27 +812,190 @@ function toggleHistorySection(expand) {
     const newState = expand !== undefined ? expand : !isExpanded;
 
     toggle.setAttribute('aria-expanded', newState.toString());
-    toggle.textContent = newState ? '← Back' : 'Recent Uploads';
-    section.classList.toggle('history-section--expanded', newState);
+
+    // Animate text change: 1) delay, 2) fade out, 3) resize, 4) fade in, 5) end
+    const newText = newState ? '← Back' : 'Recent Uploads';
+    const textSpan = toggle.querySelector('.history-toggle-text');
+    const TEXT_FADE = 150;
+    const WIDTH_ANIM = 150;
+
+    // On mobile, button is full-width so skip width animation
+    if (isMobile) {
+        // Simple text swap with fade
+        const delay = newState ? H_CTA_FALL + H_PAUSE : 0;
+        setTimeout(() => {
+            toggle.classList.add('text-fading');
+        }, delay);
+        setTimeout(() => {
+            textSpan.textContent = newText;
+            toggle.classList.remove('text-fading');
+        }, delay + TEXT_FADE);
+    } else {
+        // Desktop: full animation with width change
+        const currentWidth = toggle.offsetWidth;
+
+        // Measure target width with new text (while hidden)
+        textSpan.style.visibility = 'hidden';
+        textSpan.textContent = newText;
+        toggle.style.width = 'auto';
+        const newWidth = toggle.offsetWidth;
+        textSpan.textContent = newState ? 'Recent Uploads' : '← Back'; // restore old text
+        textSpan.style.visibility = '';
+        toggle.style.width = currentWidth + 'px';
+
+        // Calculate timing: work backwards from end
+        // Expanding: long delay before text animation (full expand sequence)
+        // Collapsing: short animation matching panel shrink (H_MORPH)
+        const totalDuration = newState
+            ? H_CTA_FALL + H_PAUSE + H_MORPH
+            : H_MORPH;
+        const fadeInStart = totalDuration - TEXT_FADE;
+        const widthStart = fadeInStart - WIDTH_ANIM;
+        const fadeOutStart = Math.max(0, widthStart - TEXT_FADE);
+
+        // Step 2: Fade out old text
+        setTimeout(() => {
+            toggle.classList.add('text-fading');
+        }, fadeOutStart);
+
+        // Step 3: Change text and animate width
+        setTimeout(() => {
+            textSpan.textContent = newText;
+            toggle.style.width = newWidth + 'px';
+        }, widthStart);
+
+        // Step 4: Fade in new text
+        setTimeout(() => {
+            toggle.classList.remove('text-fading');
+        }, fadeInStart);
+
+        // Step 5: Clean up after animation ends
+        setTimeout(() => {
+            toggle.style.width = '';
+        }, totalDuration);
+    }
 
     // Disable select-file button when expanded (it's hidden via CSS but could still be activated)
     if (selectFileBtn) {
         selectFileBtn.disabled = newState;
     }
 
-    // Focus management
+    // Mobile: toggle frosted overlay
+    const frostedOverlay = document.getElementById('frosted-overlay');
+    if (isMobile && frostedOverlay) {
+        if (newState) {
+            frostedOverlay.classList.add('frosted-overlay--active');
+        }
+        // When collapsing, delay removing frosted overlay until after panel fades out
+        // (handled below with COLLAPSE_DURATION timeout)
+    }
+
     if (newState) {
-        // Expanding: focus the selected item (or first item) after transition
-        requestAnimationFrame(() => {
+        // Expanding: measure natural height, animate to it, then switch to auto
+
+        // Use cached values for consistent animations
+        const containerWidth = cachedContainerWidth;
+        const collapsedMargin = cachedCollapsedMargin + 'px';
+
+        // Measure natural height by temporarily expanding
+        section.style.height = 'auto';
+        section.classList.add('history-section--expanded');
+        const naturalHeight = section.offsetHeight;
+        section.classList.remove('history-section--expanded');
+
+        // Set explicit starting state for history section
+        // Only on desktop (mobile uses position: fixed fullscreen, no animation needed)
+        if (!isMobile) {
+            section.style.height = COLLAPSED_HEIGHT + 'px';
+            section.style.width = COLLAPSED_WIDTH + 'px';
+            section.style.marginLeft = collapsedMargin;
+            section.style.marginRight = collapsedMargin;
+            // Force reflow to ensure starting values are applied
+            void section.offsetHeight;
+        }
+        // Drop zone fades out via CSS - no dimension animation needed
+
+        // Animate to expanded state
+        section.classList.add('history-section--expanded');
+        if (!isMobile) {
+            // Desktop: animate to calculated dimensions
+            section.style.height = naturalHeight + 'px';
+            section.style.width = containerWidth + 'px';
+            section.style.marginLeft = '0';
+            section.style.marginRight = '0';
+        }
+
+        // After transition, clear inline styles and mark as settled
+        setTimeout(() => {
+            if (!isMobile) {
+                section.style.height = 'auto';
+                section.style.width = '';
+                section.style.marginLeft = '';
+                section.style.marginRight = '';
+            }
+            // Mark as settled so tab switches don't have expand animation delays
+            section.classList.add('history-section--settled');
+        }, HISTORY_TRANSITION_DURATION);
+
+        // Focus the selected item (or first item) after transition
+        setTimeout(() => {
             const selectedItem = document.querySelector('#history-list .upload-item--selected');
             const firstItem = document.querySelector('#history-list .upload-item');
             const itemToFocus = selectedItem || firstItem;
             if (itemToFocus) {
                 itemToFocus.focus();
             }
-        });
+        }, HISTORY_TRANSITION_DURATION);
     } else {
-        // Collapsing: reset scroll position and selection to first item
+        // Collapsing: set current state explicitly, then animate to collapsed
+
+        // Use cached values for consistent animations
+        const containerWidth = cachedContainerWidth;
+        const collapsedMargin = cachedCollapsedMargin + 'px';
+        const currentHeight = section.offsetHeight;
+
+        // Set explicit starting state (expanded)
+        // Only on desktop (mobile uses position: fixed fullscreen, no animation needed)
+        if (!isMobile) {
+            section.style.height = currentHeight + 'px';
+            section.style.width = containerWidth + 'px';
+            section.style.marginLeft = '0';
+            section.style.marginRight = '0';
+            // Force reflow to ensure starting values are applied
+            void section.offsetHeight;
+        }
+
+        // Step 1: Add collapsing class (removes expand animations, enables collapse transitions)
+        section.classList.add('history-section--collapsing');
+        section.classList.remove('history-section--expanded', 'history-section--settled');
+
+        // Step 2: Fade out content AND animate panel dimensions simultaneously
+        void section.offsetHeight; // Force reflow
+        section.classList.add('history-section--fade-out');
+        if (!isMobile) {
+            section.style.height = COLLAPSED_HEIGHT + 'px';
+            section.style.width = COLLAPSED_WIDTH + 'px';
+            section.style.marginLeft = collapsedMargin;
+            section.style.marginRight = collapsedMargin;
+        }
+
+        // After transition, clear all inline styles and collapsing classes
+        const COLLAPSE_DURATION = H_MORPH; // Panel shrink animation duration
+        setTimeout(() => {
+            section.classList.remove('history-section--collapsing', 'history-section--fade-out');
+            if (!isMobile) {
+                section.style.height = '';
+                section.style.width = '';
+                section.style.marginLeft = '';
+                section.style.marginRight = '';
+            }
+            // Remove frosted overlay after panel has faded out
+            if (isMobile && frostedOverlay) {
+                frostedOverlay.classList.remove('frosted-overlay--active');
+            }
+        }, COLLAPSE_DURATION);
+
+        // Reset scroll position and selection to first item
         const list = document.getElementById('history-list');
         if (list) {
             list.scrollTop = 0;
@@ -792,7 +1107,7 @@ function updateHistoryInfoCard(episode) {
 
 /**
  * Update the scroll fade mask based on scroll position.
- * Removes the fade when scrolled to bottom or when list isn't scrollable.
+ * Shows fade-top, fade-bottom, fade-both, or none depending on scroll state.
  */
 function updateHistoryListScrollState() {
     const list = document.getElementById('history-list');
@@ -801,10 +1116,20 @@ function updateHistoryListScrollState() {
     }
 
     const isScrollable = list.scrollHeight > list.clientHeight;
+    const isAtTop = list.scrollTop <= 2;
     const isAtBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 2;
 
-    list.classList.toggle('not-scrollable', !isScrollable);
-    list.classList.toggle('scrolled-to-bottom', isScrollable && isAtBottom);
+    list.classList.remove('fade-top', 'fade-bottom', 'fade-both');
+
+    if (!isScrollable) {
+        // No fade needed
+    } else if (isAtTop && !isAtBottom) {
+        list.classList.add('fade-bottom');
+    } else if (!isAtTop && isAtBottom) {
+        list.classList.add('fade-top');
+    } else if (!isAtTop && !isAtBottom) {
+        list.classList.add('fade-both');
+    }
 }
 
 /**
@@ -822,7 +1147,7 @@ function renderHistoryList(uploads, focusFirst = false) {
     }
 
     list.innerHTML = '';
-    list.classList.remove('scrolled-to-bottom', 'not-scrollable');
+    list.classList.remove('fade-top', 'fade-bottom', 'fade-both');
 
     if (!uploads || uploads.length === 0) {
         historyData = null;
@@ -1373,12 +1698,12 @@ const progressAnimator = {
 };
 
 /**
- * Update the normalizing status display and progress bar.
+ * Update the processing status display and progress bar.
  * @param {JobStatus} job
  */
-function updateNormalizingStatus(job) {
-    const statusEl = document.getElementById('normalizing-status');
-    const progressBar = document.getElementById('normalizing-progress');
+function updateProcessingStatus(job) {
+    const statusEl = document.getElementById('processing-status');
+    const progressBar = document.getElementById('processing-progress');
     const progressContainer = progressBar.parentElement;
 
     if (job.stage) {
@@ -1409,7 +1734,7 @@ function updateNormalizingStatus(job) {
 
             // Show ghost bar at 100% during indeterminate stages to prevent layout jump
             if (SHOW_GHOST) {
-                const ghostBar = document.getElementById('normalizing-progress-ghost');
+                const ghostBar = document.getElementById('processing-progress-ghost');
                 if (ghostBar) {
                     ghostBar.style.width = '100%';
                     ghostBar.parentElement.classList.add('visible');
@@ -1421,16 +1746,15 @@ function updateNormalizingStatus(job) {
 
 /**
  * Monitor normalization job via SSE with polling fallback.
+ * The processing state is already shown - this function just updates status.
  * @param {string} jobId
  * @param {string} fileName
  * @param {number} fileSize - File size in bytes for velocity calculations
  */
 function monitorNormalizationJob(jobId, fileName, fileSize) {
-    showState('normalizing');
-    document.getElementById('normalizing-file-name').textContent = fileName;
-    document.getElementById('normalizing-status').textContent = 'Initializing...';
+    document.getElementById('processing-status').textContent = 'Initializing...';
 
-    const progressBar = document.getElementById('normalizing-progress');
+    const progressBar = document.getElementById('processing-progress');
     progressBar.classList.add('indeterminate');
     progressBar.style.width = '';
     progressAnimator.reset();
@@ -1440,6 +1764,7 @@ function monitorNormalizationJob(jobId, fileName, fileSize) {
 
     if (typeof EventSource === 'undefined') {
         void pollNormalizationJobFallback(jobId, fileName, fileSize);
+
         return;
     }
 
@@ -1464,7 +1789,7 @@ function monitorNormalizationJob(jobId, fileName, fileSize) {
         const parsed = tryParseJson(e.data);
         if (parsed) {
             lastStatus = parsed;
-            updateNormalizingStatus(lastStatus);
+            updateProcessingStatus(lastStatus);
         }
     });
 
@@ -1514,13 +1839,12 @@ function monitorNormalizationJob(jobId, fileName, fileSize) {
 
 /**
  * Poll normalization job status (fallback when SSE unavailable).
+ * The processing state is already shown - this function just updates status.
  * @param {string} jobId
  * @param {string} fileName
  * @param {number} fileSize - File size in bytes for velocity calculations
  */
 async function pollNormalizationJobFallback(jobId, fileName, fileSize) {
-    showState('normalizing');
-    document.getElementById('normalizing-file-name').textContent = fileName;
     progressAnimator.currentFileSize = fileSize;
 
     const pollInterval = 2000;
@@ -1554,7 +1878,7 @@ async function pollNormalizationJobFallback(jobId, fileName, fileSize) {
                 return;
             }
 
-            updateNormalizingStatus(job);
+            updateProcessingStatus(job);
 
             await new Promise(resolve => setTimeout(resolve, pollInterval));
         } catch (err) {
@@ -1595,10 +1919,13 @@ async function restoreJobState() {
     } else if (job.status === 'error') {
         showError(job.error);
         return true;
-    } else if (job.status === 'normalizing') {
+    } else if (job.status === 'processing') {
+        showState('processing');
+        document.getElementById('processing-filename').textContent = job.fileName;
         progressAnimator.setRestoring();
         monitorNormalizationJob(job.jobId, job.fileName, job.fileSize || 0);
-        document.getElementById('normalizing-progress').style.width = '0%';
+        document.getElementById('processing-progress').style.width = '0%';
+
         return true;
     }
 
