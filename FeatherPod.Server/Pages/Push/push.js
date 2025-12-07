@@ -980,7 +980,6 @@ function toggleHistorySection(expand) {
         }
 
         // After transition, clear all inline styles and collapsing classes
-        const COLLAPSE_DURATION = H_MORPH; // Panel shrink animation duration
         setTimeout(() => {
             section.classList.remove('history-section--collapsing', 'history-section--fade-out');
             if (!isMobile) {
@@ -993,7 +992,7 @@ function toggleHistorySection(expand) {
             if (isMobile && frostedOverlay) {
                 frostedOverlay.classList.remove('frosted-overlay--active');
             }
-        }, COLLAPSE_DURATION);
+        }, H_MORPH);
 
         // Reset scroll position and selection to first item
         const list = document.getElementById('history-list');
@@ -1180,7 +1179,7 @@ function renderHistoryList(uploads, focusFirst = false) {
         item.setAttribute('aria-selected', (upload.id === historySelectedId).toString());
 
         // Staggered animation delay for each item (via CSS custom property)
-        item.style.setProperty('--stagger-index', index);
+        item.style.setProperty('--stagger-index', String(index));
 
         if (upload.id === historySelectedId) {
             item.classList.add('upload-item--selected');
@@ -1347,7 +1346,7 @@ function showError(message) {
 /**
  * @typedef {Object} JobStatus
  * @property {string} status - Queued, Processing, Completed, Failed
- * @property {string} [stage] - Queued, Preparing, Analyzing, Normalizing, Finishing, Completed, Failed
+ * @property {string} [stage] - Queued, Analyzing, Normalizing, Finishing, Completed, Failed
  * @property {number} [progressPercent] - Progress percentage (0-100) for Analyzing, Normalizing stages
  * @property {string} [error]
  */
@@ -1953,7 +1952,7 @@ document.querySelectorAll('#history-section .filter-tab').forEach(tab => {
     tab.addEventListener('click', () => {
         const filter = tab.dataset.filter;
         if (filter) {
-            changeHistoryFilter(filter);
+            void changeHistoryFilter(filter);
         }
     });
 });
@@ -1981,7 +1980,7 @@ document.addEventListener('keydown', (e) => {
         e.key === 'ArrowRight' || e.key === 'e' || e.key === 'E') {
         const filters = ['local', 'browser', 'all'];
         const currentIndex = filters.indexOf(historyFilter);
-        let newIndex = currentIndex;
+        let newIndex;
 
         if (e.key === 'ArrowLeft' || e.key === 'q' || e.key === 'Q') {
             newIndex = Math.max(currentIndex - 1, 0);
@@ -1991,7 +1990,7 @@ document.addEventListener('keydown', (e) => {
 
         if (newIndex !== currentIndex) {
             e.preventDefault();
-            changeHistoryFilter(filters[newIndex], true);
+            void changeHistoryFilter(filters[newIndex], true);
         }
 
         return;
@@ -2004,7 +2003,7 @@ document.addEventListener('keydown', (e) => {
         }
 
         const currentIndex = historyData.findIndex(u => u.id === historySelectedId);
-        let newIndex = currentIndex;
+        let newIndex;
 
         if (e.key === 'ArrowDown') {
             newIndex = Math.min(currentIndex + 1, historyData.length - 1);

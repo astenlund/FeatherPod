@@ -12,6 +12,8 @@ using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
+using static FeatherPod.Shared.Models.NormalizationStage;
+
 namespace FeatherPod.Functions;
 
 /// <summary>
@@ -106,14 +108,7 @@ public class NormalizationFunction
 
         try
         {
-            tempInputFile = await DownloadPendingBlobAsync(containerClient, pendingBlobPath, job, tableClient, cancellationToken);
-
-            await UpdateProgressAsync(tableClient, job.JobId, new()
-            {
-                Stage = NormalizationStage.Preparing,
-                ProgressPercent = 100,
-                Message = "Preparation complete"
-            });
+            tempInputFile = await DownloadPendingBlobAsync(containerClient, pendingBlobPath, job, tableClient, Analyzing, cancellationToken);
 
             // Analyze audio
             var inputFileSize = new FileInfo(tempInputFile).Length;
@@ -152,7 +147,7 @@ public class NormalizationFunction
 
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
-                Stage = NormalizationStage.Analyzing,
+                Stage = Analyzing,
                 ProgressPercent = 100,
                 Message = "Analysis complete"
             });
@@ -212,7 +207,7 @@ public class NormalizationFunction
 
         try
         {
-            tempInputFile = await DownloadPendingBlobAsync(containerClient, pendingBlobPath, job, tableClient, cancellationToken);
+            tempInputFile = await DownloadPendingBlobAsync(containerClient, pendingBlobPath, job, tableClient, Normalizing, cancellationToken);
 
             // Apply normalization with pre-computed analysis
             var totalDuration = TimeSpan.FromMilliseconds(job.TotalDurationMs.Value);
@@ -255,7 +250,7 @@ public class NormalizationFunction
 
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
-                Stage = NormalizationStage.Normalizing,
+                Stage = Normalizing,
                 ProgressPercent = 100,
                 Message = "Normalization complete"
             });
@@ -268,7 +263,7 @@ public class NormalizationFunction
             // Upload normalized file
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
-                Stage = NormalizationStage.Finishing,
+                Stage = Finishing,
                 ProgressPercent = 0,
                 Message = "Finishing up"
             });
@@ -289,7 +284,7 @@ public class NormalizationFunction
                 _logger.LogDebug("Upload progress callback: {Percent}%", percent);
                 _ = UpdateProgressAsync(tableClient, job.JobId, new()
                 {
-                    Stage = NormalizationStage.Finishing,
+                    Stage = Finishing,
                     ProgressPercent = percent,
                     Message = "Finishing up"
                 }).ContinueWith(t => _logger.LogError(t.Exception, "Upload progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
@@ -305,7 +300,7 @@ public class NormalizationFunction
 
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
-                Stage = NormalizationStage.Finishing,
+                Stage = Finishing,
                 ProgressPercent = 100,
                 Message = "Almost done"
             });
@@ -328,7 +323,7 @@ public class NormalizationFunction
 
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
-                Stage = NormalizationStage.Finishing,
+                Stage = Finishing,
                 ProgressPercent = 0,
                 Message = "Updating episode list"
             });
@@ -338,7 +333,7 @@ public class NormalizationFunction
             // Update job status to Completed
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
-                Stage = NormalizationStage.Completed,
+                Stage = Completed,
                 ProgressPercent = 100,
                 Message = "Normalization complete",
                 TotalDuration = duration
@@ -380,6 +375,7 @@ public class NormalizationFunction
         string pendingBlobPath,
         NormalizationJob job,
         TableClient tableClient,
+        NormalizationStage stage,
         CancellationToken cancellationToken)
     {
         var pendingBlob = containerClient.GetBlobClient(pendingBlobPath);
@@ -388,7 +384,7 @@ public class NormalizationFunction
 
         await UpdateProgressAsync(tableClient, job.JobId, new()
         {
-            Stage = NormalizationStage.Preparing,
+            Stage = stage,
             ProgressPercent = 0,
             Message = "Preparing audio file"
         });
@@ -410,7 +406,7 @@ public class NormalizationFunction
             _logger.LogDebug("Download progress callback: {Percent}%", percent);
             _ = UpdateProgressAsync(tableClient, job.JobId, new()
             {
-                Stage = NormalizationStage.Preparing,
+                Stage = stage,
                 ProgressPercent = percent,
                 Message = "Preparing audio file"
             }).ContinueWith(t => _logger.LogError(t.Exception, "Download progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
@@ -523,13 +519,13 @@ public class NormalizationFunction
             // Update Status based on stage
             entity.Status = progress.Stage switch
             {
-                NormalizationStage.Completed => nameof(JobStatus.Completed),
-                NormalizationStage.Failed => nameof(JobStatus.Failed),
-                NormalizationStage.Queued => nameof(JobStatus.Queued),
+                Completed => nameof(JobStatus.Completed),
+                Failed => nameof(JobStatus.Failed),
+                Queued => nameof(JobStatus.Queued),
                 _ => nameof(JobStatus.Processing)
             };
 
-            if (progress.Stage is NormalizationStage.Completed or NormalizationStage.Failed)
+            if (progress.Stage is Completed or Failed)
             {
                 entity.CompletedAt = DateTimeOffset.UtcNow;
             }

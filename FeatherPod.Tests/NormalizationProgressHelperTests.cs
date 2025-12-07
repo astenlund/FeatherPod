@@ -1,6 +1,8 @@
 using FeatherPod.Infrastructure;
 using FeatherPod.Shared.Models;
 
+using static FeatherPod.Shared.Models.NormalizationStage;
+
 namespace FeatherPod.Tests;
 
 /// <summary>
@@ -101,13 +103,12 @@ public class NormalizationProgressHelperTests
     }
 
     [Theory]
-    [InlineData(NormalizationStage.Queued)]
-    [InlineData(NormalizationStage.Preparing)]
-    [InlineData(NormalizationStage.Analyzing)]
-    [InlineData(NormalizationStage.Normalizing)]
-    [InlineData(NormalizationStage.Finishing)]
-    [InlineData(NormalizationStage.Completed)]
-    [InlineData(NormalizationStage.Failed)]
+    [InlineData(Queued)]
+    [InlineData(Analyzing)]
+    [InlineData(Normalizing)]
+    [InlineData(Finishing)]
+    [InlineData(Completed)]
+    [InlineData(Failed)]
     public void GetStageDescription_ShouldReturnPaddedStageName(NormalizationStage stage)
     {
         var update = new ProgressUpdate { Stage = stage, ProgressPercent = 0, Message = "" };
@@ -120,7 +121,7 @@ public class NormalizationProgressHelperTests
     [Fact]
     public void GetStageDescription_ShouldReturnConsistentWidth()
     {
-        var stages = new[] { NormalizationStage.Unknown, NormalizationStage.Queued, NormalizationStage.Preparing, NormalizationStage.Analyzing, NormalizationStage.Normalizing, NormalizationStage.Finishing, NormalizationStage.Completed, NormalizationStage.Failed };
+        var stages = new[] { Unknown, Queued, Analyzing, Normalizing, Finishing, Completed, Failed };
         var updates = stages.Select(s => new ProgressUpdate { Stage = s, ProgressPercent = 0, Message = "" });
         var lengths = updates.Select(u => NormalizationProgressHelper.GetStageDescription(u).Length).Distinct().ToList();
 
@@ -130,7 +131,7 @@ public class NormalizationProgressHelperTests
     [Fact]
     public void GetStageDescription_ShouldReturnProcessingForUnknownStage()
     {
-        var update = new ProgressUpdate { Stage = NormalizationStage.Unknown, ProgressPercent = 0, Message = "" };
+        var update = new ProgressUpdate { Stage = Unknown, ProgressPercent = 0, Message = "" };
         var result = NormalizationProgressHelper.GetStageDescription(update);
 
         Assert.StartsWith("Processing", result);
@@ -141,7 +142,7 @@ public class NormalizationProgressHelperTests
     {
         var update = new ProgressUpdate
         {
-            Stage = NormalizationStage.Unknown,
+            Stage = Unknown,
             ProgressPercent = 50,
             Message = "",
             StageDisplayName = "NewServerStage"
@@ -156,7 +157,7 @@ public class NormalizationProgressHelperTests
     {
         var update = new ProgressUpdate
         {
-            Stage = NormalizationStage.Queued,
+            Stage = Queued,
             ProgressPercent = 0,
             Message = "",
             StageDisplayNameMaxLength = 20
@@ -171,7 +172,7 @@ public class NormalizationProgressHelperTests
     {
         var update = new ProgressUpdate
         {
-            Stage = NormalizationStage.Queued,
+            Stage = Queued,
             ProgressPercent = 0,
             Message = "",
             StageDisplayName = "ServerOverride"
