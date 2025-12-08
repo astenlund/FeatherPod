@@ -14,15 +14,26 @@
         <h2 id="feed-name" class="feed-name">{{FEED_TITLE}}</h2>
 
         <div id="no-key" class="state" style="display: none;">
-            <p class="error">No API key provided</p>
-            <p class="hint">Add your API key to the URL:<br><code>/{{FEED_ID}}/push#YOUR_API_KEY</code></p>
+            <h2 id="no-key-title" class="no-key-title">API key required</h2>
+            <div id="no-key-validating" class="no-key-validating" style="display: none;">
+                <p class="validating-text">Validating...</p>
+            </div>
+            <div id="no-key-content">
+                <button id="paste-key-btn" class="btn-primary">Paste here</button>
+                <div id="key-textarea-container" class="key-textarea-container" style="display: none;">
+                    <label for="key-textarea" class="visually-hidden">API key</label>
+                    <textarea id="key-textarea" class="key-textarea" placeholder="Paste your API key here..." rows="2"></textarea>
+                    <button id="save-key-btn" class="btn-secondary">Save key</button>
+                </div>
+                <p class="hint">(or add it to the url)<br><code>/{{FEED_ID}}/push#YOUR_API_KEY</code></p>
+            </div>
         </div>
 
         <div id="ready" class="state" style="display: none;">
             <div id="drop-zone">
                 <div class="drop-zone-inner">
                     <div class="drop-zone-cta">
-                        <button id="select-file" class="btn-primary">Select Audio File</button>
+                        <button id="select-file" class="btn-primary">Select audio file</button>
                         <input type="file" id="file-input" accept=".mp3,.m4a,.wav,.ogg,.flac,.aac" hidden>
                         <p class="hint drop-hint">(or drop here)</p>
                     </div>
@@ -30,15 +41,15 @@
             </div>
 
             <button id="history-toggle" class="history-toggle" type="button" aria-expanded="false" aria-controls="history-section" style="display: none;">
-                <span class="history-toggle-text">Recent Uploads</span>
+                <span class="history-toggle-text">Recent uploads</span>
             </button>
             <div id="history-section" class="history-section" style="display: none;">
                 <div class="history-panel upload-list-container">
-                    <h3 class="history-title">Recent Uploads</h3>
+                    <h3 class="history-title">Recent uploads</h3>
                     <div class="history-filters" role="tablist" aria-label="Filter uploads">
                         <button class="filter-tab filter-tab--active" role="tab" aria-selected="true" data-filter="local" id="filter-local" aria-controls="history-tabpanel">This browser</button>
-                        <button class="filter-tab" role="tab" aria-selected="false" data-filter="browser" id="filter-browser" aria-controls="history-tabpanel">Browser</button>
-                        <button class="filter-tab" role="tab" aria-selected="false" data-filter="all" id="filter-all" aria-controls="history-tabpanel">All</button>
+                        <button class="filter-tab" role="tab" aria-selected="false" data-filter="browser" id="filter-browser" aria-controls="history-tabpanel">All browsers</button>
+                        <button class="filter-tab" role="tab" aria-selected="false" data-filter="all" id="filter-all" aria-controls="history-tabpanel">All uploads</button>
                     </div>
                     <div id="history-tabpanel" role="tabpanel" aria-labelledby="filter-local">
                     <dl id="history-info" class="episode-info" style="display: none;">
@@ -74,7 +85,7 @@
         </div>
 
         <div id="success" class="state" style="display: none;">
-            <button id="upload-another" class="btn-secondary">Upload Another File</button>
+            <button id="upload-another" class="btn-secondary">Upload another file</button>
 
             <dl id="episode-info" class="episode-info" style="display: none;">
                 <dt>Title</dt>
@@ -92,13 +103,13 @@
             <p id="ep-filename" class="success-filename"></p>
 
             <div id="recent-uploads" class="recent-uploads upload-list-container" style="display: none;">
-                <h3>Recent Uploads</h3>
+                <h3>Recent uploads</h3>
                 <div class="upload-list"></div>
             </div>
         </div>
 
         <div id="error" class="state" style="display: none;">
-            <button id="try-another" class="btn-secondary">Try Another File</button>
+            <button id="try-another" class="btn-secondary">Try another file</button>
             <div class="error-card">
                 <p id="error-message" class="error-text" aria-live="assertive"></p>
             </div>

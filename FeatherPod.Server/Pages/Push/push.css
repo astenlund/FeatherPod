@@ -490,6 +490,178 @@ h1 {
 }
 
 /* ============================================================================
+   WARNING BANNER
+   ============================================================================ */
+
+.warning-banner {
+    position: fixed;
+    top: -80px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(251, 191, 36, 0.08) 100%);
+    border: 1px solid rgba(251, 191, 36, 0.35);
+    border-radius: var(--radius-lg);
+    padding: 0.75rem 2.5rem 0.75rem 1.25rem;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    z-index: 1000;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    max-width: 90%;
+    text-align: center;
+    transition: top 0.3s ease;
+}
+
+.warning-banner--visible {
+    top: 1.5rem;
+}
+
+.warning-banner-text {
+    display: block;
+}
+
+.warning-banner-dismiss {
+    position: absolute;
+    top: 50%;
+    right: 0.75rem;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0.25rem;
+    line-height: 1;
+    opacity: 0.7;
+    transition: opacity var(--transition-fast), color var(--transition-fast);
+}
+
+.warning-banner-dismiss:hover {
+    opacity: 1;
+    color: var(--text-secondary);
+}
+
+@media (max-width: 768px) {
+    .warning-banner {
+        max-width: calc(100% - 2rem);
+        font-size: 0.8rem;
+        padding: 0.6rem 2.25rem 0.6rem 1rem;
+    }
+}
+
+/* ============================================================================
+   NO-KEY STATE
+   ============================================================================ */
+
+.container.state-no-key > h1,
+.container.state-no-key > .feed-name {
+    display: none;
+}
+
+.no-key-title {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.no-key-validating {
+    text-align: center;
+    padding: 2rem 0;
+}
+
+.validating-text {
+    color: var(--text-secondary);
+    font-size: 1rem;
+    background: linear-gradient(
+        90deg,
+        var(--text-secondary) 0%,
+        var(--text-secondary) 40%,
+        var(--text-primary) 50%,
+        var(--text-secondary) 60%,
+        var(--text-secondary) 100%
+    );
+    background-size: 200% 100%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+    animation: text-shimmer 2s ease-in-out infinite;
+}
+
+#no-key-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.25rem;
+    max-width: 340px;
+    margin: 0 auto;
+    animation: blur-fade-in 0.3s ease both;
+}
+
+#no-key-content .btn-primary {
+    width: auto;
+    padding: 1.2rem 3rem;
+}
+
+#no-key-content .hint {
+    line-height: 1.7;
+    margin-top: 1.5rem;
+    opacity: 0.7;
+}
+
+#no-key-content .hint code {
+    background: transparent;
+    padding: 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.key-textarea-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    width: 100%;
+    max-width: 340px;
+    animation: blur-fade-in 0.3s ease both;
+}
+
+.key-textarea {
+    background: var(--bg-surface);
+    border: 2px solid var(--border-muted);
+    border-radius: var(--radius-lg);
+    padding: 0.75rem;
+    color: var(--text-body);
+    font-family: monospace;
+    font-size: 0.85rem;
+    resize: none;
+    min-height: 60px;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.key-textarea:focus {
+    outline: none;
+    border-color: var(--primary-400);
+    box-shadow: 0 0 0 3px var(--primary-a20);
+}
+
+.key-textarea::placeholder {
+    color: var(--text-muted);
+    font-family: var(--font-body);
+}
+
+.key-textarea:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.key-textarea-container .btn-secondary {
+    margin-top: 0;
+}
+
+@media (max-width: 768px) {
+    .key-textarea-container {
+        max-width: 280px;
+    }
+}
+
+/* ============================================================================
    SUCCESS STATE
    ============================================================================ */
 
@@ -1202,6 +1374,18 @@ h1 {
 
 .mobile-only {
     display: none;
+}
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
 }
 
 /* ============================================================================

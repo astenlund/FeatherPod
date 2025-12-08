@@ -41,7 +41,18 @@ const states = ['no-key', 'ready', 'processing', 'success', 'error'];
 const JOB_STORAGE_KEY = 'featherpod_job_' + FEED_ID;
 const HISTORY_STORAGE_KEY = 'featherpod_history_' + FEED_ID;
 const HISTORY_FILTER_KEY = 'featherpod_history_filter_' + FEED_ID;
+const API_KEY_SESSION_KEY = 'featherpod_api_key_' + FEED_ID;
+const API_KEY_LOCAL_KEY = 'featherpod_api_key_local_' + FEED_ID;
 const MAX_LOCAL_HISTORY = 50;
+
+// No-key state UI strings
+const STR_PASTE_KEY_BELOW = 'Paste key below';
+const STR_PASTE_KEY = 'Paste here';
+const STR_SAVE_KEY = 'Save key';
+const STR_API_KEY_REQUIRED = 'API key required';
+const STR_INVALID_KEY = 'Invalid key';
+const STR_NO_ACCESS = 'No access';
+const STR_NO_FEED_ACCESS = 'This key does not have access to this feed';
 
 /** @type {Array<Object>|null} */
 let recentUploadsData = null;
@@ -56,6 +67,11 @@ let historySelectedId = null;
 let historyFilter = 'local';
 /** @type {number} - Counter for tracking pending filter requests (prevents race conditions) */
 let pendingFilterRequest = 0;
+
+/** @type {Array<Object>|null} - Cached browser uploads from server */
+let cachedBrowserUploads = null;
+/** @type {Array<Object>|null} - Cached all uploads from server */
+let cachedAllUploads = null;
 
 /** @type {number|null} - Animation ID for title text animation */
 let titleAnimationId = null;
@@ -225,25 +241,228 @@ function cacheLayoutDimensions() {
     document.documentElement.style.setProperty('--history-collapsed-margin', cachedCollapsedMargin + 'px');
 }
 
+/**
+ * @typedef {Object} ApiKeyValidationResult
+ * @property {boolean} valid - Whether the API key is valid
+ * @property {UserInfo|null} user - User object from /api/users/me if valid
+ * @property {boolean} feedAccess - Whether the user has access to this feed
+ * @property {string|null} error - Error message if validation failed
+ */
+
+/**
+ * @typedef {Object} UserInfo
+ * @property {string} id - User ID
+ * @property {string} role - User role ('Admin' or 'FeedOwner')
+ * @property {string[]} ownedFeeds - Array of feed IDs the user owns (for FeedOwner role)
+ */
+
+/**
+ * Validate an API key by calling /api/users/me.
+ * Checks both key validity and feed access (Admin has all, FeedOwner needs feed in ownedFeeds).
+ * @param {string} key - The API key to validate
+ * @returns {Promise<ApiKeyValidationResult>}
+ */
+async function validateApiKey(key) {
+    if (!key || key.trim().length === 0) {
+        return { valid: false, user: null, feedAccess: false, error: 'API key is empty' };
+    }
+
+    try {
+        const response = await fetch('/api/users/me', {
+            headers: { 'X-API-Key': key.trim() }
+        });
+
+        if (!response.ok) {
+            if (response.status === 401) {
+                return { valid: false, user: null, feedAccess: false, error: STR_INVALID_KEY };
+            }
+
+            return { valid: false, user: null, feedAccess: false, error: 'Validation failed' };
+        }
+
+        const user = await response.json();
+
+        // Check feed access: Admin has all, FeedOwner needs feed in ownedFeeds
+        const feedAccess = user.role === 'Admin' || (user.role === 'FeedOwner' && user.ownedFeeds && user.ownedFeeds.includes(FEED_ID));
+
+        return { valid: true, user, feedAccess, error: null };
+    } catch (err) {
+        return { valid: false, user: null, feedAccess: false, error: 'Network error' };
+    }
+}
+
+/**
+ * Save API key to both sessionStorage and localStorage, and set the global apiKey.
+ * @param {string} key - The API key to save
+ */
+function saveApiKey(key) {
+    const trimmedKey = key.trim();
+    sessionStorage.setItem(API_KEY_SESSION_KEY, trimmedKey);
+    localStorage.setItem(API_KEY_LOCAL_KEY, trimmedKey);
+    apiKey = trimmedKey;
+}
+
+/**
+ * Clear API key from both sessionStorage and localStorage.
+ */
+function clearApiKey() {
+    sessionStorage.removeItem(API_KEY_SESSION_KEY);
+    localStorage.removeItem(API_KEY_LOCAL_KEY);
+    apiKey = null;
+}
+
+/**
+ * Get stored API key with precedence: sessionStorage > localStorage.
+ * @returns {string|null} The stored API key, or null if none found
+ */
+function getStoredApiKey() {
+    return sessionStorage.getItem(API_KEY_SESSION_KEY) || localStorage.getItem(API_KEY_LOCAL_KEY);
+}
+
+/**
+ * Show a warning banner at the top of the page that auto-dismisses.
+ * @param {string} message - Warning message to display
+ * @param {number} [duration=5000] - Duration in ms before auto-dismiss
+ */
+function showWarningBanner(message, duration = 5000) {
+    const existingBanner = document.getElementById('warning-banner');
+    if (existingBanner) {
+        existingBanner.remove();
+    }
+
+    const banner = document.createElement('div');
+    banner.id = 'warning-banner';
+    banner.className = 'warning-banner';
+
+    const textSpan = document.createElement('span');
+    textSpan.className = 'warning-banner-text';
+    textSpan.textContent = message;
+    banner.appendChild(textSpan);
+
+    const dismissBtn = document.createElement('button');
+    dismissBtn.className = 'warning-banner-dismiss';
+    dismissBtn.setAttribute('aria-label', 'Dismiss');
+    dismissBtn.textContent = '×';
+    banner.appendChild(dismissBtn);
+
+    document.body.appendChild(banner);
+
+    // Dismiss on click
+    banner.querySelector('.warning-banner-dismiss').addEventListener('click', () => {
+        dismissBanner();
+    });
+
+    // Trigger slide-in animation
+    requestAnimationFrame(() => {
+        banner.classList.add('warning-banner--visible');
+    });
+
+    // Auto-dismiss after duration
+    const timeoutId = setTimeout(dismissBanner, duration);
+
+    function dismissBanner() {
+        clearTimeout(timeoutId);
+        banner.classList.remove('warning-banner--visible');
+        setTimeout(() => banner.remove(), 300);
+    }
+}
+
 async function init() {
     // Cache layout dimensions for consistent animations
     cacheLayoutDimensions();
     // Recalculate on resize
     window.addEventListener('resize', cacheLayoutDimensions);
 
+    // Show validating state while we check the key
+    showState('no-key');
+    setNoKeyValidating(true);
+
+    /**
+     * Show the no-key UI with an optional error state.
+     * @param {'invalid'|'no-access'|null} [errorType=null] - Type of error to display
+     */
+    function showNoKeyUI(errorType = null) {
+        if (errorType) {
+            clearApiKey();
+        }
+        setNoKeyValidating(false);
+        setNoKeyError(errorType);
+        initNoKeyState();
+    }
+
+    /**
+     * Try to validate and use a fallback key when the primary key fails.
+     * @param {string|null} fallbackKey - The fallback key to try
+     * @param {string} warningMessage - Message to show if fallback succeeds
+     * @param {'invalid'|'no-access'} errorType - Error type if both keys fail
+     * @returns {Promise<boolean>} True if fallback succeeded, false if should show no-key UI
+     */
+    async function tryFallbackKey(fallbackKey, warningMessage, errorType) {
+        if (!fallbackKey) {
+            showNoKeyUI(errorType);
+
+            return false;
+        }
+
+        const fallbackValidation = await validateApiKey(fallbackKey);
+        if (fallbackValidation.valid && fallbackValidation.feedAccess) {
+            showWarningBanner(warningMessage);
+            saveApiKey(fallbackKey);
+
+            return true;
+        }
+
+        showNoKeyUI(errorType);
+
+        return false;
+    }
+
+    // Storage precedence: fragment > sessionStorage > localStorage
     const fragment = window.location.hash.slice(1);
+    const storedKey = getStoredApiKey();
+
     if (fragment) {
-        apiKey = fragment;
-        sessionStorage.setItem('featherpod_api_key_' + FEED_ID, apiKey);
+        // Clear fragment from URL immediately for cleaner UX
         history.replaceState(null, '', window.location.pathname + window.location.search);
-    } else {
-        const storedKey = sessionStorage.getItem('featherpod_api_key_' + FEED_ID);
-        if (storedKey) {
-            apiKey = storedKey;
+
+        const validation = await validateApiKey(fragment);
+
+        if (validation.valid && validation.feedAccess) {
+            // Fragment key is valid with feed access
+            saveApiKey(fragment);
+        } else if (validation.valid && !validation.feedAccess) {
+            // Fragment key is valid but no feed access - try fallback
+            if (!await tryFallbackKey(storedKey, 'URL key does not have access to this feed. Using saved key.', 'no-access')) {
+                return;
+            }
         } else {
-            showState('no-key');
+            // Fragment key is invalid - try fallback
+            if (!await tryFallbackKey(storedKey, 'Invalid URL key. Using saved key.', 'invalid')) {
+                return;
+            }
+        }
+    } else if (storedKey) {
+        // No fragment, try stored key
+        const validation = await validateApiKey(storedKey);
+
+        if (validation.valid && validation.feedAccess) {
+            // Stored key is valid - ensure it's in both storages
+            saveApiKey(storedKey);
+        } else if (validation.valid && !validation.feedAccess) {
+            showNoKeyUI('no-access');
+
+            return;
+        } else {
+            // Stored key is invalid - no error message, just show paste UI
+            showNoKeyUI(null);
+
             return;
         }
+    } else {
+        // No key available
+        showNoKeyUI(null);
+
+        return;
     }
 
     // Debug: show error state with ?error query param (dev only)
@@ -261,6 +480,231 @@ async function init() {
     showState('ready');
     await initHistorySection();
     document.getElementById('select-file').focus();
+}
+
+/** @type {boolean} - Whether initNoKeyState has already been called (prevents duplicate listeners) */
+let noKeyStateInitialized = false;
+
+/**
+ * Set the no-key state to validating mode (shows loading spinner, hides other elements).
+ * @param {boolean} validating - Whether currently validating
+ */
+function setNoKeyValidating(validating) {
+    const validatingEl = document.getElementById('no-key-validating');
+    const contentEl = document.getElementById('no-key-content');
+    const noKeyTitleEl = document.getElementById('no-key-title');
+
+    if (validating) {
+        validatingEl.style.display = 'block';
+        contentEl.style.display = 'none';
+        if (noKeyTitleEl) {
+            noKeyTitleEl.textContent = 'Validating...';
+        }
+    } else {
+        validatingEl.style.display = 'none';
+        contentEl.style.display = 'block';
+        if (noKeyTitleEl) {
+            noKeyTitleEl.textContent = STR_API_KEY_REQUIRED;
+        }
+    }
+}
+
+/**
+ * Set the no-key state error display.
+ * Updates the no-key title to show error state.
+ * @param {'invalid'|'no-access'|null} errorType - Type of error, or null to clear
+ */
+function setNoKeyError(errorType) {
+    const noKeyTitleEl = document.getElementById('no-key-title');
+    if (!noKeyTitleEl) {
+        return;
+    }
+
+    if (errorType === 'no-access') {
+        noKeyTitleEl.textContent = STR_NO_ACCESS;
+    } else if (errorType === 'invalid') {
+        noKeyTitleEl.textContent = STR_INVALID_KEY;
+    } else {
+        noKeyTitleEl.textContent = STR_API_KEY_REQUIRED;
+    }
+}
+
+/**
+ * Initialize the no-key state UI with paste button and textarea functionality.
+ * Only attaches event listeners once.
+ */
+function initNoKeyState() {
+    if (noKeyStateInitialized) {
+        return;
+    }
+    noKeyStateInitialized = true;
+
+    const pasteBtn = document.getElementById('paste-key-btn');
+    const textareaContainer = document.getElementById('key-textarea-container');
+    const textarea = document.getElementById('key-textarea');
+    const saveBtn = document.getElementById('save-key-btn');
+
+    /** @type {boolean} - Guard to prevent concurrent validation attempts */
+    let isValidating = false;
+
+    /**
+     * Morph the paste button into the textarea input.
+     * @param {boolean} [preserveTitle=false] - If true, don't change the title (e.g., error title already shown)
+     */
+    function morphToTextarea(preserveTitle = false) {
+        pasteBtn.style.display = 'none';
+        textareaContainer.style.display = 'flex';
+        if (!preserveTitle) {
+            const noKeyTitleEl = document.getElementById('no-key-title');
+            if (noKeyTitleEl) {
+                noKeyTitleEl.textContent = STR_PASTE_KEY_BELOW;
+            }
+        }
+        textarea.focus();
+    }
+
+    /**
+     * Reset the no-key state to initial (paste button visible).
+     */
+    function resetNoKeyState() {
+        pasteBtn.style.display = 'block';
+        pasteBtn.disabled = false;
+        pasteBtn.textContent = STR_PASTE_KEY;
+        textareaContainer.style.display = 'none';
+        textarea.value = '';
+        textarea.disabled = false;
+        saveBtn.disabled = false;
+        saveBtn.textContent = STR_SAVE_KEY;
+        setNoKeyError(null);
+    }
+
+    /**
+     * Transition to ready state after successful key validation.
+     */
+    async function transitionToReadyState() {
+        resetNoKeyState();
+        showState('ready');
+        await initHistorySection();
+        document.getElementById('select-file').focus();
+    }
+
+    /**
+     * Validate the key from textarea and proceed if valid.
+     * Guarded to prevent concurrent validation attempts.
+     */
+    async function validateTextareaKey() {
+        if (isValidating) {
+            return;
+        }
+
+        const key = textarea.value.trim();
+        if (!key) {
+            showWarningBanner('Please enter an API key');
+
+            return;
+        }
+
+        isValidating = true;
+
+        // Show loading state
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Validating...';
+        textarea.disabled = true;
+
+        try {
+            const validation = await validateApiKey(key);
+
+            if (validation.valid && validation.feedAccess) {
+                saveApiKey(key);
+                await transitionToReadyState();
+            } else if (validation.valid && !validation.feedAccess) {
+                saveBtn.disabled = false;
+                saveBtn.textContent = STR_SAVE_KEY;
+                textarea.disabled = false;
+                showWarningBanner(STR_NO_FEED_ACCESS);
+            } else {
+                saveBtn.disabled = false;
+                saveBtn.textContent = STR_SAVE_KEY;
+                textarea.disabled = false;
+                showWarningBanner(validation.error || STR_INVALID_KEY);
+            }
+        } finally {
+            isValidating = false;
+        }
+    }
+
+    // Paste button click handler
+    pasteBtn.addEventListener('click', async () => {
+        if (!navigator.clipboard || !navigator.clipboard.readText) {
+            // Clipboard API not available, morph to textarea
+            morphToTextarea();
+
+            return;
+        }
+
+        try {
+            pasteBtn.disabled = true;
+            pasteBtn.textContent = 'Validating...';
+
+            const clipboardText = await navigator.clipboard.readText();
+
+            if (!clipboardText || clipboardText.trim().length === 0) {
+                // Clipboard empty, morph to textarea
+                pasteBtn.disabled = false;
+                pasteBtn.textContent = STR_PASTE_KEY;
+                morphToTextarea();
+
+                return;
+            }
+
+            const validation = await validateApiKey(clipboardText.trim());
+
+            if (validation.valid && validation.feedAccess) {
+                saveApiKey(clipboardText.trim());
+                await transitionToReadyState();
+            } else {
+                // Key was invalid or no access - just show textarea without error
+                // (user may not realize we already tried their clipboard)
+                morphToTextarea();
+            }
+        } catch (err) {
+            // Permission denied or other error, morph to textarea
+            pasteBtn.disabled = false;
+            pasteBtn.textContent = STR_PASTE_KEY;
+            morphToTextarea();
+        }
+    });
+
+    // Textarea input handler - reset title to textarea mode on typing
+    textarea.addEventListener('input', () => {
+        const noKeyTitleEl = document.getElementById('no-key-title');
+        if (noKeyTitleEl) {
+            noKeyTitleEl.textContent = STR_PASTE_KEY_BELOW;
+        }
+    });
+
+    // Textarea paste handler - validate immediately on paste
+    textarea.addEventListener('paste', async () => {
+        // Let the paste complete, then validate
+        setTimeout(async () => {
+            if (textarea.value.trim()) {
+                await validateTextareaKey();
+            }
+        }, 0);
+    });
+
+    // Textarea Enter key handler
+    textarea.addEventListener('keydown', async (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            await validateTextareaKey();
+        }
+    });
+
+    // Save button handler
+    saveBtn.addEventListener('click', async () => {
+        await validateTextareaKey();
+    });
 }
 
 document.getElementById('select-file').addEventListener('click', () => {
@@ -369,9 +813,9 @@ async function uploadFile(file) {
             });
             monitorNormalizationJob(jobResponse.jobId, file.name, file.size);
         } else if (response.status === 401) {
-            showError('Invalid API key');
+            showError(STR_INVALID_KEY);
         } else if (response.status === 403) {
-            showError('API key does not have access to this feed');
+            showError(STR_NO_FEED_ACCESS);
         } else {
             const error = tryParseJson(response.body);
             showError(error?.error || 'Upload failed');
@@ -447,6 +891,10 @@ function formatDuration(duration) {
 async function showSuccess(episodeOrFileName) {
     showState('success');
 
+    // Invalidate cache since we just uploaded
+    cachedBrowserUploads = null;
+    cachedAllUploads = null;
+
     // Save to localStorage if we have full episode data
     if (typeof episodeOrFileName === 'object' && episodeOrFileName !== null) {
         saveToLocalHistory(episodeOrFileName);
@@ -472,27 +920,13 @@ async function showSuccess(episodeOrFileName) {
 }
 
 /**
- * Fetch recent browser uploads for this feed.
+ * Fetch recent browser uploads for this feed (uses cache, returns first 5).
  * @returns {Promise<Array<{id: string, title: string, fileName: string, fileSize: number, duration: string, uploadedAt: string|null}>>}
  */
 async function fetchRecentUploads() {
-    try {
-        const response = await fetch('/api/feeds/' + FEED_ID + '/episodes/recent-uploads?source=Browser&limit=5', {
-            headers: { 'X-API-Key': apiKey }
-        });
+    const uploads = await fetchBrowserUploads();
 
-        if (!response.ok) {
-            console.warn('Failed to fetch recent uploads:', response.status);
-
-            return [];
-        }
-
-        return await response.json();
-    } catch (err) {
-        console.warn('Error fetching recent uploads:', err);
-
-        return [];
-    }
+    return uploads.slice(0, 5);
 }
 
 /**
@@ -814,7 +1248,7 @@ function toggleHistorySection(expand) {
     toggle.setAttribute('aria-expanded', newState.toString());
 
     // Animate text change: 1) delay, 2) fade out, 3) resize, 4) fade in, 5) end
-    const newText = newState ? '← Back' : 'Recent Uploads';
+    const newText = newState ? '← Back' : 'Recent uploads';
     const textSpan = toggle.querySelector('.history-toggle-text');
     const TEXT_FADE = 150;
     const WIDTH_ANIM = 150;
@@ -839,7 +1273,7 @@ function toggleHistorySection(expand) {
         textSpan.textContent = newText;
         toggle.style.width = 'auto';
         const newWidth = toggle.offsetWidth;
-        textSpan.textContent = newState ? 'Recent Uploads' : '← Back'; // restore old text
+        textSpan.textContent = newState ? 'Recent uploads' : '← Back'; // restore old text
         textSpan.style.visibility = '';
         toggle.style.width = currentWidth + 'px';
 
@@ -1017,34 +1451,99 @@ function toggleHistorySection(expand) {
 }
 
 /**
- * Fetch uploads based on current filter mode.
- * - 'local': Returns episodes from localStorage (no network request)
- * - 'browser': Fetches recent browser uploads from API (source=Browser)
- * - 'all': Fetches all recent uploads from API (no source filter)
+ * Fetch and cache browser uploads from server.
+ * Cache is invalidated in showSuccess() after each upload.
+ * @returns {Promise<Array<Episode>>} Array of browser uploads
+ */
+async function fetchBrowserUploads() {
+    if (cachedBrowserUploads !== null) {
+        return cachedBrowserUploads;
+    }
+
+    try {
+        const response = await fetch('/api/feeds/' + FEED_ID + '/episodes/recent-uploads?source=Browser&limit=50', {
+            headers: { 'X-API-Key': apiKey }
+        });
+
+        if (!response.ok) {
+            return cachedBrowserUploads || [];
+        }
+
+        cachedBrowserUploads = await response.json();
+
+        return cachedBrowserUploads;
+    } catch (err) {
+        console.warn('Error fetching browser uploads:', err);
+
+        return cachedBrowserUploads || [];
+    }
+}
+
+/**
+ * Fetch and cache all uploads from server.
+ * Cache is invalidated in showSuccess() after each upload.
+ * @returns {Promise<Array<Episode>>} Array of all uploads
+ */
+async function fetchAllUploads() {
+    if (cachedAllUploads !== null) {
+        return cachedAllUploads;
+    }
+
+    try {
+        const response = await fetch('/api/feeds/' + FEED_ID + '/episodes/recent-uploads?limit=50', {
+            headers: { 'X-API-Key': apiKey }
+        });
+
+        if (!response.ok) {
+            return cachedAllUploads || [];
+        }
+
+        cachedAllUploads = await response.json();
+
+        return cachedAllUploads;
+    } catch (err) {
+        console.warn('Error fetching all uploads:', err);
+
+        return cachedAllUploads || [];
+    }
+}
+
+/**
+ * Fetch uploads based on current filter mode. Uses cached data when available.
+ * - 'local': Returns episodes from localStorage, filtered to only include episodes that still exist on server
+ * - 'browser': Returns cached browser uploads from API (source=Browser)
+ * - 'all': Returns cached all uploads from API (no source filter)
  * @returns {Promise<Array<Episode>>} Array of episodes matching the current filter
  */
 async function fetchHistoryByFilter() {
     if (historyFilter === 'local') {
-        return loadLocalHistory();
-    } else if (historyFilter === 'browser') {
-        return await fetchRecentUploads();
-    } else {
-        // 'all' - fetch without source filter
-        try {
-            const response = await fetch('/api/feeds/' + FEED_ID + '/episodes/recent-uploads?limit=20', {
-                headers: { 'X-API-Key': apiKey }
-            });
-
-            if (!response.ok) {
-                return [];
-            }
-
-            return await response.json();
-        } catch (err) {
-            console.warn('Error fetching all uploads:', err);
-
+        // Get local history and validate against cached server data
+        const localHistory = loadLocalHistory();
+        if (localHistory.length === 0) {
             return [];
         }
+
+        // Use cached browser uploads to check which local episodes still exist
+        const serverEpisodes = await fetchBrowserUploads();
+        const serverIds = new Set(serverEpisodes.map(e => e.id));
+
+        // Filter local history to only include episodes that exist on server
+        const validHistory = localHistory.filter(e => serverIds.has(e.id));
+
+        // Update localStorage to remove deleted episodes
+        if (validHistory.length !== localHistory.length) {
+            try {
+                localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(validHistory));
+            } catch (e) {
+                // Ignore localStorage errors
+            }
+        }
+
+        return validHistory;
+    } else if (historyFilter === 'browser') {
+        return await fetchBrowserUploads();
+    } else {
+        return await fetchAllUploads();
     }
 }
 
