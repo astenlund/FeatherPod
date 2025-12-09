@@ -9,9 +9,9 @@ const long MaxUploadSizeBytes = 500 * 1024 * 1024; // 500 MB
 var builder = WebApplication.CreateBuilder(args);
 
 // Configure port from environment variable (for Azure App Service)
-// Use 0.0.0.0 in Azure (PORT is set), localhost for local dev (clickable URL)
-var port = Environment.GetEnvironmentVariable("PORT");
-builder.WebHost.UseUrls(port != null ? $"http://0.0.0.0:{port}" : "http://localhost:8080");
+// Use 0.0.0.0 to allow LAN access for mobile testing
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
+builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 // Configure Kestrel for large file uploads
 builder.WebHost.ConfigureKestrel(options =>
