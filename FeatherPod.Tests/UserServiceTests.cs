@@ -1,6 +1,5 @@
 using FeatherPod.Shared.Models;
 using FeatherPod.Server.Services;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace FeatherPod.Tests;
@@ -10,7 +9,6 @@ public class UserServiceTests : IDisposable
 {
     private readonly string _testDirectory;
     private readonly ILogger<UserService> _logger;
-    private readonly IConfiguration _configuration;
     private readonly List<UserService> _servicesToDispose = [];
 
     public UserServiceTests()
@@ -24,18 +22,14 @@ public class UserServiceTests : IDisposable
         });
 
         _logger = loggerFactory.CreateLogger<UserService>();
-
-        // Create minimal config (no legacy API key for most tests)
-        _configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string>()!)
-            .Build();
     }
 
-    private UserService CreateService(IConfiguration? config = null)
+    private UserService CreateService()
     {
         var blobStorage = new TestBlobStorageService(_testDirectory);
-        var service = new UserService(blobStorage, config ?? _configuration, _logger);
+        var service = new UserService(blobStorage, _logger);
         _servicesToDispose.Add(service);
+
         return service;
     }
 
@@ -525,37 +519,7 @@ public class UserServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task LoadUsersAsync_ShouldMigrateLegacyApiKey()
-    {
-        // Arrange
-        var configData = new Dictionary<string, string>
-        {
-            ["ApiKey"] = "legacy-test-key"
-        };
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(configData!)
-            .Build();
-
-        var service = CreateService(config);
-
-        // Act
-        await service.LoadUsersAsync();
-
-        // Assert - Admin user should be created
-        var admin = await service.GetUserByIdAsync("admin");
-        Assert.NotNull(admin);
-        Assert.Equal("admin", admin.Id);
-        Assert.Equal("Administrator", admin.Name);
-        Assert.Equal(UserRole.Admin, admin.Role);
-
-        // Legacy key should work
-        var retrievedByKey = await service.GetUserByApiKeyAsync("legacy-test-key");
-        Assert.NotNull(retrievedByKey);
-        Assert.Equal("admin", retrievedByKey.Id);
-    }
-
-    [Fact]
-    public async Task LoadUsersAsync_ShouldNotMigrate_WhenNoLegacyKey()
+    public async Task LoadUsersAsync_ShouldStartEmpty_WhenNoUsersExist()
     {
         // Arrange
         var service = CreateService();
@@ -563,48 +527,9 @@ public class UserServiceTests : IDisposable
         // Act
         await service.LoadUsersAsync();
 
-        // Assert - No admin user should be created
+        // Assert - No users should exist
         var users = await service.GetAllUsersAsync();
         Assert.Empty(users);
-    }
-
-    [Fact]
-    public async Task LoadUsersAsync_ShouldNotMigrate_WhenUsersAlreadyExist()
-    {
-        // Arrange
-        var configData = new Dictionary<string, string>
-        {
-            ["ApiKey"] = "legacy-test-key"
-        };
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(configData!)
-            .Build();
-
-        var service = CreateService(config);
-        await service.LoadUsersAsync();
-
-        // Create another user
-        var user = new User
-        {
-            Id = "user1",
-            Name = "User One",
-            Email = "user1@example.com",
-            Role = UserRole.FeedOwner,
-            OwnedFeeds = [],
-            ApiKeyHash = "",
-            CreatedAt = DateTime.UtcNow
-        };
-        await service.CreateUserAsync(user);
-
-        // Create new service instance with same storage
-        var service2 = CreateService(config);
-
-        // Act
-        await service2.LoadUsersAsync();
-
-        // Assert - Should still have both users (admin from migration + user1)
-        var users = await service2.GetAllUsersAsync();
-        Assert.Equal(2, users.Count);
     }
 
     [Fact]

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FeatherPod.Shared.Models;
 using FeatherPod.Server.Services;
+using FeatherPod.Server.Validation;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FeatherPod.Server.Controllers;
@@ -104,6 +105,12 @@ public class UsersController : ControllerBase
             return BadRequest(new { error = "User ID is required" });
         }
 
+        var userId = idElement.GetString()!;
+        if (!InputValidation.IsValidUserId(userId))
+        {
+            return BadRequest(new { error = InputValidation.GetUserIdValidationError(userId) });
+        }
+
         if (!body.TryGetProperty("name", out var nameElement) || string.IsNullOrWhiteSpace(nameElement.GetString()))
         {
             return BadRequest(new { error = "Name is required" });
@@ -127,7 +134,7 @@ public class UsersController : ControllerBase
 
         var user = new User
         {
-            Id = idElement.GetString()!,
+            Id = userId,
             Name = nameElement.GetString()!,
             Email = email,
             Role = role,

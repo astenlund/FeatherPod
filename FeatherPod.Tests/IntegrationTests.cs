@@ -1,8 +1,11 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Xml.Linq;
+using FeatherPod.Server.Services;
+using FeatherPod.Shared.Models;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -14,7 +17,7 @@ public class IntegrationTestCollection
 }
 
 [Collection("IntegrationTests")]
-public class IntegrationTests : IDisposable
+public sealed class IntegrationTests : IDisposable
 {
     private readonly FeatherPodWebApplicationFactory _factory;
     private readonly HttpClient _client;
@@ -1037,7 +1040,10 @@ public class IntegrationTests : IDisposable
 
 internal class FeatherPodWebApplicationFactory : WebApplicationFactory<Program>
 {
-    public const string ApiKey = "test-api-key-12345";
+    // API key in new fp_ format: fp_{userId}_{secret}
+    // The secret is 22 chars base64url (128 bits)
+    public const string ApiKey = "fp_test-admin_AAAAAAAAAAAAAAAAAAAAAA";
+    private const string TestAdminUserId = "test-admin";
 
     private readonly string ContainerName;
 
@@ -1059,10 +1065,7 @@ internal class FeatherPodWebApplicationFactory : WebApplicationFactory<Program>
                 ["Azure:ContainerName"] = ContainerName,
 
                 // Podcast configuration (BaseUrl only)
-                ["Podcast:BaseUrl"] = "http://localhost:5000",
-
-                // API Key for authenticated endpoints
-                ["ApiKey"] = ApiKey
+                ["Podcast:BaseUrl"] = "http://localhost:5000"
             }!);
         });
 
@@ -1075,7 +1078,70 @@ internal class FeatherPodWebApplicationFactory : WebApplicationFactory<Program>
             logging.SetMinimumLevel(LogLevel.Information);
         });
 
-        return base.CreateHost(builder);
+        // Create the host
+        var host = base.CreateHost(builder);
+
+        // Pre-seed the admin user for tests
+        SeedTestUserAsync(host.Services).GetAwaiter().GetResult();
+
+        return host;
+    }
+
+    private static async Task SeedTestUserAsync(IServiceProvider services)
+    {
+        using var scope = services.CreateScope();
+        var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
+
+        // Check if user already exists
+        var existingUser = await userService.GetUserByIdAsync(TestAdminUserId);
+        if (existingUser != null)
+        {
+            return;
+        }
+
+        // Create the test admin user with a known API key
+        // We need to manually compute the hash to match our hardcoded API key
+        var blobStorage = scope.ServiceProvider.GetRequiredService<IBlobStorageService>();
+
+        // Extract secret from fp_{userId}_{secret}
+        var secret = ApiKey[(ApiKey.IndexOf('_', 3) + 1)..];
+
+        // Generate a deterministic salt for testing (all zeros for simplicity)
+        var salt = Convert.ToBase64String(new byte[16]);
+
+        // Compute hash: SHA256(salt + secret)
+        var saltBytes = Convert.FromBase64String(salt);
+        var secretBytes = System.Text.Encoding.UTF8.GetBytes(secret);
+        var combined = new byte[saltBytes.Length + secretBytes.Length];
+        Buffer.BlockCopy(saltBytes, 0, combined, 0, saltBytes.Length);
+        Buffer.BlockCopy(secretBytes, 0, combined, saltBytes.Length, secretBytes.Length);
+        var hashBytes = System.Security.Cryptography.SHA256.HashData(combined);
+        var hash = Convert.ToHexString(hashBytes).ToLowerInvariant();
+
+        // Create users.json with the test admin user
+        var usersMetadata = new UsersMetadata
+        {
+            Users =
+            [
+                new User
+                {
+                    Id = TestAdminUserId,
+                    Name = "Test Admin",
+                    Email = "test@example.com",
+                    Role = UserRole.Admin,
+                    ApiKeyHash = hash,
+                    ApiKeySalt = salt,
+                    OwnedFeeds = [],
+                    CreatedAt = DateTime.UtcNow
+                }
+            ]
+        };
+
+        var json = System.Text.Json.JsonSerializer.Serialize(usersMetadata, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        await blobStorage.SaveUsersConfigAsync(json);
+
+        // Reload user service to pick up the new user
+        await userService.LoadUsersAsync();
     }
 
     protected override void Dispose(bool disposing)

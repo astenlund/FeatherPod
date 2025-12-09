@@ -597,11 +597,18 @@ function initNoKeyState() {
             return;
         }
 
-        const key = textarea.value.trim();
+        let key = textarea.value.trim();
         if (!key) {
             showWarningBanner('Please enter an API key');
 
             return;
+        }
+
+        // Auto-extract fp_ prefixed key if pasted with surrounding text
+        // Format: fp_{userId}_{secret} where secret is 22 chars base64url
+        const fpKeyMatch = key.match(/fp_[a-zA-Z0-9-]+_[A-Za-z0-9_-]{22}(?=[^A-Za-z0-9_-]|$)/);
+        if (fpKeyMatch) {
+            key = fpKeyMatch[0];
         }
 
         isValidating = true;
@@ -636,7 +643,7 @@ function initNoKeyState() {
     // Paste button click handler
     pasteBtn.addEventListener('click', async () => {
         if (!navigator.clipboard || !navigator.clipboard.readText) {
-            // Clipboard API not available, morph to textarea
+            // Clipboard API not available (requires secure context: HTTPS or localhost)
             morphToTextarea();
 
             return;
@@ -657,14 +664,25 @@ function initNoKeyState() {
                 return;
             }
 
-            const validation = await validateApiKey(clipboardText.trim());
+            // Auto-extract fp_ prefixed key if pasted with surrounding text
+            // Format: fp_{userId}_{secret} where secret is 22 chars base64url
+            let apiKeyToValidate = clipboardText.trim();
+            // Match fp_ key - use lookahead for end boundary to avoid issues with \b and special chars
+            const fpKeyMatch = clipboardText.match(/fp_[a-zA-Z0-9-]+_[A-Za-z0-9_-]{22}(?=[^A-Za-z0-9_-]|$)/);
+            if (fpKeyMatch) {
+                apiKeyToValidate = fpKeyMatch[0];
+            }
+
+            const validation = await validateApiKey(apiKeyToValidate);
 
             if (validation.valid && validation.feedAccess) {
-                saveApiKey(clipboardText.trim());
+                saveApiKey(apiKeyToValidate);
                 await transitionToReadyState();
             } else {
                 // Key was invalid or no access - just show textarea without error
                 // (user may not realize we already tried their clipboard)
+                pasteBtn.disabled = false;
+                pasteBtn.textContent = STR_PASTE_KEY;
                 morphToTextarea();
             }
         } catch (err) {

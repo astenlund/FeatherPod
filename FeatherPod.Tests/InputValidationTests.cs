@@ -1,5 +1,7 @@
 using FeatherPod.Server.Validation;
 
+using static System.StringComparison;
+
 namespace FeatherPod.Tests;
 
 public class InputValidationTests
@@ -19,9 +21,9 @@ public class InputValidationTests
     }
 
     [Fact]
-    public void IsValidFeedId_ValidWithUnderscores_ReturnsTrue()
+    public void IsValidFeedId_InvalidWithUnderscores_ReturnsFalse()
     {
-        Assert.True(InputValidation.IsValidFeedId("my_feed"));
+        Assert.False(InputValidation.IsValidFeedId("my_feed"));
     }
 
     [Fact]
@@ -33,7 +35,7 @@ public class InputValidationTests
     [Fact]
     public void IsValidFeedId_ValidMixed_ReturnsTrue()
     {
-        Assert.True(InputValidation.IsValidFeedId("My-Feed_123"));
+        Assert.True(InputValidation.IsValidFeedId("My-Feed-123"));
     }
 
     [Fact]
@@ -83,13 +85,13 @@ public class InputValidationTests
     [Fact]
     public void IsValidFeedId_WithBackslash_ReturnsFalse()
     {
-        Assert.False(InputValidation.IsValidFeedId("my\\feed"));
+        Assert.False(InputValidation.IsValidFeedId(@"my\feed"));
     }
 
     [Fact]
-    public void IsValidFeedId_WithDots_ReturnsTrue()
+    public void IsValidFeedId_WithDots_ReturnsFalse()
     {
-        Assert.True(InputValidation.IsValidFeedId("my.feed"));
+        Assert.False(InputValidation.IsValidFeedId("my.feed"));
     }
 
     [Fact]
@@ -141,7 +143,7 @@ public class InputValidationTests
     [Fact]
     public void IsValidFilename_WithBackslash_ReturnsFalse()
     {
-        Assert.False(InputValidation.IsValidFilename("path\\file.mp3"));
+        Assert.False(InputValidation.IsValidFilename(@"path\file.mp3"));
     }
 
     [Fact]
@@ -165,7 +167,7 @@ public class InputValidationTests
     [Fact]
     public void IsValidFilename_StartsWithBackslash_ReturnsFalse()
     {
-        Assert.False(InputValidation.IsValidFilename("\\windows\\file"));
+        Assert.False(InputValidation.IsValidFilename(@"\windows\file"));
     }
 
     [Fact]
@@ -177,7 +179,7 @@ public class InputValidationTests
     [Fact]
     public void IsValidFilename_WithNullByte_ReturnsFalse()
     {
-        Assert.False(InputValidation.IsValidFilename("file\x00.mp3"));
+        Assert.False(InputValidation.IsValidFilename("file\0.mp3"));
     }
 
     #endregion
@@ -188,28 +190,28 @@ public class InputValidationTests
     public void GetFeedIdValidationError_Null_ReturnsRequired()
     {
         var error = InputValidation.GetFeedIdValidationError(null);
-        Assert.Contains("required", error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("required", error, OrdinalIgnoreCase);
     }
 
     [Fact]
     public void GetFeedIdValidationError_Invalid_ReturnsFormat()
     {
         var error = InputValidation.GetFeedIdValidationError("a/b");
-        Assert.Contains("alphanumeric", error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("alphanumeric", error, OrdinalIgnoreCase);
     }
 
     [Fact]
     public void GetFilenameValidationError_Null_ReturnsRequired()
     {
         var error = InputValidation.GetFilenameValidationError(null);
-        Assert.Contains("required", error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("required", error, OrdinalIgnoreCase);
     }
 
     [Fact]
     public void GetFilenameValidationError_Invalid_ReturnsInvalid()
     {
         var error = InputValidation.GetFilenameValidationError("a/b");
-        Assert.Contains("invalid", error, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("invalid", error, OrdinalIgnoreCase);
     }
 
     #endregion

@@ -1,7 +1,10 @@
 using System.Net;
 using System.Text.Json;
+using FeatherPod.Server.Services;
+using FeatherPod.Shared.Models;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -12,7 +15,7 @@ public class UserManagementIntegrationTests : IDisposable
 {
     private readonly UserManagementWebApplicationFactory _factory;
     private readonly HttpClient _client;
-    private const string AdminApiKey = "admin-api-key-12345";
+    private const string AdminApiKey = UserManagementWebApplicationFactory.ApiKey;
 
     public UserManagementIntegrationTests()
     {
@@ -551,7 +554,7 @@ public class UserManagementIntegrationTests : IDisposable
         var content = await response.Content.ReadAsStringAsync();
         var doc = JsonSerializer.Deserialize<JsonElement>(content);
 
-        Assert.Equal("admin", doc.GetProperty("id").GetString());
+        Assert.Equal(UserManagementWebApplicationFactory.TestAdminUserId, doc.GetProperty("id").GetString());
         Assert.Equal("Admin", doc.GetProperty("role").GetString());
     }
 
@@ -627,7 +630,10 @@ public class UserManagementIntegrationTests : IDisposable
 
 internal class UserManagementWebApplicationFactory : WebApplicationFactory<Program>
 {
-    private const string LegacyApiKey = "admin-api-key-12345";
+    public const string ApiKey = "fp_test-admin_BBBBBBBBBBBBBBBBBBBBBB";
+    public const string TestAdminUserId = "test-admin";
+
+    private static readonly JsonSerializerOptions JsonSerializerOptions = new() { WriteIndented = true };
 
     private readonly string ContainerName;
 
@@ -645,8 +651,7 @@ internal class UserManagementWebApplicationFactory : WebApplicationFactory<Progr
             {
                 ["Azure:ConnectionString"] = "UseDevelopmentStorage=true",
                 ["Azure:ContainerName"] = ContainerName,
-                ["Podcast:BaseUrl"] = "http://localhost:5000",
-                ["ApiKey"] = LegacyApiKey // Legacy API key for migration
+                ["Podcast:BaseUrl"] = "http://localhost:5000"
             }!);
         });
 
@@ -658,7 +663,54 @@ internal class UserManagementWebApplicationFactory : WebApplicationFactory<Progr
             logging.SetMinimumLevel(LogLevel.Information);
         });
 
-        return base.CreateHost(builder);
+        var host = base.CreateHost(builder);
+        SeedTestUserAsync(host.Services).GetAwaiter().GetResult();
+
+        return host;
+    }
+
+    private static async Task SeedTestUserAsync(IServiceProvider services)
+    {
+        using var scope = services.CreateScope();
+        var userService = scope.ServiceProvider.GetRequiredService<IUserService>();
+        var existingUser = await userService.GetUserByIdAsync(TestAdminUserId);
+        if (existingUser != null)
+        {
+            return;
+        }
+
+        var blobStorage = scope.ServiceProvider.GetRequiredService<IBlobStorageService>();
+        var secret = ApiKey[(ApiKey.IndexOf('_', 3) + 1)..];
+        var salt = Convert.ToBase64String(new byte[16]);
+        var saltBytes = Convert.FromBase64String(salt);
+        var secretBytes = System.Text.Encoding.UTF8.GetBytes(secret);
+        var combined = new byte[saltBytes.Length + secretBytes.Length];
+        Buffer.BlockCopy(saltBytes, 0, combined, 0, saltBytes.Length);
+        Buffer.BlockCopy(secretBytes, 0, combined, saltBytes.Length, secretBytes.Length);
+        var hashBytes = System.Security.Cryptography.SHA256.HashData(combined);
+        var hash = Convert.ToHexString(hashBytes).ToLowerInvariant();
+
+        var usersMetadata = new UsersMetadata
+        {
+            Users =
+            [
+                new User
+                {
+                    Id = TestAdminUserId,
+                    Name = "Test Admin",
+                    Email = "test@example.com",
+                    Role = UserRole.Admin,
+                    ApiKeyHash = hash,
+                    ApiKeySalt = salt,
+                    OwnedFeeds = [],
+                    CreatedAt = DateTime.UtcNow
+                }
+            ]
+        };
+
+        var json = JsonSerializer.Serialize(usersMetadata, JsonSerializerOptions);
+        await blobStorage.SaveUsersConfigAsync(json);
+        await userService.LoadUsersAsync();
     }
 
     protected override void Dispose(bool disposing)
@@ -667,6 +719,7 @@ internal class UserManagementWebApplicationFactory : WebApplicationFactory<Progr
         {
             Thread.Sleep(200);
         }
+
         base.Dispose(disposing);
     }
 }

@@ -13,16 +13,14 @@ public sealed class UserService : IUserService, IDisposable
 {
     private readonly IBlobStorageService _blobStorage;
     private readonly ILogger<UserService> _logger;
-    private readonly IConfiguration _configuration;
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly JsonSerializerOptions _jsonSerializerOptions = new() { WriteIndented = true };
 
     private UsersMetadata _usersMetadata = new();
 
-    public UserService(IBlobStorageService blobStorage, IConfiguration configuration, ILogger<UserService> logger)
+    public UserService(IBlobStorageService blobStorage, ILogger<UserService> logger)
     {
         _blobStorage = blobStorage;
-        _configuration = configuration;
         _logger = logger;
     }
 
@@ -39,41 +37,8 @@ public sealed class UserService : IUserService, IDisposable
             }
             else
             {
-                _logger.LogInformation("No users.json found in blob storage.");
-
-                // Check for legacy API key to migrate
-                var legacyApiKey = _configuration["ApiKey"];
-                if (!string.IsNullOrEmpty(legacyApiKey))
-                {
-                    _logger.LogWarning("Legacy API key detected. Migrating to user-based authentication...");
-
-                    // Create admin user with legacy API key
-                    var adminUser = new User
-                    {
-                        Id = "admin",
-                        Name = "Administrator",
-                        Email = "admin@featherpod.local",
-                        Role = UserRole.Admin,
-                        ApiKeyHash = HashApiKey(legacyApiKey),
-                        OwnedFeeds = [],
-                        CreatedAt = DateTime.UtcNow
-                    };
-
-                    _usersMetadata = new()
-                    {
-                        Users = [adminUser]
-                    };
-
-                    await SaveUsersAsync();
-
-                    _logger.LogWarning("Migrated legacy API key to admin user 'admin'. " +
-                        "The existing API key will continue to work, but consider rotating to a new key using the user management API.");
-                }
-                else
-                {
-                    _logger.LogInformation("No legacy API key found. Starting with empty user list.");
-                    _usersMetadata = new();
-                }
+                _logger.LogInformation("No users.json found in blob storage. Starting with empty user list.");
+                _usersMetadata = new();
             }
         }
         finally
@@ -110,12 +75,45 @@ public sealed class UserService : IUserService, IDisposable
 
     public async Task<User?> GetUserByApiKeyAsync(string apiKey)
     {
-        var keyHash = HashApiKey(apiKey);
+        // Check if this is a new format key (fp_{userId}_{secret})
+        // Note: userId contains only alphanumeric + hyphens (no underscores)
+        // Secret is base64url which may contain underscores
+        if (apiKey.StartsWith("fp_"))
+        {
+            var secondUnderscoreIndex = apiKey.IndexOf('_', 3);
+            if (secondUnderscoreIndex > 3) // Must have content after "fp_" and before second "_"
+            {
+                var userId = apiKey[3..secondUnderscoreIndex];
 
+                // O(1) lookup by userId
+                await _lock.WaitAsync();
+                try
+                {
+                    var user = _usersMetadata.Users.FirstOrDefault(u => u.Id == userId);
+                    if (user is { ApiKeySalt: not null })
+                    {
+                        var keyHash = HashApiKey(apiKey, user.ApiKeySalt);
+                        if (user.ApiKeyHash == keyHash)
+                        {
+                            return user;
+                        }
+                    }
+
+                    return null;
+                }
+                finally
+                {
+                    _lock.Release();
+                }
+            }
+        }
+
+        // Legacy format - O(n) scan for users without salt
+        var legacyHash = HashApiKey(apiKey, null);
         await _lock.WaitAsync();
         try
         {
-            return _usersMetadata.Users.FirstOrDefault(u => u.ApiKeyHash == keyHash);
+            return _usersMetadata.Users.FirstOrDefault(u => u.ApiKeySalt == null && u.ApiKeyHash == legacyHash);
         }
         finally
         {
@@ -125,9 +123,9 @@ public sealed class UserService : IUserService, IDisposable
 
     public async Task<string> CreateUserAsync(User user)
     {
-        // Generate API key
-        var apiKey = GenerateApiKey();
-        var keyHash = HashApiKey(apiKey);
+        // Generate API key with salt
+        var (apiKey, salt) = GenerateApiKey(user.Id);
+        var keyHash = HashApiKey(apiKey, salt);
 
         await _lock.WaitAsync();
         try
@@ -138,10 +136,11 @@ public sealed class UserService : IUserService, IDisposable
                 throw new InvalidOperationException($"User with ID '{user.Id}' already exists.");
             }
 
-            // Create user with hashed key
+            // Create user with hashed key and salt
             var newUser = user with
             {
                 ApiKeyHash = keyHash,
+                ApiKeySalt = salt,
                 CreatedAt = DateTime.UtcNow
             };
 
@@ -192,8 +191,8 @@ public sealed class UserService : IUserService, IDisposable
 
     public async Task<string?> RegenerateApiKeyAsync(string userId)
     {
-        var newApiKey = GenerateApiKey();
-        var newKeyHash = HashApiKey(newApiKey);
+        var (newApiKey, newSalt) = GenerateApiKey(userId);
+        var newKeyHash = HashApiKey(newApiKey, newSalt);
 
         await _lock.WaitAsync();
         try
@@ -204,7 +203,7 @@ public sealed class UserService : IUserService, IDisposable
                 return null;
             }
 
-            var updatedUser = user with { ApiKeyHash = newKeyHash };
+            var updatedUser = user with { ApiKeyHash = newKeyHash, ApiKeySalt = newSalt };
 
             _usersMetadata = _usersMetadata with
             {
@@ -350,16 +349,60 @@ public sealed class UserService : IUserService, IDisposable
         await _blobStorage.SaveUsersConfigAsync(json);
     }
 
-    private static string GenerateApiKey()
+    private static (string apiKey, string salt) GenerateApiKey(string userId)
     {
-        return Guid.NewGuid().ToString("D").ToLowerInvariant();
+        // Generate 128-bit secret (16 bytes -> 22 chars base64url without padding)
+        var secretBytes = RandomNumberGenerator.GetBytes(16);
+        var secret = Convert.ToBase64String(secretBytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+
+        // Generate 128-bit salt (16 bytes -> base64 for storage)
+        var saltBytes = RandomNumberGenerator.GetBytes(16);
+        var salt = Convert.ToBase64String(saltBytes);
+
+        var apiKey = $"fp_{userId}_{secret}";
+
+        return (apiKey, salt);
     }
 
-    private static string HashApiKey(string apiKey)
+    private static string HashApiKey(string apiKey, string? salt)
     {
-        var bytes = Encoding.UTF8.GetBytes(apiKey);
-        var hashBytes = SHA256.HashData(bytes);
-        return Convert.ToHexString(hashBytes).ToLowerInvariant();
+        if (salt == null)
+        {
+            // Legacy unsalted hash (GUID format keys)
+            var bytes = Encoding.UTF8.GetBytes(apiKey);
+            var hashBytes = SHA256.HashData(bytes);
+
+            return Convert.ToHexString(hashBytes).ToLowerInvariant();
+        }
+
+        // Extract secret from fp_{userId}_{secret}
+        // Note: userId contains only alphanumeric + hyphens (no underscores)
+        // Secret is base64url which may contain underscores, so we find the second underscore
+        var secondUnderscoreIndex = apiKey.IndexOf('_', 3);
+        if (secondUnderscoreIndex == -1 || !apiKey.StartsWith("fp_"))
+        {
+            // Invalid format - fall back to legacy hash
+            var bytes = Encoding.UTF8.GetBytes(apiKey);
+            var hashBytes = SHA256.HashData(bytes);
+
+            return Convert.ToHexString(hashBytes).ToLowerInvariant();
+        }
+
+        var secret = apiKey[(secondUnderscoreIndex + 1)..];
+        var saltBytes = Convert.FromBase64String(salt);
+        var secretBytes = Encoding.UTF8.GetBytes(secret);
+
+        // Hash(salt + secret)
+        var combined = new byte[saltBytes.Length + secretBytes.Length];
+        Buffer.BlockCopy(saltBytes, 0, combined, 0, saltBytes.Length);
+        Buffer.BlockCopy(secretBytes, 0, combined, saltBytes.Length, secretBytes.Length);
+
+        var combinedHashBytes = SHA256.HashData(combined);
+
+        return Convert.ToHexString(combinedHashBytes).ToLowerInvariant();
     }
 
     public void Dispose()

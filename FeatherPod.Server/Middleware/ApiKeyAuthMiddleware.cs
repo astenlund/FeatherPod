@@ -9,13 +9,11 @@ namespace FeatherPod.Server.Middleware;
 public class ApiKeyAuthMiddleware
 {
     private readonly RequestDelegate _next;
-    private readonly string? _legacyApiKey;
     private readonly ILogger<ApiKeyAuthMiddleware> _logger;
 
-    public ApiKeyAuthMiddleware(RequestDelegate next, IConfiguration configuration, ILogger<ApiKeyAuthMiddleware> logger)
+    public ApiKeyAuthMiddleware(RequestDelegate next, ILogger<ApiKeyAuthMiddleware> logger)
     {
         _next = next;
-        _legacyApiKey = configuration["ApiKey"];
         _logger = logger;
     }
 
@@ -48,23 +46,6 @@ public class ApiKeyAuthMiddleware
         // Look up user by API key
         var user = await userService.GetUserByApiKeyAsync(providedKey!);
 
-        // If no user found, check legacy API key for migration support
-        if (user == null && !string.IsNullOrEmpty(_legacyApiKey) && providedKey == _legacyApiKey)
-        {
-            _logger.LogWarning("Legacy API key used for {Method} {Path}. Please migrate to user-specific API keys.", method, path);
-
-            // Create a virtual admin user for legacy key
-            user = new()
-            {
-                Id = "legacy-admin",
-                Name = "Legacy Admin",
-                Email = "legacy@featherpod.local",
-                Role = Admin,
-                ApiKeyHash = "",
-                OwnedFeeds = []
-            };
-        }
-
         if (user == null)
         {
             _logger.LogWarning("Unauthorized API access attempt (invalid API key) from {IP} to {Method} {Path}", context.Connection.RemoteIpAddress, method, path);
@@ -80,16 +61,13 @@ public class ApiKeyAuthMiddleware
         context.Items["User"] = user;
 
         // Update last active timestamp
-        if (user.Id != "legacy-admin")
+        try
         {
-            try
-            {
-                await userService.UpdateLastActiveAsync(user.Id);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to update last active timestamp for user '{UserId}'", user.Id);
-            }
+            await userService.UpdateLastActiveAsync(user.Id);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to update last active timestamp for user '{UserId}'", user.Id);
         }
 
         // Check permissions based on endpoint type

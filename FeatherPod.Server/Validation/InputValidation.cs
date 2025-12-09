@@ -7,9 +7,14 @@ namespace FeatherPod.Server.Validation;
 /// </summary>
 public static partial class InputValidation
 {
-    // Feed IDs should be alphanumeric with dots, hyphens, and underscores, 1-64 characters
-    [GeneratedRegex(@"^[a-zA-Z0-9._-]{1,64}$")]
+    // Feed IDs should be alphanumeric with hyphens only, 1-64 characters
+    [GeneratedRegex(@"^[a-zA-Z0-9-]{1,64}$")]
     private static partial Regex FeedIdPattern();
+
+    // User IDs should be alphanumeric with hyphens only (no underscores or dots), 1-64 characters
+    // Underscores are reserved as delimiters in the API key format: fp_{userId}_{secret}
+    [GeneratedRegex(@"^[a-zA-Z0-9-]{1,64}$")]
+    private static partial Regex UserIdPattern();
 
     // Filenames should not contain path separators or null bytes
     [GeneratedRegex(@"^[^/\\:\*\?""<>\|\x00]+$")]
@@ -22,10 +27,18 @@ public static partial class InputValidation
     /// <returns>True if valid, false otherwise</returns>
     public static bool IsValidFeedId(string? feedId)
     {
-        if (string.IsNullOrWhiteSpace(feedId))
-            return false;
+        return !string.IsNullOrWhiteSpace(feedId) && FeedIdPattern().IsMatch(feedId);
+    }
 
-        return FeedIdPattern().IsMatch(feedId);
+    /// <summary>
+    /// Validates a user ID for safe use in API keys.
+    /// User IDs can only contain alphanumeric characters and hyphens (no underscores or dots).
+    /// </summary>
+    /// <param name="userId">The user ID to validate</param>
+    /// <returns>True if valid, false otherwise</returns>
+    public static bool IsValidUserId(string? userId)
+    {
+        return !string.IsNullOrWhiteSpace(userId) && UserIdPattern().IsMatch(userId);
     }
 
     /// <summary>
@@ -50,10 +63,9 @@ public static partial class InputValidation
     /// </summary>
     public static string GetFeedIdValidationError(string? feedId)
     {
-        if (string.IsNullOrWhiteSpace(feedId))
-            return "Feed ID is required";
-
-        return "Feed ID must be 1-64 characters, alphanumeric with dots, hyphens, and underscores only";
+        return string.IsNullOrWhiteSpace(feedId)
+            ? "Feed ID is required"
+            : "Feed ID must be 1-64 characters, alphanumeric with hyphens only";
     }
 
     /// <summary>
@@ -61,9 +73,18 @@ public static partial class InputValidation
     /// </summary>
     public static string GetFilenameValidationError(string? filename)
     {
-        if (string.IsNullOrWhiteSpace(filename))
-            return "Filename is required";
+        return string.IsNullOrWhiteSpace(filename)
+            ? "Filename is required"
+            : "Filename contains invalid characters";
+    }
 
-        return "Filename contains invalid characters";
+    /// <summary>
+    /// Gets the validation error message for an invalid user ID.
+    /// </summary>
+    public static string GetUserIdValidationError(string? userId)
+    {
+        return string.IsNullOrWhiteSpace(userId)
+            ? "User ID is required"
+            : "User ID must be 1-64 characters, alphanumeric with hyphens only (no underscores or dots)";
     }
 }
