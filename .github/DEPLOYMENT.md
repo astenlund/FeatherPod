@@ -2,17 +2,6 @@
 
 This guide explains how to set up automated PR deployments to Azure using GitHub Actions.
 
-## ⚠️ Security Prerequisites
-
-**Before starting deployment setup, please read [API-KEY-SETUP.md](API-KEY-SETUP.md)** to:
-1. Generate secure API keys for test and production environments
-2. Set up GitHub Secrets properly
-3. Rotate the exposed production API key
-
-This is critical for security - API keys have been removed from the repository.
-
----
-
 ## Overview
 
 The PR deployment workflow automatically:
@@ -101,15 +90,13 @@ You need to add TWO secrets to your GitHub repository:
 
 #### Secret 2: TEST_API_KEY
 
-**See [API-KEY-SETUP.md](API-KEY-SETUP.md) for detailed instructions on generating and setting the test API key.**
+The test environment uses user-based API keys (format: `fp_{userId}_{secret}`). Create an admin user via the API or CLI and use that key for testing.
 
-Quick version:
-1. Generate a secure API key: `openssl rand -base64 32`
-2. Go to **Settings** → **Secrets and variables** → **Actions**
-3. Click **New repository secret**
-4. Name: `TEST_API_KEY`
-5. Value: Paste the generated API key
-6. Click **Add secret**
+1. Go to **Settings** → **Secrets and variables** → **Actions**
+2. Click **New repository secret**
+3. Name: `TEST_API_KEY`
+4. Value: Paste the admin user's API key
+5. Click **Add secret**
 
 ### Step 4: Verify Setup
 

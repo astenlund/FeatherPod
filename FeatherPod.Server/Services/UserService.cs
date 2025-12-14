@@ -75,45 +75,37 @@ public sealed class UserService : IUserService, IDisposable
 
     public async Task<User?> GetUserByApiKeyAsync(string apiKey)
     {
-        // Check if this is a new format key (fp_{userId}_{secret})
+        // Key format: fp_{userId}_{secret}
         // Note: userId contains only alphanumeric + hyphens (no underscores)
         // Secret is base64url which may contain underscores
-        if (apiKey.StartsWith("fp_"))
+        if (!apiKey.StartsWith("fp_"))
         {
-            var secondUnderscoreIndex = apiKey.IndexOf('_', 3);
-            if (secondUnderscoreIndex > 3) // Must have content after "fp_" and before second "_"
-            {
-                var userId = apiKey[3..secondUnderscoreIndex];
-
-                // O(1) lookup by userId
-                await _lock.WaitAsync();
-                try
-                {
-                    var user = _usersMetadata.Users.FirstOrDefault(u => u.Id == userId);
-                    if (user is { ApiKeySalt: not null })
-                    {
-                        var keyHash = HashApiKey(apiKey, user.ApiKeySalt);
-                        if (user.ApiKeyHash == keyHash)
-                        {
-                            return user;
-                        }
-                    }
-
-                    return null;
-                }
-                finally
-                {
-                    _lock.Release();
-                }
-            }
+            return null;
         }
 
-        // Legacy format - O(n) scan for users without salt
-        var legacyHash = HashApiKey(apiKey, null);
+        var secondUnderscoreIndex = apiKey.IndexOf('_', 3);
+        if (secondUnderscoreIndex <= 3) // Must have content after "fp_" and before second "_"
+        {
+            return null;
+        }
+
+        var userId = apiKey[3..secondUnderscoreIndex];
+
+        // O(1) lookup by userId
         await _lock.WaitAsync();
         try
         {
-            return _usersMetadata.Users.FirstOrDefault(u => u.ApiKeySalt == null && u.ApiKeyHash == legacyHash);
+            var user = _usersMetadata.Users.FirstOrDefault(u => u.Id == userId);
+            if (user is { ApiKeySalt: not null })
+            {
+                var keyHash = HashApiKey(apiKey, user.ApiKeySalt);
+                if (user.ApiKeyHash == keyHash)
+                {
+                    return user;
+                }
+            }
+
+            return null;
         }
         finally
         {
@@ -367,31 +359,14 @@ public sealed class UserService : IUserService, IDisposable
         return (apiKey, salt);
     }
 
-    private static string HashApiKey(string apiKey, string? salt)
+    private static string HashApiKey(string apiKey, string salt)
     {
-        if (salt == null)
-        {
-            // Legacy unsalted hash (GUID format keys)
-            var bytes = Encoding.UTF8.GetBytes(apiKey);
-            var hashBytes = SHA256.HashData(bytes);
-
-            return Convert.ToHexString(hashBytes).ToLowerInvariant();
-        }
-
         // Extract secret from fp_{userId}_{secret}
         // Note: userId contains only alphanumeric + hyphens (no underscores)
         // Secret is base64url which may contain underscores, so we find the second underscore
         var secondUnderscoreIndex = apiKey.IndexOf('_', 3);
-        if (secondUnderscoreIndex == -1 || !apiKey.StartsWith("fp_"))
-        {
-            // Invalid format - fall back to legacy hash
-            var bytes = Encoding.UTF8.GetBytes(apiKey);
-            var hashBytes = SHA256.HashData(bytes);
-
-            return Convert.ToHexString(hashBytes).ToLowerInvariant();
-        }
-
         var secret = apiKey[(secondUnderscoreIndex + 1)..];
+
         var saltBytes = Convert.FromBase64String(salt);
         var secretBytes = Encoding.UTF8.GetBytes(secret);
 

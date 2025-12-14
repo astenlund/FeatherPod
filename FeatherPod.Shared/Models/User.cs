@@ -21,15 +21,13 @@ public record User
     public string? Email { get; init; }
 
     /// <summary>
-    /// SHA256 hash of the user's API key. Never store plaintext keys.
-    /// For salted keys (fp_ format): SHA256(salt + secret).
-    /// For legacy keys (GUID format): SHA256(full key).
+    /// SHA256 hash of the user's API key secret. Never store plaintext keys.
+    /// Computed as SHA256(salt + secret) where secret is extracted from fp_{userId}_{secret}.
     /// </summary>
     required public string ApiKeyHash { get; init; }
 
     /// <summary>
     /// Base64-encoded salt for API key hashing (16 bytes).
-    /// Null for legacy unsalted keys (GUID format).
     /// </summary>
     public string? ApiKeySalt { get; init; }
 

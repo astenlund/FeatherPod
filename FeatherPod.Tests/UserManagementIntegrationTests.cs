@@ -205,7 +205,7 @@ public class UserManagementIntegrationTests : IDisposable
         var content = await response.Content.ReadAsStringAsync();
         Assert.Contains("user1", content);
         Assert.Contains("user2", content);
-        Assert.Contains("admin", content); // Legacy migrated admin
+        Assert.Contains("admin", content);
     }
 
     [AzuriteFact]
@@ -520,19 +520,6 @@ public class UserManagementIntegrationTests : IDisposable
 
         // Assert
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
-    }
-
-    [AzuriteFact]
-    public async Task LegacyApiKey_ShouldStillWork_AsAdmin()
-    {
-        // The factory sets up a legacy API key that gets migrated to admin user
-
-        // Act - Create feed with legacy key
-        await CreateTestFeedAsync("legacy-feed", AdminApiKey);
-
-        // Assert - Feed should be created
-        var response = await _client.GetAsync("/api/feeds/legacy-feed");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     // ============================================================================
