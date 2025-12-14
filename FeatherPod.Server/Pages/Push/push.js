@@ -949,9 +949,13 @@ async function fetchRecentUploads() {
 
 /**
  * Fetch the most recent browser upload (used after normalization completes).
+ * Invalidates cache to ensure fresh data is fetched.
  * @returns {Promise<Object|null>}
  */
 async function fetchMostRecentEpisode() {
+    // Invalidate cache to ensure we get fresh data including the just-uploaded episode
+    cachedBrowserUploads = null;
+
     try {
         const uploads = await fetchRecentUploads();
         if (uploads && uploads.length > 0) {
