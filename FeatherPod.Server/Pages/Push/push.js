@@ -1,5 +1,6 @@
 const FEED_ID = '{{FEED_ID}}';
 const IS_DEV = '{{IS_DEV}}' === 'true';
+const PROGRESS_SMOOTHING = '{{PROGRESS_SMOOTHING}}' === 'true';
 const SHOW_GHOST = IS_DEV && window.location.search.includes('ghost');
 const DEBUG_TITLE_ANIMATION = IS_DEV && window.location.search.includes('alive');
 const VELOCITY_OVERRIDES = IS_DEV ? parseVelocityOverrides() : {};
@@ -1875,6 +1876,10 @@ function showError(message) {
 /**
  * Progress animator with velocity smoothing and continuous interpolation.
  * Uses requestAnimationFrame for smooth 60fps updates between SSE events.
+ *
+ * When PROGRESS_SMOOTHING is disabled (via PushPage:ProgressSmoothing appsetting),
+ * the animator bypasses all interpolation and updates the progress bar directly
+ * with raw values from SSE events.
  */
 const progressAnimator = {
     // Default initial velocities in bytes/second (used if no learned value exists)
@@ -2011,6 +2016,13 @@ const progressAnimator = {
         this.lastUpdateTime = now;
         this.stageStartTime = now;
 
+        // When smoothing is disabled, just store progressBar for direct updates
+        if (!PROGRESS_SMOOTHING) {
+            this.progressBar = progressBar;
+
+            return;
+        }
+
         if (wasRestoring) {
             this.progressBar = progressBar;
             this.awaitingFirstUpdate = true;
@@ -2034,6 +2046,15 @@ const progressAnimator = {
      * @param {string} stage - Current stage name
      */
     setTarget(value, stage) {
+        // When smoothing is disabled, update progress bar directly
+        if (!PROGRESS_SMOOTHING) {
+            if (this.progressBar) {
+                this.progressBar.style.width = value + '%';
+            }
+
+            return;
+        }
+
         // Initial calibration phase
         if (this.awaitingFirstUpdate && stage === this.currentStage) {
             const now = performance.now();
@@ -2114,7 +2135,11 @@ const progressAnimator = {
      */
     start(progressBar) {
         this.progressBar = progressBar;
-        // Set up ghost bar if enabled
+        // Skip animation loop when smoothing is disabled
+        if (!PROGRESS_SMOOTHING) {
+            return;
+        }
+        // Set up ghost bar if enabled (only useful with smoothing to compare raw vs smoothed)
         if (SHOW_GHOST && progressBar) {
             const ghostId = progressBar.id + '-ghost';
             this.ghostBar = document.getElementById(ghostId);

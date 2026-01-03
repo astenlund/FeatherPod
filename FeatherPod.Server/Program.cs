@@ -153,7 +153,7 @@ app.MapGet("/{feedId}/icon.png", async (string feedId, IBlobStorageService servi
 .Produces(404);
 
 // Browser-based upload page for quick mobile uploads
-app.MapGet("/{feedId}/push", async (string feedId, EpisodeService episodeService, IWebHostEnvironment env) =>
+app.MapGet("/{feedId}/push", async (string feedId, EpisodeService episodeService, IWebHostEnvironment env, IConfiguration config) =>
 {
     if (!InputValidation.IsValidFeedId(feedId))
     {
@@ -166,7 +166,9 @@ app.MapGet("/{feedId}/push", async (string feedId, EpisodeService episodeService
         return Results.NotFound($"Feed '{feedId}' not found");
     }
 
-    return Results.Content(GeneratePushPageHtml(feedId, feed.Title, env), "text/html");
+    var progressSmoothing = config.GetValue("PushPage:ProgressSmoothing", true);
+
+    return Results.Content(GeneratePushPageHtml(feedId, feed.Title, env, progressSmoothing), "text/html");
 })
 .WithName("GetPushPage")
 .Produces(200, contentType: "text/html")
@@ -283,7 +285,7 @@ app.Run();
 // PUSH PAGE HTML GENERATION
 // ============================================================================
 
-static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvironment env)
+static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvironment env, bool progressSmoothing)
 {
     var escapedTitle = System.Net.WebUtility.HtmlEncode(feedTitle);
 
@@ -311,7 +313,8 @@ static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvi
         .Replace("/* {{JS}} */", js)
         .Replace("{{FEED_ID}}", feedId)
         .Replace("{{FEED_TITLE}}", escapedTitle)
-        .Replace("{{IS_DEV}}", env.IsDevelopment().ToString().ToLowerInvariant());
+        .Replace("{{IS_DEV}}", env.IsDevelopment().ToString().ToLowerInvariant())
+        .Replace("{{PROGRESS_SMOOTHING}}", progressSmoothing.ToString().ToLowerInvariant());
 }
 
 static string ReadResource(System.Reflection.Assembly assembly, string name)
