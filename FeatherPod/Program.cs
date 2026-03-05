@@ -35,7 +35,9 @@ internal class Program
                     .WithDescription("Upload episode(s) to the podcast feed")
                     .WithExample("episode", "push", "episode.mp3", "--title", "\"My Episode\"")
                     .WithExample("episode", "push", "*.mp3", "-x")
-                    .WithExample("episode", "push", "ep1.mp3,ep2.mp3", "-e", "Test");
+                    .WithExample("episode", "push", "ep1.mp3,ep2.mp3", "-e", "Test")
+                    .WithExample("episode", "push", "*.mp3", "-f", "my-podcast", "--delete-after")
+                    .WithExample("episode", "push", "*.mp3", "--delete-after", "--dry-run");
 
                 episode.AddCommand<DeleteCommand>("delete")
                     .WithDescription("Delete an episode")
@@ -222,7 +224,8 @@ internal class Program
                 .WithDescription("Upload episode(s) to the podcast feed (alias for 'episode push')")
                 .WithExample("push", "episode.mp3", "--title", "\"My Episode\"")
                 .WithExample("push", "*.mp3", "-x")
-                .WithExample("push", "ep1.mp3,ep2.mp3", "-e", "Test");
+                .WithExample("push", "*.mp3", "--delete-after")
+                .WithExample("push", "*.mp3", "--delete-after", "--dry-run");
 
             config.SetApplicationName("FeatherPod");
 

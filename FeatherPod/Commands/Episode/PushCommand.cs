@@ -31,7 +31,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
             feed = await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FeedId);
             if (feed == null)
             {
-                Out.Error($"Feed '{settings.FeedId}' not found.");
+                Out.Error($"Feed '{Markup.Escape(settings.FeedId)}' not found.");
                 return 1;
             }
         }
@@ -58,7 +58,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
 
         if (files.Count == 0)
         {
-            Out.Error($"No files found matching pattern: {settings.Files}");
+            Out.Error($"No files found matching pattern: {Markup.Escape(settings.Files)}");
             return 1;
         }
 
@@ -100,6 +100,34 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
 
         Out.MarkupLine($"Found [bold]{files.Count}[/] file(s) to upload");
         Out.BlankLine();
+
+        // Dry-run mode: show what would happen and exit (no confirmation needed)
+        if (settings.DryRun)
+        {
+            Out.MarkupLine("[bold]Dry run[/] - no files will be uploaded or deleted");
+            Out.BlankLine();
+
+            foreach (var file in files)
+            {
+                var fileInfo = new FileInfo(file);
+                Out.MarkupLine($"  Would upload: [cyan]{Markup.Escape(Path.GetFileName(file))}[/] ({EpisodeHelpers.FormatFileSize(fileInfo.Length)})");
+            }
+
+            if (settings.DeleteAfter)
+            {
+                var useTrash = PreferencesHelpers.GetDeleteAfterUploadUseTrash(env) ?? true;
+                var deleteMethod = useTrash ? "send to trash" : "permanently delete";
+                Out.BlankLine();
+                Out.MarkupLine($"  Delete method: [bold]{deleteMethod}[/]");
+                foreach (var file in files)
+                {
+                    Out.MarkupLine($"  Would delete: [cyan]{Markup.Escape(Path.GetFileName(file))}[/]");
+                }
+            }
+
+            Out.BlankLine().Flush();
+            return 0;
+        }
 
         // Confirm upload
         var fileList = files.Count <= 5
@@ -145,23 +173,42 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
             {
                 Files = settings.Files,
                 Environment = settings.Environment,
+                FeedId = settings.FeedId,
                 Title = settings.Title,
                 Description = settings.Description,
+                Summary = settings.Summary,
                 PublishedDate = settings.PublishedDate,
-                ExtractDateFromFile = dateSource
+                ExtractDateFromFile = dateSource,
+                ServerNormalize = settings.ServerNormalize,
+                DeleteAfter = settings.DeleteAfter,
+                DryRun = settings.DryRun
             };
         }
 
         var successCount = 0;
         var failureCount = 0;
+        var deletedCount = 0;
+        var deleteFailedCount = 0;
 
         foreach (var file in files)
         {
-            var success = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, env, feed, file, effectiveSettings, currentUser);
-            if (success)
+            var result = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, env, feed, file, effectiveSettings, currentUser);
+            if (result.Success)
+            {
                 successCount++;
+
+                // Delete source file after successful upload
+                if (effectiveSettings.DeleteAfter && result.EpisodeId != null)
+                {
+                    var (deleted, failed) = await EpisodeHelpers.TryDeleteSourceAfterUploadAsync(httpClient, feed.Id, result.EpisodeId, file, env);
+                    deletedCount += deleted;
+                    deleteFailedCount += failed;
+                }
+            }
             else
+            {
                 failureCount++;
+            }
 
             Out.BlankLine();
         }
@@ -172,9 +219,19 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
             Out.Success($"Successfully uploaded: {successCount}");
         }
 
+        if (deletedCount > 0)
+        {
+            Out.Success($"Source files deleted: {deletedCount}");
+        }
+
         if (failureCount > 0)
         {
             Out.Error($"Failed: {failureCount}");
+        }
+
+        if (deleteFailedCount > 0)
+        {
+            Out.Warning($"Source file deletions failed: {deleteFailedCount}");
         }
 
         Out.BlankLine().Flush();

@@ -191,6 +191,24 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                     Out.BlankLine();
 
+                    // Prompt for delete-after
+                    var deleteAfterChoice = new MenuBuilder<bool?>()
+                        .WithTitle("Delete source files after successful upload?")
+                        .WithHint("(Y/N, Esc to cancel)")
+                        .AddOption("N", "No - Keep source files", false)
+                        .AddOption("Y", "Yes - Delete after upload", true)
+                        .AllowCancel()
+                        .Show();
+
+                    if (deleteAfterChoice == null)
+                    {
+                        Out.Cancelled();
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    Out.BlankLine();
+
                     // Temporarily set normalization preference for upload (only for local normalization)
                     var originalNormPref = PreferencesHelpers.GetNormalizationEnabled(env);
                     var useServerNormalize = normalizeChoice == "server";
@@ -206,19 +224,33 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             Description = string.IsNullOrWhiteSpace(pushDescription) ? null : pushDescription.Trim(),
                             Summary = string.IsNullOrWhiteSpace(pushSummary) ? null : pushSummary.Trim(),
                             ExtractDateFromFile = dateSource,
-                            ServerNormalize = useServerNormalize
+                            ServerNormalize = useServerNormalize,
+                            DeleteAfter = deleteAfterChoice == true
                         };
 
                         var successCount = 0;
                         var failureCount = 0;
+                        var deletedCount = 0;
+                        var deleteFailedCount = 0;
 
                         foreach (var file in filesToUpload)
                         {
-                            var success = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, env, pushFeed, file, uploadSettings, currentUser);
-                            if (success)
+                            var result = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, env, pushFeed, file, uploadSettings, currentUser);
+                            if (result.Success)
+                            {
                                 successCount++;
+
+                                if (uploadSettings.DeleteAfter && result.EpisodeId != null)
+                                {
+                                    var (deleted, failed) = await EpisodeHelpers.TryDeleteSourceAfterUploadAsync(httpClient, pushFeed.Id, result.EpisodeId, file, env);
+                                    deletedCount += deleted;
+                                    deleteFailedCount += failed;
+                                }
+                            }
                             else
+                            {
                                 failureCount++;
+                            }
 
                             Out.BlankLine();
                         }
@@ -228,18 +260,23 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         {
                             Out.Success($"Successfully uploaded: {successCount}");
                         }
+                        if (deletedCount > 0)
+                        {
+                            Out.Success($"Source files deleted: {deletedCount}");
+                        }
                         if (failureCount > 0)
                         {
                             Out.Error($"Failed: {failureCount}");
+                        }
+                        if (deleteFailedCount > 0)
+                        {
+                            Out.Warning($"Source file deletions failed: {deleteFailedCount}");
                         }
                     }
                     finally
                     {
                         // Restore original normalization preference
-                        if (originalNormPref.HasValue)
-                        {
-                            PreferencesHelpers.SetNormalizationEnabled(env, originalNormPref.Value);
-                        }
+                        PreferencesHelpers.SetNormalizationEnabled(env, originalNormPref ?? true);
                     }
 
                     WaitForKeyPress();
@@ -1100,6 +1137,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         .AddOption("A", "Auto-connect on startup", "autoconnect")
                         .AddOption("C", "Connect now", "connect")
                         .AddOption("N", "Audio normalization", "normalization")
+                        .AddOption("D", "Delete-after-upload method", "delete-method")
                         .AddOption("K", "Update API key (local)", "apikey-local")
                         .AddOption("R", "Rotate API key (server)", "apikey-rotate")
                         .AddOption("S", "Show all preferences", "show-all")
@@ -1174,6 +1212,24 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             {
                                 PreferencesHelpers.SetNormalizationEnabled(env, normChoice.Value);
                                 Out.Success($"Audio normalization {(normChoice.Value ? "enabled" : "disabled")}");
+                                WaitForKeyPress();
+                            }
+                            break;
+
+                        case "delete-method":
+                            var currentUseTrash = PreferencesHelpers.GetDeleteAfterUploadUseTrash(env) ?? true;
+                            var trashChoice = new MenuBuilder<bool?>()
+                                .WithTitle($"Delete-after-upload currently uses {(currentUseTrash ? "trash" : "permanent delete")}:")
+                                .WithHint("(arrow keys or T/P, Esc to cancel)")
+                                .AddOption("T", "Send to trash (safer, recoverable)", true)
+                                .AddOption("P", "Permanently delete", false)
+                                .AllowCancel()
+                                .Show();
+
+                            if (trashChoice.HasValue)
+                            {
+                                PreferencesHelpers.SetDeleteAfterUploadUseTrash(env, trashChoice.Value);
+                                Out.Success($"Delete-after-upload will {(trashChoice.Value ? "send to trash" : "permanently delete")}");
                                 WaitForKeyPress();
                             }
                             break;
@@ -1339,6 +1395,10 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             var showAutoConnectPref = PreferencesHelpers.GetAutoConnectEnabled(env);
                             var showAutoConnectEnabled = showAutoConnectPref ?? true;
                             Out.MarkupLine($"[bold]Auto-connect ({env}):[/] {(showAutoConnectEnabled ? "enabled" : "disabled")}{(showAutoConnectPref.HasValue ? "" : " (default)")}");
+
+                            var showTrashPref = PreferencesHelpers.GetDeleteAfterUploadUseTrash(env);
+                            var showUseTrash = showTrashPref ?? true;
+                            Out.MarkupLine($"[bold]Delete-after-upload ({env}):[/] {(showUseTrash ? "send to trash" : "permanent delete")}{(showTrashPref.HasValue ? "" : " (default)")}");
 
                             Out.BlankLine();
                             Out.MarkupLine($"[grey]Preferences: {Markup.Escape(showFilePath)}[/]");

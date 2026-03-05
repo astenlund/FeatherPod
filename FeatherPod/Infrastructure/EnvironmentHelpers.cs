@@ -38,13 +38,13 @@ internal static class EnvironmentHelpers
 
         if (environment != "Dev" && environment != "Test" && environment != "Prod")
         {
-            Out.Error($"Invalid environment: {environment}");
+            Out.Error($"Invalid environment: {Markup.Escape(environment)}");
             Out.MarkupLine("Valid options: Dev, Test, Prod");
 
             return null;
         }
 
-        Out.MarkupLine($"Environment: [cyan]{environment}[/]");
+        Out.MarkupLine($"Environment: [cyan]{Markup.Escape(environment)}[/]");
         Out.BlankLine();
 
         return environment;

@@ -94,7 +94,7 @@ internal static class PreferencesHelpers
     /// </summary>
     internal static bool PromptAndSaveApiKey(string environment)
     {
-        Out.MarkupLine($"[yellow]No API key configured for {environment} environment.[/]");
+        Out.MarkupLine($"[yellow]No API key configured for {Markup.Escape(environment)} environment.[/]");
         Out.BlankLine();
 
         var apiKey = AnsiConsole.Prompt(new TextPrompt<string>("Enter your API key:").Secret().AllowEmpty());
@@ -266,6 +266,73 @@ internal static class PreferencesHelpers
         environments[environment]!["AutoConnectEnabled"] = enabled;
 
         // Write back with nice formatting
+        File.WriteAllText(filePath, root.ToJsonString(JsonWriteOptions));
+    }
+
+    /// <summary>
+    /// Gets the delete-after-upload trash preference for the given environment.
+    /// Returns null if not set (defaults to true - use trash instead of permanent delete).
+    /// </summary>
+    internal static bool? GetDeleteAfterUploadUseTrash(string environment)
+    {
+        var preferencesPath = GetPreferencesPath();
+        if (!File.Exists(preferencesPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var content = File.ReadAllText(preferencesPath);
+            var root = JsonNode.Parse(content);
+
+            return root?["Environments"]?[environment]?["DeleteAfterUploadUseTrash"]?.GetValue<bool>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Sets the delete-after-upload trash preference for the given environment.
+    /// When true (default), files are sent to trash. When false, files are permanently deleted.
+    /// </summary>
+    internal static void SetDeleteAfterUploadUseTrash(string environment, bool useTrash)
+    {
+        var filePath = GetPreferencesPath();
+        var directory = Path.GetDirectoryName(filePath)!;
+
+        if (!Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        JsonObject root;
+
+        if (File.Exists(filePath))
+        {
+            var existingContent = File.ReadAllText(filePath);
+            root = JsonNode.Parse(existingContent)?.AsObject() ?? new JsonObject();
+        }
+        else
+        {
+            root = new();
+        }
+
+        if (!root.ContainsKey("Environments"))
+        {
+            root["Environments"] = new JsonObject();
+        }
+
+        var environments = root["Environments"]!.AsObject();
+        if (!environments.ContainsKey(environment))
+        {
+            environments[environment] = new JsonObject();
+        }
+
+        environments[environment]!["DeleteAfterUploadUseTrash"] = useTrash;
+
         File.WriteAllText(filePath, root.ToJsonString(JsonWriteOptions));
     }
 

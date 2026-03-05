@@ -40,4 +40,12 @@ internal sealed class PushSettings : CommandSettings
     [CommandOption("-n|--normalize-on-server")]
     [Description("Normalize audio on server instead of locally")]
     public bool ServerNormalize { get; init; }
+
+    [CommandOption("--delete-after")]
+    [Description("Delete source files after successful upload")]
+    public bool DeleteAfter { get; init; }
+
+    [CommandOption("--dry-run")]
+    [Description("Preview what would be uploaded and deleted without actually doing it")]
+    public bool DryRun { get; init; }
 }

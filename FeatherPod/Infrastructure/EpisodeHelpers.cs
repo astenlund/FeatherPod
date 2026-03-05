@@ -16,6 +16,8 @@ internal static class EpisodeHelpers
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true, Converters = { new JsonStringEnumConverter() } };
 
+    internal record UploadResult(bool Success, string? EpisodeId = null);
+
     internal static List<string> ExpandFilePatterns(string input)
     {
         var result = new List<string>();
@@ -34,7 +36,9 @@ internal static class EpisodeHelpers
 
                 // If no directory specified, use current directory
                 if (string.IsNullOrEmpty(directory))
+                {
                     directory = Directory.GetCurrentDirectory();
+                }
 
                 if (Directory.Exists(directory))
                 {
@@ -55,10 +59,10 @@ internal static class EpisodeHelpers
         return result;
     }
 
-    internal static async Task<bool> UploadEpisodeAsync(HttpClient httpClient, IConfiguration configuration, string environment, FeedConfig feed, string filePath, PushSettings settings, CurrentUserInfo? currentUser = null)
+    internal static async Task<UploadResult> UploadEpisodeAsync(HttpClient httpClient, IConfiguration configuration, string environment, FeedConfig feed, string filePath, PushSettings settings, CurrentUserInfo? currentUser = null)
     {
         var fileName = Path.GetFileName(filePath);
-        var success = false;
+        string? uploadedEpisodeId = null;
         string? normalizedTempFile = null;
 
         // Safety net: verify feed access before expensive normalization
@@ -66,7 +70,7 @@ internal static class EpisodeHelpers
         {
             Out.Error($"You don't have permission to upload to feed [cyan]{Markup.Escape(feed.Id)}[/].");
 
-            return false;
+            return new UploadResult(false);
         }
 
         // Generate episode ID from ORIGINAL file size (before any normalization)
@@ -98,7 +102,7 @@ internal static class EpisodeHelpers
             var fileToUpload = filePath;
             if (settings.ServerNormalize)
             {
-                Out.MarkupLine($"[cyan]{fileName}[/] will be normalized on server to -16 LUFS");
+                Out.MarkupLine($"[cyan]{Markup.Escape(fileName)}[/] will be normalized on server to -16 LUFS");
             }
             else if (normalizationConfig.Enabled)
             {
@@ -139,7 +143,7 @@ internal static class EpisodeHelpers
                             {
                                 Out.Cancelled();
 
-                                return false;
+                                return new UploadResult(false);
                             }
                         }
                         else
@@ -159,7 +163,7 @@ internal static class EpisodeHelpers
                         // User cancelled (Esc)
                         Out.Cancelled();
 
-                        return false;
+                        return new UploadResult(false);
                     }
                 }
 
@@ -194,7 +198,7 @@ internal static class EpisodeHelpers
                         {
                             Out.Cancelled();
 
-                            return false;
+                            return new UploadResult(false);
                         }
                     }
                     else
@@ -211,7 +215,7 @@ internal static class EpisodeHelpers
             string? pendingJobId = null;
 
             await AnsiConsole.Status()
-                .StartAsync($"Uploading [cyan]{fileName}[/]...", async _ =>
+                .StartAsync($"Uploading [cyan]{Markup.Escape(fileName)}[/]...", async _ =>
                 {
                     try
                     {
@@ -274,11 +278,11 @@ internal static class EpisodeHelpers
                         }
                         else if (response.IsSuccessStatusCode)
                         {
-                            success = true;
+                            uploadedEpisodeId = episodeId;
                             var responseContent = await response.Content.ReadAsStringAsync();
                             var episode = JsonSerializer.Deserialize<Episode>(responseContent, JsonOptions);
 
-                            Out.Success($"Uploaded: [cyan]{fileName}[/]");
+                            Out.Success($"Uploaded: [cyan]{Markup.Escape(fileName)}[/]");
                             Out.BlankLine();
 
                             if (episode != null)
@@ -293,27 +297,31 @@ internal static class EpisodeHelpers
                         else
                         {
                             var errorContent = await response.Content.ReadAsStringAsync();
-                            Out.Error($"Failed to upload [cyan]{fileName}[/]: {response.StatusCode}");
+                            Out.Error($"Failed to upload [cyan]{Markup.Escape(fileName)}[/]: {response.StatusCode}");
                             if (!string.IsNullOrEmpty(errorContent))
                             {
-                                Out.Error(errorContent, indent: 2);
+                                Out.Error(Markup.Escape(errorContent), indent: 2);
                             }
                         }
                     }
                     catch (Exception ex)
                     {
-                        Out.Error($"Error uploading [cyan]{fileName}[/]: {ex.Message}");
+                        Out.Error($"Error uploading [cyan]{Markup.Escape(fileName)}[/]: {Markup.Escape(ex.Message)}");
                     }
                 });
 
             // Poll for async normalization completion (outside Status block to avoid nesting)
             if (pendingJobId != null)
             {
-                Out.Success($"Uploaded: [cyan]{fileName}[/] (normalizing on server...)");
-                success = await PollJobCompletionAsync(httpClient, pendingJobId, fileName);
+                Out.Success($"Uploaded: [cyan]{Markup.Escape(fileName)}[/] (normalizing on server...)");
+                var jobSuccess = await PollJobCompletionAsync(httpClient, pendingJobId, fileName);
+                if (jobSuccess)
+                {
+                    uploadedEpisodeId = episodeId;
+                }
             }
 
-            return success;
+            return new UploadResult(uploadedEpisodeId != null, uploadedEpisodeId);
         }
         finally
         {
@@ -334,7 +342,7 @@ internal static class EpisodeHelpers
 
     internal static string FormatFileSize(long bytes)
     {
-        string[] sizes = ["B", "KB", "MB", "GB"];
+        string[] sizes = ["B", "kB", "MB", "GB"];
         double len = bytes;
         var order = 0;
 
@@ -362,7 +370,7 @@ internal static class EpisodeHelpers
 
             if (!response.IsSuccessStatusCode)
             {
-                Out.Error($"Failed to fetch episodes from feed '{feedId}'");
+                Out.Error($"Failed to fetch episodes from feed '{Markup.Escape(feedId)}'");
 
                 return null;
             }
@@ -373,10 +381,49 @@ internal static class EpisodeHelpers
         }
         catch (Exception ex)
         {
-            Out.Error($"Error fetching episodes: {ex.Message}");
+            Out.Error($"Error fetching episodes: {Markup.Escape(ex.Message)}");
 
             return null;
         }
+    }
+
+    internal static async Task<bool> VerifyEpisodeExistsAsync(HttpClient httpClient, string feedId, string episodeId)
+    {
+        try
+        {
+            var episodes = await GetEpisodesAsync(httpClient, feedId);
+            return episodes?.Any(e => e.Id == episodeId) == true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Verifies the episode exists on the server, then deletes the source file.
+    /// Returns (deleted: true/false, failed: true/false) for summary counting.
+    /// </summary>
+    internal static async Task<(int Deleted, int Failed)> TryDeleteSourceAfterUploadAsync(
+        HttpClient httpClient, string feedId, string episodeId, string filePath, string environment)
+    {
+        var verified = await VerifyEpisodeExistsAsync(httpClient, feedId, episodeId);
+        if (!verified)
+        {
+            Out.Warning("Skipped source deletion - could not verify episode on server");
+            return (0, 1);
+        }
+
+        var useTrash = PreferencesHelpers.GetDeleteAfterUploadUseTrash(environment) ?? true;
+        var deleteResult = FileTrashService.TryDeleteFile(filePath, useTrash);
+        if (deleteResult.Success)
+        {
+            Out.MarkupLine($"  Source file {deleteResult.Method}: [cyan]{Markup.Escape(Path.GetFileName(filePath))}[/]");
+            return (1, 0);
+        }
+
+        Out.Warning($"Could not delete source file: {Markup.Escape(deleteResult.Error ?? "unknown error")}");
+        return (0, 1);
     }
 
     internal static async Task<bool> MoveEpisodeAsync(HttpClient httpClient, string fromFeed, string episodeId, string toFeed)
@@ -403,7 +450,7 @@ internal static class EpisodeHelpers
         }
         catch (Exception ex)
         {
-            Out.Error($"Error moving episode: {ex.Message}");
+            Out.Error($"Error moving episode: {Markup.Escape(ex.Message)}");
 
             return false;
         }
@@ -433,7 +480,7 @@ internal static class EpisodeHelpers
         }
         catch (Exception ex)
         {
-            Out.Error($"Error copying episode: {ex.Message}");
+            Out.Error($"Error copying episode: {Markup.Escape(ex.Message)}");
 
             return false;
         }
@@ -706,7 +753,7 @@ internal static class EpisodeHelpers
                     catch (Exception ex)
                     {
                         Out.BlankLine();
-                        Out.Error($"Error checking job status: {ex.Message}");
+                        Out.Error($"Error checking job status: {Markup.Escape(ex.Message)}");
 
                         return false;
                     }
