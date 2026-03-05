@@ -238,33 +238,50 @@ resource appServiceTableRoleAssignment 'Microsoft.Authorization/roleAssignments@
   }
 }
 
-// Function App (Consumption Plan - Windows)
-// Windows Consumption avoids Linux/App Service Plan conflicts in same resource group
-resource functionAppPlan 'Microsoft.Web/serverfarms@2023-01-01' = {
+// Function App (Flex Consumption Plan - Linux)
+// Flex Consumption provides faster cold starts, configurable instance memory, and better scaling
+resource functionAppPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
   name: '${functionAppName}-plan'
   location: location
   tags: tags
   sku: {
-    name: 'Y1'
-    tier: 'Dynamic'
+    name: 'FC1'
+    tier: 'FlexConsumption'
   }
   kind: 'functionapp'
   properties: {
-    reserved: false
+    reserved: true // Required for Linux (Flex Consumption is Linux-only)
   }
 }
 
-@description('Maximum number of Function App instances for scale-out (Consumption plan)')
+@description('Maximum number of Function App instances for scale-out')
 @minValue(1)
-@maxValue(200)
+@maxValue(1000)
 param functionAppScaleLimit int = 1
 
+@description('Instance memory size in MB (512, 2048, or 4096)')
+@allowed([
+  512
+  2048
+  4096
+])
+param functionAppInstanceMemoryMB int = 2048
+
+// Deployment container for Flex Consumption (replaces WEBSITE_CONTENTSHARE/WEBSITE_CONTENTAZUREFILECONNECTIONSTRING)
+resource functionDeploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  parent: blobService
+  name: 'function-deployments'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 // Function App
-resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
+resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
   name: functionAppName
   location: location
   tags: tags
-  kind: 'functionapp'
+  kind: 'functionapp,linux'
   identity: {
     type: 'SystemAssigned'
   }
@@ -272,23 +289,38 @@ resource functionApp 'Microsoft.Web/sites@2023-01-01' = {
     serverFarmId: functionAppPlan.id
     httpsOnly: true
     siteConfig: {
-      netFrameworkVersion: 'v10.0'
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
-      functionAppScaleLimit: functionAppScaleLimit
+    }
+    functionAppConfig: {
+      runtime: {
+        name: 'dotnet-isolated'
+        version: '10.0'
+      }
+      scaleAndConcurrency: {
+        maximumInstanceCount: functionAppScaleLimit
+        instanceMemoryMB: functionAppInstanceMemoryMB
+      }
+      deployment: {
+        storage: {
+          type: 'blobContainer'
+          value: '${storageAccount.properties.primaryEndpoints.blob}function-deployments'
+          authentication: {
+            type: 'SystemAssignedIdentity'
+          }
+        }
+      }
     }
   }
 }
 
 // Function App Settings
-resource functionAppSettings 'Microsoft.Web/sites/config@2023-01-01' = {
+resource functionAppSettings 'Microsoft.Web/sites/config@2023-12-01' = {
   parent: functionApp
   name: 'appsettings'
   properties: {
     AzureWebJobsStorage__accountName: storageAccountName
     FUNCTIONS_EXTENSION_VERSION: '~4'
-    FUNCTIONS_WORKER_RUNTIME: 'dotnet-isolated'
-    WEBSITE_MAX_DYNAMIC_APPLICATION_SCALE_OUT: string(functionAppScaleLimit)
     StorageAccountName: storageAccountName
     ContainerName: containerName
     AppServiceUrl: 'https://${appServiceName}.azurewebsites.net'

@@ -127,11 +127,14 @@ function Deploy-Environment {
                 --resource-group $ResourceGroup `
                 --template-file (Join-Path $PSScriptRoot "infrastructure\main.bicep") `
                 --parameters (Join-Path $PSScriptRoot "infrastructure\$ParametersFile") `
-                --parameters $secretsFile
+                --parameters $secretsFile `
+                --output none
             if ($LASTEXITCODE -ne 0) {
                 throw "Bicep deployment failed with exit code $LASTEXITCODE"
             }
             Write-Host "`nInfrastructure deployment complete.`n" -ForegroundColor Green
+
+            return
         }
 
         # 2. Build solution
@@ -198,23 +201,18 @@ function Deploy-Environment {
             throw "dotnet publish (Functions) failed with exit code $LASTEXITCODE"
         }
 
-        Write-Host "Deploying to Azure Function App...`n" -ForegroundColor Cyan
+        Write-Host "Deploying to Azure Function App (Flex Consumption)...`n" -ForegroundColor Cyan
         Push-Location $funcPublishPath
         try {
-            func azure functionapp publish $FunctionAppName --dotnet-isolated
+            # Flex Consumption: runtime is configured via functionAppConfig in Bicep, not func CLI
+            # --no-build: we publish pre-built binaries, skip remote build
+            func azure functionapp publish $FunctionAppName --dotnet-isolated --no-build
             if ($LASTEXITCODE -ne 0) {
                 throw "func azure functionapp publish failed with exit code $LASTEXITCODE"
             }
         }
         finally {
             Pop-Location
-        }
-
-        # Ensure .NET 10 runtime (func CLI defaults to 8.0)
-        Write-Host "Setting Function App runtime to .NET 10..." -ForegroundColor Yellow
-        az functionapp config set --name $FunctionAppName --resource-group $ResourceGroup --net-framework-version v10.0 --output none
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "Warning: Failed to set .NET version. Function may use .NET 8." -ForegroundColor Yellow
         }
 
         Write-Host "`nDeployment successful!`n" -ForegroundColor Green

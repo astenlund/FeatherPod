@@ -44,13 +44,6 @@ jobs:
         app-name: ${{ env.TEST_APP_NAME }}
         package: deploy.zip
 
-    - name: Update API Key from Secret
-      run: |
-        az webapp config appsettings set \
-          --name ${{ env.TEST_APP_NAME }} \
-          --resource-group ${{ env.TEST_RESOURCE_GROUP }} \
-          --settings ApiKey="${{ secrets.TEST_API_KEY }}"
-
     - name: Comment PR with deployment URL
       uses: actions/github-script@v7
       with:
@@ -69,8 +62,6 @@ jobs:
           - 📋 Episodes: \`GET ${{ env.TEST_APP_URL }}/api/{feedId}/episodes\`
           - 🎵 Upload: \`POST ${{ env.TEST_APP_URL }}/api/{feedId}/episodes\` (requires X-API-Key)
           - 🔊 Audio: \`GET ${{ env.TEST_APP_URL }}/audio/{feedId}/{filename}\`
-
-          **Note:** The test API key is configured from GitHub Secrets (TEST_API_KEY).
 
           **Commit:** ${context.sha.substring(0, 7)}
           **Branch:** ${context.payload.pull_request.head.ref}
