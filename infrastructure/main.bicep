@@ -325,6 +325,9 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2023-12-01' = {
     ContainerName: containerName
     AppServiceUrl: 'https://${appServiceName}.azurewebsites.net'
     InternalKey: internalApiKey
+    JobRetentionDays: '7'
+    OrphanedBlobRetentionDays: '1'
+    CleanupSchedule: '0 0 3 * * *'
     APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.properties.ConnectionString
   }
 }
