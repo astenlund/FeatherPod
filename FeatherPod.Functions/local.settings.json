@@ -6,6 +6,9 @@
     "StorageAccountName": "devstoreaccount1",
     "ContainerName": "featherpod",
     "AppServiceUrl": "http://localhost:8080",
-    "InternalKey": "dev-internal-key"
+    "InternalKey": "dev-internal-key",
+    "JobRetentionDays": "7",
+    "OrphanedBlobRetentionDays": "1",
+    "CleanupSchedule": "0 0 3 * * *"
   }
 }

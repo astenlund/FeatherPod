@@ -25,6 +25,15 @@ builder.Services.Configure<FunctionSettings>(options =>
     options.ContainerName = Environment.GetEnvironmentVariable("ContainerName") ?? "featherpod";
     options.AppServiceUrl = Environment.GetEnvironmentVariable("AppServiceUrl");
     options.InternalKey = Environment.GetEnvironmentVariable("InternalKey");
+    if (int.TryParse(Environment.GetEnvironmentVariable("JobRetentionDays"), out var jobRetention))
+    {
+        options.JobRetentionDays = jobRetention;
+    }
+    if (int.TryParse(Environment.GetEnvironmentVariable("OrphanedBlobRetentionDays"), out var blobRetention))
+    {
+        options.OrphanedBlobRetentionDays = blobRetention;
+    }
+    options.CleanupSchedule = Environment.GetEnvironmentVariable("CleanupSchedule") ?? options.CleanupSchedule;
 });
 
 // Azure Storage clients
