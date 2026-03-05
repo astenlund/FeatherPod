@@ -243,7 +243,7 @@ public sealed class InputValidationIntegrationTests : IDisposable
     }
 }
 
-internal class InputValidationWebApplicationFactory : WebApplicationFactory<Program>
+internal class InputValidationWebApplicationFactory : WebApplicationFactory<FeatherPod.Server.ServerAssemblyMarker>
 {
     // API key format: fp_{userId}_{secret} where secret is 22 chars base64url
     public const string ApiKey = "fp_test-admin_AAAAAAAAAAAAAAAAAAAAAA";

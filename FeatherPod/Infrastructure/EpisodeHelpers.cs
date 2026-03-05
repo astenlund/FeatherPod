@@ -55,11 +55,19 @@ internal static class EpisodeHelpers
         return result;
     }
 
-    internal static async Task<bool> UploadEpisodeAsync(HttpClient httpClient, IConfiguration configuration, string environment, FeedConfig feed, string filePath, PushSettings settings)
+    internal static async Task<bool> UploadEpisodeAsync(HttpClient httpClient, IConfiguration configuration, string environment, FeedConfig feed, string filePath, PushSettings settings, CurrentUserInfo? currentUser = null)
     {
         var fileName = Path.GetFileName(filePath);
         var success = false;
         string? normalizedTempFile = null;
+
+        // Safety net: verify feed access before expensive normalization
+        if (currentUser != null && !currentUser.CanAccessFeed(feed.Id))
+        {
+            Out.Error($"You don't have permission to upload to feed [cyan]{Markup.Escape(feed.Id)}[/].");
+
+            return false;
+        }
 
         // Generate episode ID from ORIGINAL file size (before any normalization)
         var originalFileSize = new FileInfo(filePath).Length;

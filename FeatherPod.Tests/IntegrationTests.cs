@@ -1038,7 +1038,7 @@ public sealed class IntegrationTests : IDisposable
     }
 }
 
-internal class FeatherPodWebApplicationFactory : WebApplicationFactory<Program>
+internal class FeatherPodWebApplicationFactory : WebApplicationFactory<FeatherPod.Server.ServerAssemblyMarker>
 {
     // API key in new fp_ format: fp_{userId}_{secret}
     // The secret is 22 chars base64url (128 bits)

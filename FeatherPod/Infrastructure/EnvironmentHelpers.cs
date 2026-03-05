@@ -8,7 +8,13 @@ using static FeatherPod.Infrastructure.ConsoleWriter;
 
 namespace FeatherPod.Infrastructure;
 
-internal record CurrentUserInfo(string Id, string Role, List<string> OwnedFeeds);
+internal record CurrentUserInfo(string Id, string Role, List<string> OwnedFeeds)
+{
+    internal bool CanAccessFeed(string feedId)
+    {
+        return Role == "Admin" || (Role == "FeedOwner" && OwnedFeeds.Contains(feedId));
+    }
+}
 
 internal static class EnvironmentHelpers
 {

@@ -214,7 +214,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                         foreach (var file in filesToUpload)
                         {
-                            var success = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, env, pushFeed, file, uploadSettings);
+                            var success = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, env, pushFeed, file, uploadSettings, currentUser);
                             if (success)
                                 successCount++;
                             else

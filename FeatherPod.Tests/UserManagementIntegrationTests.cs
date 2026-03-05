@@ -615,7 +615,7 @@ public class UserManagementIntegrationTests : IDisposable
     }
 }
 
-internal class UserManagementWebApplicationFactory : WebApplicationFactory<Program>
+internal class UserManagementWebApplicationFactory : WebApplicationFactory<FeatherPod.Server.ServerAssemblyMarker>
 {
     public const string ApiKey = "fp_test-admin_BBBBBBBBBBBBBBBBBBBBBB";
     public const string TestAdminUserId = "test-admin";

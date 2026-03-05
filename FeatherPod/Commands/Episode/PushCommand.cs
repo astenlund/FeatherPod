@@ -19,7 +19,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null) return 1;
 
-        var (httpClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
+        var (httpClient, currentUser) = await EnvironmentHelpers.SetupHttpClientAsync(env);
         if (httpClient == null) return 1;
 
         var configuration = EnvironmentHelpers.BuildConfiguration(env);
@@ -37,12 +37,20 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         }
         else
         {
-            feed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+            feed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
             if (feed == null)
             {
                 Out.Error("No feeds available. Create a feed first.");
                 return 1;
             }
+        }
+
+        // Verify feed access before expensive operations (normalization can take minutes)
+        if (currentUser != null && !currentUser.CanAccessFeed(feed.Id))
+        {
+            Out.Error($"You don't have permission to upload to feed [cyan]{Markup.Escape(feed.Id)}[/].");
+
+            return 1;
         }
 
         // Expand file patterns (wildcards and comma-separated lists)
@@ -149,7 +157,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
 
         foreach (var file in files)
         {
-            var success = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, env, feed, file, effectiveSettings);
+            var success = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, env, feed, file, effectiveSettings, currentUser);
             if (success)
                 successCount++;
             else
