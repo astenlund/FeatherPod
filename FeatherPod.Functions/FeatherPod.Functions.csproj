@@ -22,6 +22,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="FeatherPod.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\FeatherPod.Shared\FeatherPod.Shared.csproj" />
   </ItemGroup>
 

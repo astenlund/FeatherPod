@@ -27,6 +27,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\FeatherPod.Functions\FeatherPod.Functions.csproj" />
     <ProjectReference Include="..\FeatherPod.Server\FeatherPod.Server.csproj" />
     <ProjectReference Include="..\FeatherPod\FeatherPod.csproj" />
   </ItemGroup>
