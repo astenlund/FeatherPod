@@ -533,6 +533,10 @@ function setNoKeyError(errorType) {
 /**
  * Initialize the no-key state UI with paste button and textarea functionality.
  * Only attaches event listeners once.
+ *
+ * Phase 8b: The paste button auto-detects fp_-prefixed API keys in the clipboard.
+ * If an fp_ key is found, it is validated automatically. If not found (or clipboard
+ * is inaccessible), the textarea is shown for manual input.
  */
 function initNoKeyState() {
     if (noKeyStateInitialized) {
@@ -641,7 +645,7 @@ function initNoKeyState() {
         }
     }
 
-    // Paste button click handler
+    // Paste button: attempt clipboard read, auto-validate if fp_ key found, else show textarea
     pasteBtn.addEventListener('click', async () => {
         if (!navigator.clipboard || !navigator.clipboard.readText) {
             // Clipboard API not available (requires secure context: HTTPS or localhost)
@@ -652,12 +656,17 @@ function initNoKeyState() {
 
         try {
             pasteBtn.disabled = true;
-            pasteBtn.textContent = 'Validating...';
+            pasteBtn.textContent = 'Reading...';
 
             const clipboardText = await navigator.clipboard.readText();
+            const trimmed = clipboardText ? clipboardText.trim() : '';
 
-            if (!clipboardText || clipboardText.trim().length === 0) {
-                // Clipboard empty, morph to textarea
+            // Match fp_ key - use lookahead for end boundary to avoid issues with \b and special chars
+            // Format: fp_{userId}_{secret} where secret is 22 chars base64url
+            const fpKeyMatch = trimmed.match(/fp_[a-zA-Z0-9-]+_[A-Za-z0-9_-]{22}(?=[^A-Za-z0-9_-]|$)/);
+
+            if (!fpKeyMatch) {
+                // No fp_ key recognized in clipboard - show textarea for manual input
                 pasteBtn.disabled = false;
                 pasteBtn.textContent = STR_PASTE_KEY;
                 morphToTextarea();
@@ -665,26 +674,26 @@ function initNoKeyState() {
                 return;
             }
 
-            // Auto-extract fp_ prefixed key if pasted with surrounding text
-            // Format: fp_{userId}_{secret} where secret is 22 chars base64url
-            let apiKeyToValidate = clipboardText.trim();
-            // Match fp_ key - use lookahead for end boundary to avoid issues with \b and special chars
-            const fpKeyMatch = clipboardText.match(/fp_[a-zA-Z0-9-]+_[A-Za-z0-9_-]{22}(?=[^A-Za-z0-9_-]|$)/);
-            if (fpKeyMatch) {
-                apiKeyToValidate = fpKeyMatch[0];
-            }
-
+            // fp_ key found - validate it
+            pasteBtn.textContent = 'Validating...';
+            const apiKeyToValidate = fpKeyMatch[0];
             const validation = await validateApiKey(apiKeyToValidate);
 
             if (validation.valid && validation.feedAccess) {
                 saveApiKey(apiKeyToValidate);
                 await transitionToReadyState();
-            } else {
-                // Key was invalid or no access - just show textarea without error
-                // (user may not realize we already tried their clipboard)
+            } else if (validation.valid && !validation.feedAccess) {
+                // Valid key but no feed access - show textarea with error
                 pasteBtn.disabled = false;
                 pasteBtn.textContent = STR_PASTE_KEY;
-                morphToTextarea();
+                morphToTextarea(true);
+                setNoKeyError('no-access');
+            } else {
+                // fp_ key found but invalid - show textarea with error
+                pasteBtn.disabled = false;
+                pasteBtn.textContent = STR_PASTE_KEY;
+                morphToTextarea(true);
+                setNoKeyError('invalid');
             }
         } catch (err) {
             // Permission denied or other error, morph to textarea
