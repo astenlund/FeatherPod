@@ -1,6 +1,7 @@
 using System.Reflection;
 using FeatherPod.Commands;
 using FeatherPod.Commands.Episode;
+using FeatherPod.Infrastructure;
 using Spectre.Console.Cli;
 
 using ConfigCommands = FeatherPod.Commands.Config;
@@ -14,6 +15,8 @@ internal class Program
 {
     private static async Task<int> Main(string[] args)
     {
+        var adminFeaturesEnabled = PreferencesHelpers.GetEnableAdminFeatures() ?? false;
+
         var app = new CommandApp();
 
         app.Configure(config =>
@@ -56,35 +59,38 @@ internal class Program
                     .WithExample("episode", "copy", "--from", "feed1", "--to", "feed2", "--episode", "Episode*");
             });
 
-            config.AddBranch("user", user =>
+            if (adminFeaturesEnabled)
             {
-                user.SetDescription("User management commands (Admin only)");
+                config.AddBranch("user", user =>
+                {
+                    user.SetDescription("User management commands (Admin only)");
 
-                user.AddCommand<UserCommands.CreateCommand>("create")
-                    .WithDescription("Create a new user")
-                    .WithExample("user", "create", "john", "--name", "\"John Doe\"", "--email", "john@example.com", "--role", "Admin")
-                    .WithExample("user", "create", "alice", "--role", "FeedOwner", "--feeds", "podcast1,podcast2");
+                    user.AddCommand<UserCommands.CreateCommand>("create")
+                        .WithDescription("Create a new user")
+                        .WithExample("user", "create", "john", "--name", "\"John Doe\"", "--email", "john@example.com", "--role", "Admin")
+                        .WithExample("user", "create", "alice", "--role", "FeedOwner", "--feeds", "podcast1,podcast2");
 
-                user.AddCommand<UserCommands.ListCommand>("list")
-                    .WithDescription("List all users")
-                    .WithExample("user", "list");
+                    user.AddCommand<UserCommands.ListCommand>("list")
+                        .WithDescription("List all users")
+                        .WithExample("user", "list");
 
-                user.AddCommand<UserCommands.DeleteCommand>("delete")
-                    .WithDescription("Delete a user")
-                    .WithExample("user", "delete", "john");
+                    user.AddCommand<UserCommands.DeleteCommand>("delete")
+                        .WithDescription("Delete a user")
+                        .WithExample("user", "delete", "john");
 
-                user.AddCommand<UserCommands.GrantCommand>("grant")
-                    .WithDescription("Grant feed ownership to a user")
-                    .WithExample("user", "grant", "alice", "my-podcast");
+                    user.AddCommand<UserCommands.GrantCommand>("grant")
+                        .WithDescription("Grant feed ownership to a user")
+                        .WithExample("user", "grant", "alice", "my-podcast");
 
-                user.AddCommand<UserCommands.RevokeCommand>("revoke")
-                    .WithDescription("Revoke feed ownership from a user")
-                    .WithExample("user", "revoke", "alice", "my-podcast");
+                    user.AddCommand<UserCommands.RevokeCommand>("revoke")
+                        .WithDescription("Revoke feed ownership from a user")
+                        .WithExample("user", "revoke", "alice", "my-podcast");
 
-                user.AddCommand<UserCommands.RotateKeyCommand>("rotate-key")
-                    .WithDescription("Regenerate another user's API key (Admin only)")
-                    .WithExample("user", "rotate-key", "john");
-            });
+                    user.AddCommand<UserCommands.RotateKeyCommand>("rotate-key")
+                        .WithDescription("Regenerate another user's API key (Admin only)")
+                        .WithExample("user", "rotate-key", "john");
+                });
+            }
 
             config.AddBranch("feed", feed =>
             {
@@ -219,6 +225,23 @@ internal class Program
                     autoConnect.AddCommand<PreferencesCommands.AutoConnect.DisableCommand>("disable")
                         .WithDescription("Disable auto-connect on startup")
                         .WithExample("preferences", "auto-connect", "disable");
+                });
+
+                prefs.AddBranch("admin-features", adminFeatures =>
+                {
+                    adminFeatures.SetDescription("Admin features visibility preferences");
+
+                    adminFeatures.AddCommand<PreferencesCommands.AdminFeatures.ShowCommand>("show")
+                        .WithDescription("Show admin features setting")
+                        .WithExample("preferences", "admin-features", "show");
+
+                    adminFeatures.AddCommand<PreferencesCommands.AdminFeatures.EnableCommand>("enable")
+                        .WithDescription("Enable admin features (user management, environment switching)")
+                        .WithExample("preferences", "admin-features", "enable");
+
+                    adminFeatures.AddCommand<PreferencesCommands.AdminFeatures.DisableCommand>("disable")
+                        .WithDescription("Disable admin features for simplified experience")
+                        .WithExample("preferences", "admin-features", "disable");
                 });
             })
             .WithAlias("prefs");

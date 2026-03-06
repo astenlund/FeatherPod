@@ -37,6 +37,11 @@ internal sealed class ShowCommand : Command<PreferencesShowSettings>
         var autoConnectEnabled = autoConnectPref ?? true;
 
         Out.MarkupLine($"[bold]Auto-connect ({env}):[/] {(autoConnectEnabled ? "enabled" : "disabled")}{(autoConnectPref.HasValue ? "" : " (default)")}");
+
+        // Show admin features preference (defaults to disabled, global not per-environment)
+        var adminEnabled = PreferencesHelpers.GetEnableAdminFeatures();
+        Out.MarkupLine($"[bold]Admin features:[/] {(adminEnabled ?? false ? "enabled" : "disabled")}{(adminEnabled == null ? " (default)" : "")}");
+
         Out.BlankLine();
         Out.MarkupLine($"[grey]Preferences: {Markup.Escape(filePath)}[/]");
         Out.BlankLine().Flush();

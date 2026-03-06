@@ -27,6 +27,61 @@ internal static class PreferencesHelpers
     }
 
     /// <summary>
+    /// Gets whether admin features are enabled in the CLI.
+    /// Returns null if not set (defaults to false — FeedOwner experience).
+    /// </summary>
+    internal static bool? GetEnableAdminFeatures()
+    {
+        var preferencesPath = GetPreferencesPath();
+        if (!File.Exists(preferencesPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            var content = File.ReadAllText(preferencesPath);
+            var root = JsonNode.Parse(content);
+
+            return root?["EnableAdminFeatures"]?.GetValue<bool>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Sets whether admin features are enabled in the CLI.
+    /// </summary>
+    internal static void SetEnableAdminFeatures(bool enabled)
+    {
+        var filePath = GetPreferencesPath();
+        var directory = Path.GetDirectoryName(filePath)!;
+
+        if (!Directory.Exists(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        JsonObject root;
+
+        if (File.Exists(filePath))
+        {
+            var existingContent = File.ReadAllText(filePath);
+            root = JsonNode.Parse(existingContent)?.AsObject() ?? new JsonObject();
+        }
+        else
+        {
+            root = new();
+        }
+
+        root["EnableAdminFeatures"] = enabled;
+
+        File.WriteAllText(filePath, root.ToJsonString(JsonWriteOptions));
+    }
+
+    /// <summary>
     /// Saves the API key to the user preferences file in AppData.
     /// Creates the file if it doesn't exist, preserves other settings if it does.
     /// </summary>

@@ -40,13 +40,15 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, currentUser: currentUser, showNoFeedsMessage: false);
         }
 
+        var adminFeaturesEnabled = PreferencesHelpers.GetEnableAdminFeatures() ?? false;
+
         // Main menu loop
         while (true)
         {
             // Redraw header with current feed status
             await ShowHeader(env, apiUrl, currentFeed, shouldConnect: false, currentlyConnected: isConnected, existingServerVersion: serverVersion);
 
-            var choice = ShowMenu(currentFeed, isConnected, currentUser);
+            var choice = ShowMenu(currentFeed, isConnected, currentUser, adminFeaturesEnabled);
 
             switch (choice)
             {
@@ -1144,6 +1146,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         .AddOption("D", "Delete-after-upload method", "delete-method")
                         .AddOption("K", "Update API key (local)", "apikey-local")
                         .AddOption("R", "Rotate API key (server)", "apikey-rotate")
+                        .AddOption("F", "Admin features", "admin-features")
                         .AddOption("S", "Show all preferences", "show-all")
                         .AddOption("G", "Generate config files", "generate")
                         .AllowCancel()
@@ -1384,6 +1387,25 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             }
                             break;
 
+                        case "admin-features":
+                            var currentAdminFeatures = PreferencesHelpers.GetEnableAdminFeatures() ?? false;
+                            var adminFeaturesChoice = new MenuBuilder<bool?>()
+                                .WithTitle($"Admin features are currently {(currentAdminFeatures ? "enabled" : "disabled")}:")
+                                .WithHint("(arrow keys or E/D, Esc to cancel)")
+                                .AddOption("E", "Enable admin features", true)
+                                .AddOption("D", "Disable admin features", false)
+                                .AllowCancel()
+                                .Show();
+
+                            if (adminFeaturesChoice.HasValue)
+                            {
+                                PreferencesHelpers.SetEnableAdminFeatures(adminFeaturesChoice.Value);
+                                adminFeaturesEnabled = adminFeaturesChoice.Value;
+                                Out.Success($"Admin features {(adminFeaturesChoice.Value ? "enabled" : "disabled")}");
+                                Out.MarkupLine("[grey]Menu will update on next loop.[/]");
+                            }
+                            break;
+
                         case "show-all":
                             var showApiKey = PreferencesHelpers.GetApiKey(env);
                             var showFilePath = PreferencesHelpers.GetPreferencesPath();
@@ -1403,6 +1425,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             var showTrashPref = PreferencesHelpers.GetDeleteAfterUploadUseTrash(env);
                             var showUseTrash = showTrashPref ?? true;
                             Out.MarkupLine($"[bold]Delete-after-upload ({env}):[/] {(showUseTrash ? "send to trash" : "permanent delete")}{(showTrashPref.HasValue ? "" : " (default)")}");
+
+                            var adminEnabled = PreferencesHelpers.GetEnableAdminFeatures();
+                            Out.MarkupLine($"[bold]Admin features:[/] {(adminEnabled ?? false ? "enabled" : "disabled")}{(adminEnabled == null ? " (default)" : "")}");
 
                             Out.BlankLine();
                             Out.MarkupLine($"[grey]Preferences: {Markup.Escape(showFilePath)}[/]");
@@ -1507,8 +1532,12 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             ? $"[bold]FeatherPod Episode Manager[/] [grey]v{version} (server: {existingServerVersion})[/]"
             : $"[bold]FeatherPod Episode Manager[/] [grey]v{version}[/]");
         Out.BlankLine();
-        Out.MarkupLine($"Environment: [cyan]{env}[/]");
-        Out.BlankLine();
+        var adminFeaturesEnabled = PreferencesHelpers.GetEnableAdminFeatures() ?? false;
+        if (adminFeaturesEnabled)
+        {
+            Out.MarkupLine($"Environment: [cyan]{env}[/]");
+            Out.BlankLine();
+        }
 
         if (!string.IsNullOrEmpty(apiUrl))
         {
@@ -1725,7 +1754,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         }
     }
 
-    private static MenuChoice ShowMenu(FeedConfig? currentFeed, bool isConnected, CurrentUserInfo? currentUser)
+    private static MenuChoice ShowMenu(FeedConfig? currentFeed, bool isConnected, CurrentUserInfo? currentUser, bool adminFeaturesEnabled)
     {
         Out.BlankLine().Flush();
 
@@ -1737,16 +1766,22 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             .AddOption("D", "Delete episodes", MenuChoice.Delete)
             .AddOption("V", "Move/Copy episodes", MenuChoice.MoveCopy);
 
-        // Only show User Management for Admin users
-        if (currentUser?.Role == "Admin")
+        // Only show User Management for Admin users when admin features are enabled
+        if (adminFeaturesEnabled && currentUser?.Role == "Admin")
         {
             menu.AddOption("U", "User management", MenuChoice.UserManagement);
         }
 
+        menu.AddOption("M", "Manage feeds", MenuChoice.ManageFeeds)
+            .AddOption("F", "Switch feed", MenuChoice.SwitchFeed);
+
+        // Only show Environment switching when admin features are enabled
+        if (adminFeaturesEnabled)
+        {
+            menu.AddOption("E", "Environment", MenuChoice.SwitchEnvironment);
+        }
+
         return menu
-            .AddOption("M", "Manage feeds", MenuChoice.ManageFeeds)
-            .AddOption("F", "Switch feed", MenuChoice.SwitchFeed)
-            .AddOption("E", "Environment", MenuChoice.SwitchEnvironment)
             .AddOption("S", "Settings", MenuChoice.Preferences)
             .AddOption("Q", "Quit", MenuChoice.Quit)
             .AllowCancel(false) // Don't allow escape on main menu
