@@ -448,6 +448,10 @@ public partial class AudioNormalizationService : IAudioNormalizationService
 
             return File.Exists(outputPath);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "FFMpegCore processing failed");

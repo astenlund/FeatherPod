@@ -177,7 +177,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task<string> DownloadAudioToTempAsync(string feedId, string fileName)
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), fileName);
+        var tempPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}_{fileName}");
 
         var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
         var blobPath = $"{feedId}/audio/{fileName}";
@@ -289,11 +289,12 @@ public class BlobStorageService : IBlobStorageService
             var sourceBlobClient = containerClient.GetBlobClient(oldBlobPath);
             var destBlobClient = containerClient.GetBlobClient(newBlobPath);
 
-            // Start the copy operation
-            var copyOperation = await destBlobClient.StartCopyFromUriAsync(sourceBlobClient.Uri);
-
-            // Wait for the copy to complete before deleting source
-            await copyOperation.WaitForCompletionAsync();
+            // Download and re-upload instead of server-side copy, which requires
+            // SAS tokens or public access when using Managed Identity authentication
+            using var stream = new MemoryStream();
+            await sourceBlobClient.DownloadToAsync(stream);
+            stream.Position = 0;
+            await destBlobClient.UploadAsync(stream, overwrite: true);
 
             await sourceBlobClient.DeleteAsync();
 

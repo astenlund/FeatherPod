@@ -99,7 +99,9 @@ public sealed class UserService : IUserService, IDisposable
             if (user is { ApiKeySalt: not null })
             {
                 var keyHash = HashApiKey(apiKey, user.ApiKeySalt);
-                if (user.ApiKeyHash == keyHash)
+                var hashBytes = Convert.FromHexString(user.ApiKeyHash);
+                var candidateBytes = Convert.FromHexString(keyHash);
+                if (CryptographicOperations.FixedTimeEquals(hashBytes, candidateBytes))
                 {
                     return user;
                 }
