@@ -23,5 +23,10 @@ public enum JobStatus
     /// <summary>
     /// Job failed. See Error property for details.
     /// </summary>
-    Failed
+    Failed,
+
+    /// <summary>
+    /// Job was cancelled by the user.
+    /// </summary>
+    Cancelled
 }

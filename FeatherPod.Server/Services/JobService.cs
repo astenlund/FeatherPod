@@ -95,4 +95,49 @@ public class JobService : IJobService
             _logger.LogDebug("Job status entry already exists for {JobId}, skipping creation", jobId);
         }
     }
+
+    public async Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default)
+    {
+        const int maxRetries = 3;
+        for (var attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                var response = await _tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+                var entity = response.Value;
+
+                // Already in terminal state — not cancellable
+                if (entity.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+                {
+                    return null;
+                }
+
+                entity.Status = nameof(JobStatus.Cancelled);
+                entity.Stage = nameof(NormalizationStage.Cancelled);
+                entity.CompletedAt = DateTimeOffset.UtcNow;
+
+                await _tableClient.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace, cancellationToken);
+                _logger.LogInformation("Cancelled job {JobId}", jobId);
+
+                return entity;
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 412 && attempt < maxRetries)
+            {
+                // ETag conflict — job was modified concurrently, retry
+                _logger.LogDebug("ETag conflict cancelling job {JobId}, attempt {Attempt}", jobId, attempt);
+            }
+        }
+
+        // Final attempt: re-read to see if it became terminal
+        var finalResponse = await _tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+        var finalEntity = finalResponse.Value;
+        if (finalEntity.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+        {
+            return null;
+        }
+
+        _logger.LogWarning("Failed to cancel job {JobId} after {MaxRetries} attempts", jobId, maxRetries);
+
+        return null;
+    }
 }

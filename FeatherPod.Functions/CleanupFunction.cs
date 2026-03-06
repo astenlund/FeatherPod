@@ -152,8 +152,8 @@ public class CleanupFunction
                     var jobResponse = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
                     var job = jobResponse.Value;
 
-                    // If job is completed or failed, pending blob is orphaned (should have been deleted)
-                    if (job.GetJobStatus() is JobStatus.Completed or JobStatus.Failed)
+                    // If job is completed, failed, or cancelled, pending blob is orphaned (should have been deleted)
+                    if (job.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
                     {
                         shouldDelete = true;
                     }

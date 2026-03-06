@@ -85,15 +85,51 @@ public class NormalizationFunction
         var tableClient = _tableClient.GetTableClient(TableName);
         await tableClient.CreateIfNotExistsAsync(cancellationToken);
 
-        await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Processing, cancellationToken: cancellationToken);
+        // Check if the job was cancelled before we start processing
+        var currentEntity = await GetJobEntityAsync(tableClient, job.JobId, cancellationToken);
+        if (currentEntity?.GetJobStatus() == JobStatus.Cancelled)
+        {
+            _logger.LogInformation("Job {JobId} was cancelled before processing started, cleaning up", job.JobId);
+            await CleanupPendingBlobAsync(job, cancellationToken);
 
-        if (job.Phase == NormalizationPhase.Analyze)
-        {
-            await ProcessAnalyzePhaseAsync(job, tableClient, cancellationToken);
+            return;
         }
-        else
+
+        // Transition to Processing with ETag-based optimistic concurrency
+        if (!await TryTransitionToProcessingAsync(tableClient, job, currentEntity, cancellationToken))
         {
-            await ProcessNormalizePhaseAsync(job, tableClient, cancellationToken);
+            return;
+        }
+
+        // Create a linked cancellation source that checks for cancellation in Table Storage
+        using var cancellationCheckingCts = CreateCancellationCheckingSource(tableClient, job.JobId, cancellationToken);
+        var linkedToken = cancellationCheckingCts.Token;
+
+        try
+        {
+            if (job.Phase == NormalizationPhase.Analyze)
+            {
+                await ProcessAnalyzePhaseAsync(job, tableClient, linkedToken);
+            }
+            else
+            {
+                await ProcessNormalizePhaseAsync(job, tableClient, linkedToken);
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // Cancelled via Table Storage flag (user cancellation), not host shutdown
+            var entity = await GetJobEntityAsync(tableClient, job.JobId, CancellationToken.None);
+            if (entity?.GetJobStatus() == JobStatus.Cancelled)
+            {
+                _logger.LogInformation("Job {JobId} was cancelled by user during processing, cleaning up", job.JobId);
+                await CleanupPendingBlobAsync(job, CancellationToken.None);
+
+                return;
+            }
+
+            // Not a user cancellation — re-throw so the Functions runtime can handle it
+            throw;
         }
     }
 
@@ -488,7 +524,7 @@ public class NormalizationFunction
         entity.EpisodeId = episodeId;
         entity.Error = error;
 
-        if (status is JobStatus.Completed or JobStatus.Failed)
+        if (status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
         {
             entity.CompletedAt = DateTimeOffset.UtcNow;
         }
@@ -521,11 +557,12 @@ public class NormalizationFunction
             {
                 Completed => nameof(JobStatus.Completed),
                 Failed => nameof(JobStatus.Failed),
+                Cancelled => nameof(JobStatus.Cancelled),
                 Queued => nameof(JobStatus.Queued),
                 _ => nameof(JobStatus.Processing)
             };
 
-            if (progress.Stage is Completed or Failed)
+            if (progress.Stage is Completed or Failed or Cancelled)
             {
                 entity.CompletedAt = DateTimeOffset.UtcNow;
             }
@@ -662,6 +699,97 @@ public class NormalizationFunction
             _logger.LogWarning(ex, "Failed to refresh cache for feed {FeedId}", feedId);
             // Don't fail the job if cache refresh fails - episode is already created
         }
+    }
+
+    private static async Task<JobStatusEntity?> GetJobEntityAsync(TableClient tableClient, string jobId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+
+            return response.Value;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
+    }
+
+    private async Task<bool> TryTransitionToProcessingAsync(TableClient tableClient, NormalizationJob job, JobStatusEntity? entity, CancellationToken cancellationToken)
+    {
+        if (entity == null)
+        {
+            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Processing, cancellationToken: cancellationToken);
+
+            return true;
+        }
+
+        entity.Status = nameof(JobStatus.Processing);
+
+        try
+        {
+            await tableClient.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace, cancellationToken);
+
+            return true;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 412)
+        {
+            // ETag conflict — re-read and check if cancelled
+            var refreshed = await GetJobEntityAsync(tableClient, job.JobId, cancellationToken);
+            if (refreshed?.GetJobStatus() == JobStatus.Cancelled)
+            {
+                _logger.LogInformation("Job {JobId} was cancelled during transition to Processing, cleaning up", job.JobId);
+                await CleanupPendingBlobAsync(job, cancellationToken);
+
+                return false;
+            }
+
+            // Not cancelled, fall back to unconditional upsert
+            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Processing, cancellationToken: cancellationToken);
+
+            return true;
+        }
+    }
+
+    private async Task CleanupPendingBlobAsync(NormalizationJob job, CancellationToken cancellationToken)
+    {
+        var containerClient = _blobClient.GetBlobContainerClient(_settings.ContainerName);
+        var pendingBlobPath = $"{job.FeedId}/pending/{job.JobId}/{job.FileName}";
+        await containerClient.GetBlobClient(pendingBlobPath).DeleteIfExistsAsync(cancellationToken: cancellationToken);
+    }
+
+    private CancellationTokenSource CreateCancellationCheckingSource(TableClient tableClient, string jobId, CancellationToken parentToken)
+    {
+        var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(parentToken);
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (!linkedCts.IsCancellationRequested)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(5), linkedCts.Token);
+                    var entity = await GetJobEntityAsync(tableClient, jobId, CancellationToken.None);
+                    if (entity?.GetJobStatus() == JobStatus.Cancelled)
+                    {
+                        _logger.LogInformation("Cancellation detected for job {JobId} via polling", jobId);
+                        await linkedCts.CancelAsync();
+
+                        break;
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when the linked source is cancelled normally
+            }
+            catch (ObjectDisposedException)
+            {
+                // CTS was disposed before the polling loop exited
+            }
+        }, CancellationToken.None);
+
+        return linkedCts;
     }
 
     private void CleanupTempFile(string? path)

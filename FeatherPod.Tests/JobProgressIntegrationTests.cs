@@ -244,6 +244,201 @@ public partial class JobProgressIntegrationTests : IDisposable
         return events;
     }
 
+    // ============================================================================
+    // CANCEL JOB TESTS
+    // ============================================================================
+
+    [AzuriteFact]
+    public async Task CancelJob_ForNonExistentJob_ShouldReturn404()
+    {
+        // Arrange
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/jobs/nonexistent-job-id/cancel");
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [AzuriteFact]
+    public async Task CancelJob_WithoutAuth_ShouldReturn401()
+    {
+        // Act
+        var response = await _client.PostAsync("/api/jobs/some-job-id/cancel", null);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
+
+    [AzuriteFact]
+    public async Task CancelJob_ForQueuedJob_ShouldReturn200WithCancelledStatus()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+        var jobId = await UploadWithNormalizeAsync();
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/jobs/{jobId}/cancel");
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var content = await response.Content.ReadAsStringAsync();
+        Assert.Contains("\"status\":\"Cancelled\"", content);
+        Assert.Contains("\"stage\":\"Cancelled\"", content);
+    }
+
+    [AzuriteFact]
+    public async Task CancelJob_AlreadyCancelled_ShouldReturn409()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+        var jobId = await UploadWithNormalizeAsync();
+
+        // Cancel once
+        var cancelRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/jobs/{jobId}/cancel");
+        cancelRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var firstResponse = await _client.SendAsync(cancelRequest);
+        Assert.Equal(HttpStatusCode.OK, firstResponse.StatusCode);
+
+        // Act - cancel again
+        var secondRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/jobs/{jobId}/cancel");
+        secondRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var response = await _client.SendAsync(secondRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    [AzuriteFact]
+    public async Task CancelJob_ShouldCleanUpPendingBlobs()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+        var jobId = await UploadWithNormalizeAsync();
+
+        var cancelRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/jobs/{jobId}/cancel");
+        cancelRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        // Act
+        var response = await _client.SendAsync(cancelRequest);
+
+        // Assert - job is cancelled
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // Verify job status shows Cancelled with CompletedAt
+        var statusResponse = await _client.GetAsync($"/api/jobs/{jobId}");
+        var statusContent = await statusResponse.Content.ReadAsStringAsync();
+        Assert.Contains("\"status\":\"Cancelled\"", statusContent);
+        Assert.Contains("\"completedAt\"", statusContent);
+    }
+
+    [AzuriteFact]
+    public async Task CancelJob_FeedOwnerOfDifferentFeed_ShouldReturn403()
+    {
+        // Arrange - create a feed and upload a job as admin
+        await CreateTestFeedAsync();
+        var jobId = await UploadWithNormalizeAsync();
+
+        // Create a FeedOwner who owns a different feed
+        var feedOwnerKey = await CreateTestUserAsync("other-owner", "FeedOwner", ["some-other-feed"]);
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/jobs/{jobId}/cancel");
+        request.Headers.Add("X-API-Key", feedOwnerKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [AzuriteFact]
+    public async Task CancelJob_FeedOwnerOfSameFeed_ShouldReturn200()
+    {
+        // Arrange - create a feed owner who owns the test feed
+        var feedOwnerKey = await CreateTestUserAsync("feed-owner", "FeedOwner", [TestFeedId]);
+
+        // Create feed and upload as admin (feed owner can't create feeds)
+        await CreateTestFeedAsync();
+        var jobId = await UploadWithNormalizeAsync();
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/jobs/{jobId}/cancel");
+        request.Headers.Add("X-API-Key", feedOwnerKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var content = await response.Content.ReadAsStringAsync();
+        Assert.Contains("\"status\":\"Cancelled\"", content);
+    }
+
+    [AzuriteFact]
+    public async Task StreamJobProgress_ForCancelledJob_ShouldSendDoneEvent()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+        var jobId = await UploadWithNormalizeAsync();
+
+        // Cancel the job
+        var cancelRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/jobs/{jobId}/cancel");
+        cancelRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        await _client.SendAsync(cancelRequest);
+
+        // Act - stream progress for the cancelled job
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var response = await _client.GetAsync(
+            $"/api/jobs/{jobId}/progress",
+            HttpCompletionOption.ResponseHeadersRead,
+            cts.Token);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var events = await ReadSSEEventsAsync(response, cts.Token, maxEvents: 5);
+
+        // Should get a progress event with Cancelled status, followed by done
+        var progressEvent = events.FirstOrDefault(e => e.eventType == "progress");
+        Assert.NotNull(progressEvent.data);
+        Assert.Contains("Cancelled", progressEvent.data);
+
+        Assert.Contains(events, e => e.eventType == "done");
+    }
+
+    // ============================================================================
+    // HELPERS
+    // ============================================================================
+
+    private async Task<string> CreateTestUserAsync(string userId, string role = "FeedOwner", string[]? ownedFeeds = null)
+    {
+        var userJson = $$"""
+        {
+            "id": "{{userId}}",
+            "name": "{{userId}} Name",
+            "email": "{{userId}}@example.com",
+            "role": "{{role}}",
+            "ownedFeeds": {{System.Text.Json.JsonSerializer.Serialize(ownedFeeds ?? [])}}
+        }
+        """;
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/users");
+        request.Content = new StringContent(userJson, System.Text.Encoding.UTF8, "application/json");
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        var response = await _client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+
+        var responseJson = await response.Content.ReadAsStringAsync();
+        var doc = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(responseJson);
+
+        return doc.GetProperty("apiKey").GetString()!;
+    }
+
     [GeneratedRegex(@"""jobId"":""([^""]+)""")]
     private static partial Regex JobIdRegex();
 }

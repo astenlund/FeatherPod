@@ -297,6 +297,7 @@ h1 {
 .state .episode-info,
 .state .progress-container,
 .state .progress-row,
+.state .btn-cancel,
 .state .recent-uploads,
 #drop-zone {
     animation: blur-fade-in 0.5s ease both;
@@ -436,6 +437,22 @@ h1 {
 @keyframes text-shimmer {
     0% { background-position: 100% 0; }
     100% { background-position: -100% 0; }
+}
+
+.btn-cancel {
+    background: none;
+    border: none;
+    color: var(--text-tertiary);
+    font-family: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+    margin-top: 1rem;
+    padding: 0.3rem 0.8rem;
+    transition: color 0.15s ease;
+}
+
+.btn-cancel:hover {
+    color: var(--text-secondary);
 }
 
 .hint code {

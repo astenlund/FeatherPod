@@ -11,7 +11,7 @@ public record JobStatusResponse
     required public string JobId { get; init; }
 
     /// <summary>
-    /// Current status: Queued, Processing, Completed, or Failed.
+    /// Current status: Queued, Processing, Completed, Failed, or Cancelled.
     /// </summary>
     required public string Status { get; init; }
 

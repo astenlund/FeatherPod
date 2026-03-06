@@ -33,6 +33,9 @@ public interface IBlobStorageService
     Task SaveEpisodeMetadataAsync(string feedId, string metadataJson);
     Task<string?> LoadEpisodeMetadataAsync(string feedId);
 
+    // Pending blob operations
+    Task DeletePendingJobBlobsAsync(string feedId, string jobId);
+
     // Feed management operations
     Task RenameFeedAsync(string oldFeedId, string newFeedId);
     Task DeleteFeedAsync(string feedId);

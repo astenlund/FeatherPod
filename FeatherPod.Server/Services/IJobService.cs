@@ -26,4 +26,9 @@ public interface IJobService
     /// Create initial job status entry (Queued state).
     /// </summary>
     Task CreateJobStatusAsync(string jobId, string feedId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Cancel a job. Returns updated entity, or null if the job is already in a terminal state.
+    /// </summary>
+    Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default);
 }

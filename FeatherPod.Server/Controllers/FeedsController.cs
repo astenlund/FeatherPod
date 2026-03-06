@@ -149,7 +149,7 @@ public class FeedsController : ControllerBase
         var feedsToCheck = GetAccessibleFeeds(user, feedId);
         if (feedsToCheck == null)
         {
-            return Forbid();
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have access to the requested feed" });
         }
 
         var report = await _episodeService.CheckDataIntegrityAsync(feedsToCheck);

@@ -10,14 +10,16 @@ namespace FeatherPod.Server.Controllers;
 public class JobsController : ControllerBase
 {
     private readonly IJobService _jobService;
+    private readonly IBlobStorageService _blobService;
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public JobsController(IJobService jobService)
+    public JobsController(IJobService jobService, IBlobStorageService blobService)
     {
         _jobService = jobService;
+        _blobService = blobService;
     }
 
     /// <summary>
@@ -35,6 +37,44 @@ public class JobsController : ControllerBase
         }
 
         return Ok(JobStatusResponse.FromEntity(entity));
+    }
+
+    /// <summary>
+    /// Cancel a normalization job. Cleans up pending blobs.
+    /// </summary>
+    [HttpPost("{jobId}/cancel")]
+    [ProducesResponseType<JobStatusResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> CancelJob(string jobId)
+    {
+        var entity = await _jobService.GetJobStatusAsync(jobId, HttpContext.RequestAborted);
+        if (entity == null)
+        {
+            return NotFound(new { error = $"Job '{jobId}' not found" });
+        }
+
+        // Check feed ownership
+        var user = HttpContext.Items["User"] as User;
+        if (user != null && user.Role != UserRole.Admin && (entity.FeedId == null || !user.OwnedFeeds.Contains(entity.FeedId)))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have permission to cancel this job" });
+        }
+
+        var cancelled = await _jobService.CancelJobAsync(jobId, HttpContext.RequestAborted);
+        if (cancelled == null)
+        {
+            return Conflict(new { error = "Job is already in a terminal state" });
+        }
+
+        // Clean up pending blobs (idempotent — safe even if Function also deletes)
+        if (cancelled.FeedId != null)
+        {
+            await _blobService.DeletePendingJobBlobsAsync(cancelled.FeedId, jobId);
+        }
+
+        return Ok(JobStatusResponse.FromEntity(cancelled));
     }
 
     /// <summary>
@@ -72,7 +112,7 @@ public class JobsController : ControllerBase
                     lastEntity = entity;
                 }
 
-                if (entity.Status is nameof(JobStatus.Completed) or nameof(JobStatus.Failed))
+                if (entity.Status is nameof(JobStatus.Completed) or nameof(JobStatus.Failed) or nameof(JobStatus.Cancelled))
                 {
                     await WriteEventAsync("done", "{}", cancellationToken);
 

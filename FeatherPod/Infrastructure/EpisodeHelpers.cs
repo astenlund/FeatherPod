@@ -697,6 +697,11 @@ internal static class EpisodeHelpers
             return new(false, Error: finalStatus.Error ?? "Unknown error");
         }
 
+        if (finalStatus?.Status == nameof(JobStatus.Cancelled))
+        {
+            return new(false, Error: "Job was cancelled");
+        }
+
         return new(false, Error: "Connection closed unexpectedly");
     }
 
@@ -747,6 +752,14 @@ internal static class EpisodeHelpers
                         {
                             Out.BlankLine();
                             Out.Error($"Normalization failed: {Markup.Escape(status.Error ?? "Unknown error")}");
+
+                            return false;
+                        }
+
+                        if (status.Status == nameof(JobStatus.Cancelled))
+                        {
+                            Out.BlankLine();
+                            Out.Warning("Job was cancelled");
 
                             return false;
                         }

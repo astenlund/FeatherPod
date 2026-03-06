@@ -203,6 +203,16 @@ public class TestBlobStorageService : IBlobStorageService
         await Task.CompletedTask;
     }
 
+    public async Task DeletePendingJobBlobsAsync(string feedId, string jobId)
+    {
+        var pendingPath = Path.Combine(_rootPath, feedId, "pending", jobId);
+        if (Directory.Exists(pendingPath))
+        {
+            Directory.Delete(pendingPath, recursive: true);
+        }
+        await Task.CompletedTask;
+    }
+
     public async Task RenameFeedAsync(string oldFeedId, string newFeedId)
     {
         var oldPath = Path.Combine(_rootPath, oldFeedId);

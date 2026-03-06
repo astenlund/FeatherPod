@@ -268,6 +268,18 @@ public class BlobStorageService : IBlobStorageService
         return response.Value.Content.ToString();
     }
 
+    public async Task DeletePendingJobBlobsAsync(string feedId, string jobId)
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+        var prefix = $"{feedId}/pending/{jobId}/";
+
+        await foreach (var blobItem in containerClient.GetBlobsAsync(prefix: prefix))
+        {
+            await containerClient.GetBlobClient(blobItem.Name).DeleteIfExistsAsync();
+            _logger.LogDebug("Deleted pending blob: {BlobPath}", blobItem.Name);
+        }
+    }
+
     public async Task RenameFeedAsync(string oldFeedId, string newFeedId)
     {
         var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);

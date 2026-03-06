@@ -11,5 +11,6 @@ public enum NormalizationStage
     Normalizing,
     Finishing,
     Completed,
-    Failed
+    Failed,
+    Cancelled
 }

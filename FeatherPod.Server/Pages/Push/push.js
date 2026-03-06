@@ -75,6 +75,13 @@ let cachedBrowserUploads = null;
 /** @type {Array<Object>|null} - Cached all uploads from server */
 let cachedAllUploads = null;
 
+/** @type {XMLHttpRequest|null} - Active upload XHR for cancellation */
+let currentXhr = null;
+/** @type {string|null} - Active normalization job ID for cancellation */
+let currentJobId = null;
+/** @type {EventSource|null} - Active SSE connection for cancellation */
+let currentEventSource = null;
+
 /** @type {number|null} - Animation ID for title text animation */
 let titleAnimationId = null;
 /** @type {string} - Current first word of title (for animation) */
@@ -901,6 +908,7 @@ async function uploadFile(file) {
     try {
         const response = await new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
+            currentXhr = xhr;
             xhr.upload.addEventListener('progress', (e) => {
                 if (e.lengthComputable) {
                     const percent = Math.round((e.loaded / e.total) * 100);
@@ -909,12 +917,19 @@ async function uploadFile(file) {
                 }
             });
             xhr.onload = () => {
+                currentXhr = null;
                 progressAnimator.reset();
                 resolve({ status: xhr.status, body: xhr.responseText });
             };
             xhr.onerror = () => {
+                currentXhr = null;
                 progressAnimator.reset();
                 reject(new Error('Network error'));
+            };
+            xhr.onabort = () => {
+                currentXhr = null;
+                progressAnimator.reset();
+                reject(new DOMException('Upload cancelled', 'AbortError'));
             };
             xhr.open('POST', '/api/feeds/' + FEED_ID + '/episodes?normalize=true&source=Browser');
             xhr.setRequestHeader('X-API-Key', apiKey);
@@ -927,6 +942,7 @@ async function uploadFile(file) {
             await showSuccess(episode);
         } else if (response.status === 202) {
             const jobResponse = JSON.parse(response.body);
+            currentJobId = jobResponse.jobId;
             saveJobState({
                 status: 'processing',
                 jobId: jobResponse.jobId,
@@ -943,6 +959,9 @@ async function uploadFile(file) {
             showError(error?.error || 'Upload failed');
         }
     } catch (err) {
+        if (err.name === 'AbortError') {
+            return;
+        }
         showError(err.message || 'Upload failed');
     }
 }
@@ -1970,8 +1989,8 @@ function showError(message) {
 
 /**
  * @typedef {Object} JobStatus
- * @property {string} status - Queued, Processing, Completed, Failed
- * @property {string} [stage] - Queued, Analyzing, Normalizing, Finishing, Completed, Failed
+ * @property {string} status - Queued, Processing, Completed, Failed, Cancelled
+ * @property {string} [stage] - Queued, Analyzing, Normalizing, Finishing, Completed, Failed, Cancelled
  * @property {number} [progressPercent] - Progress percentage (0-100) for Analyzing, Normalizing stages
  * @property {string} [error]
  */
@@ -2417,13 +2436,21 @@ function monitorNormalizationJob(jobId, fileName, fileSize) {
     }
 
     const eventSource = new EventSource(sseUrl);
+    currentEventSource = eventSource;
+    currentJobId = jobId;
     let lastStatus = null;
     let connectionEstablished = false;
     let jobFinished = false;
 
+    function clearMonitoringState() {
+        currentEventSource = null;
+        currentJobId = null;
+    }
+
     const connectionTimeout = setTimeout(() => {
         if (!connectionEstablished) {
             eventSource.close();
+            clearMonitoringState();
             void pollNormalizationJobFallback(jobId, fileName, fileSize);
         }
     }, 5000);
@@ -2433,10 +2460,23 @@ function monitorNormalizationJob(jobId, fileName, fileSize) {
         clearTimeout(connectionTimeout);
     };
 
-    eventSource.addEventListener('progress', (e) => {
+    eventSource.addEventListener('progress', async (e) => {
         const parsed = tryParseJson(e.data);
         if (parsed) {
             lastStatus = parsed;
+            if (parsed.status === 'Cancelled') {
+                clearTimeout(connectionTimeout);
+                jobFinished = true;
+                eventSource.close();
+                clearMonitoringState();
+                clearJobState();
+                document.getElementById('file-input').value = '';
+                progressAnimator.reset();
+                showState('ready');
+                await initHistorySection();
+
+                return;
+            }
             updateProcessingStatus(lastStatus);
         }
     });
@@ -2445,7 +2485,14 @@ function monitorNormalizationJob(jobId, fileName, fileSize) {
         clearTimeout(connectionTimeout);
         jobFinished = true;
         eventSource.close();
-        if (lastStatus?.status === 'Completed') {
+        clearMonitoringState();
+        if (lastStatus?.status === 'Cancelled') {
+            clearJobState();
+            document.getElementById('file-input').value = '';
+            progressAnimator.reset();
+            showState('ready');
+            await initHistorySection();
+        } else if (lastStatus?.status === 'Completed') {
             // Fetch the episode details for the info card
             const episode = await fetchMostRecentEpisode();
             saveJobState({ status: 'success', fileName, episode: episode });
@@ -2468,6 +2515,7 @@ function monitorNormalizationJob(jobId, fileName, fileSize) {
         clearTimeout(connectionTimeout);
         jobFinished = true;
         eventSource.close();
+        clearMonitoringState();
         const data = tryParseJson(e.data);
         const errorMsg = data?.error || 'An error occurred';
         saveJobState({ status: 'error', fileName, error: errorMsg });
@@ -2481,6 +2529,7 @@ function monitorNormalizationJob(jobId, fileName, fileSize) {
         }
         clearTimeout(connectionTimeout);
         eventSource.close();
+        clearMonitoringState();
         void pollNormalizationJobFallback(jobId, fileName, fileSize);
     };
 }
@@ -2524,6 +2573,15 @@ async function pollNormalizationJobFallback(jobId, fileName, fileSize) {
                 showError(errorMsg);
 
                 return;
+            } else if (job.status === 'Cancelled') {
+                currentJobId = null;
+                clearJobState();
+                document.getElementById('file-input').value = '';
+                progressAnimator.reset();
+                showState('ready');
+                await initHistorySection();
+
+                return;
             }
 
             updateProcessingStatus(job);
@@ -2534,6 +2592,46 @@ async function pollNormalizationJobFallback(jobId, fileName, fileSize) {
             showError('Failed to check job status');
 
             return;
+        }
+    }
+}
+
+/**
+ * Cancel the current upload or normalization job.
+ * During upload phase: aborts the XHR.
+ * During normalization phase: POSTs cancel to server, closes SSE.
+ */
+async function cancelUpload() {
+    if (currentXhr) {
+        currentXhr.abort();
+        currentXhr = null;
+        currentJobId = null;
+        clearJobState();
+        document.getElementById('file-input').value = '';
+        progressAnimator.reset();
+        showState('ready');
+        await initHistorySection();
+    } else if (currentJobId) {
+        const jobId = currentJobId;
+        if (currentEventSource) {
+            currentEventSource.close();
+            currentEventSource = null;
+        }
+        currentJobId = null;
+        clearJobState();
+        document.getElementById('file-input').value = '';
+        progressAnimator.reset();
+        showState('ready');
+        await initHistorySection();
+
+        // Fire-and-forget cancel request to server
+        try {
+            await fetch('/api/jobs/' + jobId + '/cancel', {
+                method: 'POST',
+                headers: { 'X-API-Key': apiKey }
+            });
+        } catch {
+            // Best-effort — UI already reset
         }
     }
 }
@@ -2590,6 +2688,9 @@ document.addEventListener('visibilitychange', () => {
         progressAnimator.isRestoring = true;
     }
 });
+
+// Cancel button
+document.getElementById('cancel-upload')?.addEventListener('click', cancelUpload);
 
 // History section event listeners
 // Toggle button - toggles between expanded/collapsed
