@@ -380,4 +380,3 @@ output functionAppName string = functionApp.name
 output functionAppDefaultHostname string = functionApp.properties.defaultHostName
 output functionAppPrincipalId string = functionApp.identity.principalId
 output appInsightsName string = appInsights.name
-output appInsightsConnectionString string = appInsights.properties.ConnectionString

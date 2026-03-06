@@ -292,7 +292,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         .Show();
 
                     if (moveCopyChoice == null)
+                    {
                         break;
+                    }
 
                     var isMove = moveCopyChoice == "move";
                     var actionVerb = isMove ? "Move" : "Copy";
@@ -414,9 +416,13 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                 }
 
                                 if (success)
+                                {
                                     mcSuccessCount++;
+                                }
                                 else
+                                {
                                     mcFailureCount++;
+                                }
 
                                 task.Increment(1);
                             }
@@ -458,7 +464,9 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         .Show();
 
                     if (userChoice == null)
+                    {
                         break;
+                    }
 
                     switch (userChoice)
                     {
@@ -850,9 +858,13 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                                         $"/api/feeds/{Uri.EscapeDataString(currentFeed.Id)}/episodes/{Uri.EscapeDataString(episode.Id)}", cancellationToken);
 
                                                     if (deleteResponse.IsSuccessStatusCode)
+                                                    {
                                                         delSuccessCount++;
+                                                    }
                                                     else
+                                                    {
                                                         delFailureCount++;
+                                                    }
                                                 }
                                                 catch
                                                 {

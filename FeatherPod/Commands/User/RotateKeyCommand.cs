@@ -25,7 +25,7 @@ internal sealed class RotateKeyCommand : AsyncCommand<RotateKeySettings>
         var userId = settings.UserId.Trim();
 
         var confirm = await AnsiConsole.ConfirmAsync(
-            $"Are you sure you want to regenerate the API key for user '{userId}'?" +
+            $"Are you sure you want to regenerate the API key for user '{Markup.Escape(userId)}'?" +
             " The old key will stop working.", false, cancellationToken);
         if (!confirm)
         {

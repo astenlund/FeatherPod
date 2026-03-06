@@ -1,5 +1,6 @@
 using FeatherPod.Infrastructure;
 using FeatherPod.Settings.Preferences;
+using Spectre.Console;
 using Spectre.Console.Cli;
 
 using static FeatherPod.Infrastructure.ConsoleWriter;

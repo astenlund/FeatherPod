@@ -27,7 +27,9 @@ internal static class Mp4Parser
             while (fs.Position < fs.Length)
             {
                 if (fs.Length - fs.Position < 8)
+                {
                     break;
+                }
 
                 var boxSize = ReadUInt32BigEndian(reader);
                 var boxType = Encoding.ASCII.GetString(reader.ReadBytes(4));
@@ -46,7 +48,9 @@ internal static class Mp4Parser
                     while (fs.Position < moovEndPosition && fs.Position < fs.Length)
                     {
                         if (moovEndPosition - fs.Position < 8)
+                        {
                             break;
+                        }
 
                         var innerBoxSize = ReadUInt32BigEndian(reader);
                         var innerBoxType = Encoding.ASCII.GetString(reader.ReadBytes(4));
@@ -129,7 +133,10 @@ internal static class Mp4Parser
     {
         var bytes = reader.ReadBytes(4);
         if (BitConverter.IsLittleEndian)
+        {
             Array.Reverse(bytes);
+        }
+
         return BitConverter.ToUInt32(bytes, 0);
     }
 
@@ -137,7 +144,10 @@ internal static class Mp4Parser
     {
         var bytes = reader.ReadBytes(8);
         if (BitConverter.IsLittleEndian)
+        {
             Array.Reverse(bytes);
+        }
+
         return BitConverter.ToUInt64(bytes, 0);
     }
 }

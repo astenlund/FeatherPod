@@ -510,10 +510,16 @@ internal static class EpisodeHelpers
     {
         // Try exact ID match first
         var exactMatch = episodes.FirstOrDefault(e => e.Id == pattern);
-        if (exactMatch != null) return [exactMatch];
+        if (exactMatch != null)
+        {
+            return [exactMatch];
+        }
 
         // Wildcard match on filename or title (case-insensitive)
-        if (pattern == "*") return episodes;
+        if (pattern == "*")
+        {
+            return episodes;
+        }
 
         var lower = pattern.ToLower();
 

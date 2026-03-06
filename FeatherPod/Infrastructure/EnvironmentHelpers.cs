@@ -164,6 +164,7 @@ internal static class EnvironmentHelpers
             Out.BlankLine();
             Out.Error("Authentication failed: invalid API key.");
             Out.BlankLine().Flush();
+            httpClient.Dispose();
 
             return (null, null);
         }
@@ -174,6 +175,7 @@ internal static class EnvironmentHelpers
             Out.BlankLine();
             Out.MarkupLine("Make sure the FeatherPod server is running and accessible.");
             Out.BlankLine().Flush();
+            httpClient.Dispose();
 
             return (null, null);
         }
