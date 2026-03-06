@@ -44,6 +44,7 @@ const HISTORY_STORAGE_KEY = 'featherpod_history_' + FEED_ID;
 const HISTORY_FILTER_KEY = 'featherpod_history_filter_' + FEED_ID;
 const API_KEY_SESSION_KEY = 'featherpod_api_key_' + FEED_ID;
 const API_KEY_LOCAL_KEY = 'featherpod_api_key_local_' + FEED_ID;
+const API_KEY_COOKIE_KEY = 'featherpod_key_' + FEED_ID;
 const MAX_LOCAL_HISTORY = 50;
 
 // No-key state UI strings
@@ -248,6 +249,7 @@ function cacheLayoutDimensions() {
  * @property {UserInfo|null} user - User object from /api/users/me if valid
  * @property {boolean} feedAccess - Whether the user has access to this feed
  * @property {string|null} error - Error message if validation failed
+ * @property {boolean} networkError - Whether the failure was due to a network/server error (vs invalid key)
  */
 
 /**
@@ -265,7 +267,7 @@ function cacheLayoutDimensions() {
  */
 async function validateApiKey(key) {
     if (!key || key.trim().length === 0) {
-        return { valid: false, user: null, feedAccess: false, error: 'API key is empty' };
+        return { valid: false, user: null, feedAccess: false, error: 'API key is empty', networkError: false };
     }
 
     try {
@@ -275,10 +277,10 @@ async function validateApiKey(key) {
 
         if (!response.ok) {
             if (response.status === 401) {
-                return { valid: false, user: null, feedAccess: false, error: STR_INVALID_KEY };
+                return { valid: false, user: null, feedAccess: false, error: STR_INVALID_KEY, networkError: false };
             }
 
-            return { valid: false, user: null, feedAccess: false, error: 'Validation failed' };
+            return { valid: false, user: null, feedAccess: false, error: 'Server error (' + response.status + ')', networkError: false };
         }
 
         const user = await response.json();
@@ -286,38 +288,97 @@ async function validateApiKey(key) {
         // Check feed access: Admin has all, FeedOwner needs feed in ownedFeeds
         const feedAccess = user.role === 'Admin' || (user.role === 'FeedOwner' && user.ownedFeeds && user.ownedFeeds.includes(FEED_ID));
 
-        return { valid: true, user, feedAccess, error: null };
+        return { valid: true, user, feedAccess, error: null, networkError: false };
     } catch (err) {
-        return { valid: false, user: null, feedAccess: false, error: 'Network error' };
+        return { valid: false, user: null, feedAccess: false, error: 'Network error', networkError: true };
     }
 }
 
 /**
- * Save API key to both sessionStorage and localStorage, and set the global apiKey.
+ * Set a cookie with the given name, value, and max-age in days.
+ * Uses SameSite=Strict and Secure (when on HTTPS) for security.
+ * @param {string} name - Cookie name
+ * @param {string} value - Cookie value
+ * @param {number} days - Max age in days
+ */
+function setCookie(name, value, days) {
+    const maxAge = days * 24 * 60 * 60;
+    const secure = window.location.protocol === 'https:' ? '; Secure' : '';
+    document.cookie = name + '=' + encodeURIComponent(value) + '; max-age=' + maxAge + '; path=/' + FEED_ID + '/push; SameSite=Strict' + secure;
+}
+
+/**
+ * Get a cookie value by name.
+ * @param {string} name - Cookie name
+ * @returns {string|null} The cookie value, or null if not found
+ */
+function getCookie(name) {
+    const match = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
+    return match ? decodeURIComponent(match[1]) : null;
+}
+
+/**
+ * Delete a cookie by name.
+ * @param {string} name - Cookie name
+ */
+function deleteCookie(name) {
+    document.cookie = name + '=; max-age=0; path=/' + FEED_ID + '/push; SameSite=Strict';
+}
+
+/**
+ * Save API key to sessionStorage, localStorage, and a cookie backup.
+ * All writes are guarded with try/catch — the current session always works
+ * even if all persistent storage fails.
  * @param {string} key - The API key to save
  */
 function saveApiKey(key) {
     const trimmedKey = key.trim();
-    sessionStorage.setItem(API_KEY_SESSION_KEY, trimmedKey);
-    localStorage.setItem(API_KEY_LOCAL_KEY, trimmedKey);
     apiKey = trimmedKey;
+    try {
+        sessionStorage.setItem(API_KEY_SESSION_KEY, trimmedKey);
+    } catch (e) {
+        // sessionStorage unavailable (private browsing, storage full)
+    }
+    try {
+        localStorage.setItem(API_KEY_LOCAL_KEY, trimmedKey);
+    } catch (e) {
+        // localStorage unavailable
+    }
+    try {
+        setCookie(API_KEY_COOKIE_KEY, trimmedKey, 365);
+    } catch (e) {
+        // Cookie write failed
+    }
 }
 
 /**
- * Clear API key from both sessionStorage and localStorage.
+ * Clear API key from all storage layers (sessionStorage, localStorage, cookie).
  */
 function clearApiKey() {
-    sessionStorage.removeItem(API_KEY_SESSION_KEY);
-    localStorage.removeItem(API_KEY_LOCAL_KEY);
     apiKey = null;
+    try { sessionStorage.removeItem(API_KEY_SESSION_KEY); } catch (e) { /* ignore */ }
+    try { localStorage.removeItem(API_KEY_LOCAL_KEY); } catch (e) { /* ignore */ }
+    try { deleteCookie(API_KEY_COOKIE_KEY); } catch (e) { /* ignore */ }
 }
 
 /**
- * Get stored API key with precedence: sessionStorage > localStorage.
+ * Get stored API key with precedence: sessionStorage > localStorage > cookie.
  * @returns {string|null} The stored API key, or null if none found
  */
 function getStoredApiKey() {
-    return sessionStorage.getItem(API_KEY_SESSION_KEY) || localStorage.getItem(API_KEY_LOCAL_KEY);
+    try {
+        const sessionKey = sessionStorage.getItem(API_KEY_SESSION_KEY);
+        if (sessionKey) {
+            return sessionKey;
+        }
+    } catch (e) { /* ignore */ }
+    try {
+        const localKey = localStorage.getItem(API_KEY_LOCAL_KEY);
+        if (localKey) {
+            return localKey;
+        }
+    } catch (e) { /* ignore */ }
+    return getCookie(API_KEY_COOKIE_KEY);
 }
 
 /**
@@ -366,6 +427,21 @@ function showWarningBanner(message, duration = 5000) {
         banner.classList.remove('warning-banner--visible');
         setTimeout(() => banner.remove(), 300);
     }
+}
+
+/**
+ * Validate an API key with retry on network errors.
+ * @param {string} key - The API key to validate
+ * @param {number} [retries=2] - Number of retries on network error
+ * @returns {Promise<ApiKeyValidationResult>}
+ */
+async function validateApiKeyWithRetry(key, retries = 2) {
+    const result = await validateApiKey(key);
+    if (result.networkError && retries > 0) {
+        await new Promise(r => setTimeout(r, 1000));
+        return validateApiKeyWithRetry(key, retries - 1);
+    }
+    return result;
 }
 
 async function init() {
@@ -418,7 +494,7 @@ async function init() {
         return false;
     }
 
-    // Storage precedence: fragment > sessionStorage > localStorage
+    // Storage precedence: fragment > sessionStorage > localStorage > cookie
     const fragment = window.location.hash.slice(1);
     const storedKey = getStoredApiKey();
 
@@ -426,10 +502,14 @@ async function init() {
         // Clear fragment from URL immediately for cleaner UX
         history.replaceState(null, '', window.location.pathname + window.location.search);
 
-        const validation = await validateApiKey(fragment);
+        const validation = await validateApiKeyWithRetry(fragment);
 
         if (validation.valid && validation.feedAccess) {
             // Fragment key is valid with feed access
+            saveApiKey(fragment);
+        } else if (validation.networkError) {
+            // Server unreachable - use fragment key optimistically and persist it
+            showWarningBanner('Server unreachable \u2014 using URL key');
             saveApiKey(fragment);
         } else if (validation.valid && !validation.feedAccess) {
             // Fragment key is valid but no feed access - try fallback
@@ -444,17 +524,21 @@ async function init() {
         }
     } else if (storedKey) {
         // No fragment, try stored key
-        const validation = await validateApiKey(storedKey);
+        const validation = await validateApiKeyWithRetry(storedKey);
 
         if (validation.valid && validation.feedAccess) {
-            // Stored key is valid - ensure it's in both storages
+            // Stored key is valid - ensure it's in all storage layers
             saveApiKey(storedKey);
         } else if (validation.valid && !validation.feedAccess) {
             showNoKeyUI('no-access');
 
             return;
+        } else if (validation.networkError) {
+            // Server unreachable - use stored key optimistically
+            showWarningBanner('Server unreachable \u2014 using saved key');
+            apiKey = storedKey;
         } else {
-            // Stored key is invalid - no error message, just show paste UI
+            // Stored key is genuinely invalid - show paste UI without error
             showNoKeyUI(null);
 
             return;
@@ -629,6 +713,11 @@ function initNoKeyState() {
             if (validation.valid && validation.feedAccess) {
                 saveApiKey(key);
                 await transitionToReadyState();
+            } else if (validation.networkError) {
+                // Server unreachable - accept key optimistically
+                showWarningBanner('Server unreachable \u2014 using entered key');
+                saveApiKey(key);
+                await transitionToReadyState();
             } else if (validation.valid && !validation.feedAccess) {
                 saveBtn.disabled = false;
                 saveBtn.textContent = STR_SAVE_KEY;
@@ -680,6 +769,11 @@ function initNoKeyState() {
             const validation = await validateApiKey(apiKeyToValidate);
 
             if (validation.valid && validation.feedAccess) {
+                saveApiKey(apiKeyToValidate);
+                await transitionToReadyState();
+            } else if (validation.networkError) {
+                // Server unreachable - accept pasted key optimistically
+                showWarningBanner('Server unreachable \u2014 using pasted key');
                 saveApiKey(apiKeyToValidate);
                 await transitionToReadyState();
             } else if (validation.valid && !validation.feedAccess) {
