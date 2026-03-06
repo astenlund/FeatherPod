@@ -82,7 +82,7 @@ internal class Program
                     .WithExample("user", "revoke", "alice", "my-podcast");
 
                 user.AddCommand<UserCommands.RotateKeyCommand>("rotate-key")
-                    .WithDescription("Regenerate a user's API key")
+                    .WithDescription("Regenerate another user's API key (Admin only)")
                     .WithExample("user", "rotate-key", "john");
             });
 
@@ -162,19 +162,24 @@ internal class Program
                     .WithExample("preferences", "show")
                     .WithExample("preferences", "show", "-e", "Test");
 
-                prefs.AddBranch("api-key", apiKey =>
+                prefs.AddBranch("key", key =>
                 {
-                    apiKey.SetDescription("API key preferences");
+                    key.SetDescription("API key management");
 
-                    apiKey.AddCommand<PreferencesCommands.ApiKey.ShowCommand>("show")
+                    key.AddCommand<PreferencesCommands.Key.ShowCommand>("show")
                         .WithDescription("Show current API key")
-                        .WithExample("preferences", "api-key", "show")
-                        .WithExample("preferences", "api-key", "show", "-e", "Test");
+                        .WithExample("preferences", "key", "show")
+                        .WithExample("preferences", "key", "show", "-e", "Test");
 
-                    apiKey.AddCommand<PreferencesCommands.ApiKey.SetCommand>("set")
-                        .WithDescription("Set API key")
-                        .WithExample("preferences", "api-key", "set", "<key>")
-                        .WithExample("preferences", "api-key", "set", "<key>", "-e", "Test");
+                    key.AddCommand<PreferencesCommands.Key.SetCommand>("set")
+                        .WithDescription("Save an existing API key to local preferences")
+                        .WithExample("preferences", "key", "set", "<key>")
+                        .WithExample("preferences", "key", "set", "<key>", "-e", "Test");
+
+                    key.AddCommand<PreferencesCommands.Key.RotateCommand>("rotate")
+                        .WithDescription("Rotate your API key and save to preferences")
+                        .WithExample("preferences", "key", "rotate")
+                        .WithExample("preferences", "key", "rotate", "-e", "Test");
                 });
 
                 prefs.AddBranch("normalization", norm =>

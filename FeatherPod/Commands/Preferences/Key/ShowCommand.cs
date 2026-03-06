@@ -1,15 +1,14 @@
 using FeatherPod.Infrastructure;
 using FeatherPod.Settings.Preferences;
-
 using Spectre.Console.Cli;
 
 using static FeatherPod.Infrastructure.ConsoleWriter;
 
-namespace FeatherPod.Commands.Preferences.ApiKey;
+namespace FeatherPod.Commands.Preferences.Key;
 
-internal sealed class ShowCommand : Command<ApiKeyShowSettings>
+internal sealed class ShowCommand : Command<KeyShowSettings>
 {
-    public override int Execute(CommandContext context, ApiKeyShowSettings settings, CancellationToken cancellationToken)
+    public override int Execute(CommandContext context, KeyShowSettings settings, CancellationToken cancellationToken)
     {
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null)

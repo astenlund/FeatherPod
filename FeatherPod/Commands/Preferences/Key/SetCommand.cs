@@ -5,19 +5,27 @@ using Spectre.Console.Cli;
 
 using static FeatherPod.Infrastructure.ConsoleWriter;
 
-namespace FeatherPod.Commands.Preferences.ApiKey;
+namespace FeatherPod.Commands.Preferences.Key;
 
-internal sealed class SetCommand : Command<ApiKeySetSettings>
+internal sealed class SetCommand : Command<KeySetSettings>
 {
-    public override int Execute(CommandContext context, ApiKeySetSettings settings, CancellationToken cancellationToken)
+    public override int Execute(CommandContext context, KeySetSettings settings, CancellationToken cancellationToken)
     {
+        Out.BlankLine();
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null)
         {
             return 1;
         }
 
-        var key = settings.Key.Trim();
+        var key = settings.Key?.Trim();
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            Out.WriteLineRaw();
+            key = AnsiConsole.Prompt(
+                new TextPrompt<string>("Enter [bold]API key[/]:"));
+        }
+
         if (string.IsNullOrWhiteSpace(key))
         {
             Out.Error("API key cannot be empty");
@@ -29,10 +37,10 @@ internal sealed class SetCommand : Command<ApiKeySetSettings>
 
         var prefsPath = PreferencesHelpers.GetPreferencesPath();
 
-        Out.BlankLine();
         Out.Success($"API key saved for {env}");
-        Out.MarkupLine($"[grey]Preferences: {Markup.Escape(prefsPath)}[/]");
         Out.BlankLine();
+        Out.MarkupLine($"[grey]Preferences: {Markup.Escape(prefsPath)}[/]");
+        Out.WriteLineRaw();
 
         return 0;
     }
