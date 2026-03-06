@@ -9,13 +9,21 @@ namespace FeatherPod.Infrastructure;
 internal static class PreferencesHelpers
 {
     private static readonly JsonSerializerOptions JsonWriteOptions = new() { WriteIndented = true };
+
+    /// <summary>
+    /// Override for the preferences directory. Used by tests to isolate preferences from the real AppData.
+    /// </summary>
+    internal static string? PreferencesDirectoryOverride { get; set; }
+
     /// <summary>
     /// Gets the path to the user preferences file in AppData.
     /// </summary>
     internal static string GetPreferencesPath()
     {
-        var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        return Path.Combine(appDataPath, "FeatherPod", "preferences.json");
+        var directory = PreferencesDirectoryOverride
+            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FeatherPod");
+
+        return Path.Combine(directory, "preferences.json");
     }
 
     /// <summary>

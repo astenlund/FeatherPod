@@ -14,6 +14,7 @@ using EpisodeListCommand = FeatherPod.Commands.Episode.ListCommand;
 using FeedUpdateCommand = FeatherPod.Commands.Feed.UpdateCommand;
 using FeedCreateCommand = FeatherPod.Commands.Feed.CreateCommand;
 using FeedDeleteCommand = FeatherPod.Commands.Feed.DeleteCommand;
+using FeedPushUrlCommand = FeatherPod.Commands.Feed.PushUrlCommand;
 using FeedRenameCommand = FeatherPod.Commands.Feed.RenameCommand;
 
 namespace FeatherPod.Commands;
@@ -920,6 +921,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                         .AddOption("D", "Delete feed", "delete")
                         .AddOption("I", "Set icon", "icon-set")
                         .AddOption("X", "Remove icon", "icon-remove")
+                        .AddOption("P", "Get push URL", "push-url")
                         .AllowCancel()
                         .Show();
 
@@ -1090,6 +1092,18 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                             // Delete icon
                             await FeedHelpers.DeleteIconAsync(httpClient, feedToRemoveIcon.Id);
+                            WaitForKeyPress();
+                            break;
+
+                        case "push-url":
+                            var feedForPushUrl = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
+                            if (feedForPushUrl == null)
+                            {
+                                WaitForKeyPress();
+                                break;
+                            }
+                            currentFeed = feedForPushUrl;
+                            await FeedPushUrlCommand.GetPushUrlAsync(env, feedForPushUrl.Id);
                             WaitForKeyPress();
                             break;
                     }

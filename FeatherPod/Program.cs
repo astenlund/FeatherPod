@@ -129,6 +129,11 @@ internal class Program
                     .WithExample("feed", "check-integrity")
                     .WithExample("feed", "check-integrity", "-f", "my-podcast");
 
+                feed.AddCommand<FeedCommands.PushUrlCommand>("push-url")
+                    .WithDescription("Get browser push page URL")
+                    .WithExample("feed", "push-url", "-f", "my-podcast")
+                    .WithExample("feed", "push-url", "-f", "my-podcast", "--copy");
+
                 feed.AddBranch("config", cfg =>
                 {
                     cfg.SetDescription("Feed configuration commands");
