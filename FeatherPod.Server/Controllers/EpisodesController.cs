@@ -13,13 +13,15 @@ public class EpisodesController : ControllerBase
     private readonly EpisodeService _episodeService;
     private readonly IBlobStorageService _blobStorageService;
     private readonly IJobService _jobService;
+    private readonly IUserService _userService;
     private readonly string _baseUrl;
 
-    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IConfiguration configuration)
+    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IConfiguration configuration)
     {
         _episodeService = episodeService;
         _blobStorageService = blobStorageService;
         _jobService = jobService;
+        _userService = userService;
         _baseUrl = configuration.GetSection("Podcast")["BaseUrl"]
             ?? throw new InvalidOperationException("Podcast.BaseUrl must be configured in appsettings.json");
     }
@@ -257,6 +259,11 @@ public class EpisodesController : ControllerBase
             return BadRequest(new { error = InputValidation.GetFeedIdValidationError(targetFeedId) });
         }
 
+        if (!await HasTargetFeedPermissionAsync(targetFeedId))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = $"You do not have permission on target feed '{targetFeedId}'" });
+        }
+
         try
         {
             var movedEpisode = await _episodeService.MoveEpisodeAsync(id, feedId, targetFeedId);
@@ -303,6 +310,11 @@ public class EpisodesController : ControllerBase
             return BadRequest(new { error = InputValidation.GetFeedIdValidationError(targetFeedId) });
         }
 
+        if (!await HasTargetFeedPermissionAsync(targetFeedId))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = $"You do not have permission on target feed '{targetFeedId}'" });
+        }
+
         try
         {
             var copiedEpisode = await _episodeService.CopyEpisodeAsync(id, feedId, targetFeedId);
@@ -318,5 +330,15 @@ public class EpisodesController : ControllerBase
         {
             return BadRequest(new { error = ex.Message });
         }
+    }
+
+    private async Task<bool> HasTargetFeedPermissionAsync(string targetFeedId)
+    {
+        if (HttpContext.Items["User"] is not User user)
+        {
+            return false;
+        }
+
+        return await _userService.ValidatePermissionAsync(user, targetFeedId);
     }
 }

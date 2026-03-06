@@ -97,7 +97,7 @@ public class ApiKeyAuthMiddleware
         {
             // Public read endpoints
             if (path.StartsWith("/api/version") ||
-                path.StartsWith("/api/feeds") && !path.Contains("/episodes") && !path.Contains("/icon") ||
+                path.StartsWith("/api/feeds") && !path.Contains("/episodes") && !path.Contains("/icon") && !path.Contains("/check-integrity") ||
                 path.StartsWith("/api/jobs/") ||
                 path.EndsWith("/feed.xml") ||
                 path.EndsWith("/icon.png") ||
@@ -154,6 +154,12 @@ public class ApiKeyAuthMiddleware
             }
 
             return false; // FeedOwner cannot access other user management endpoints
+        }
+
+        // Feed-level endpoints that handle their own authorization
+        if (path.Equals("/api/feeds/check-integrity", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
         }
 
         // Feed-specific endpoints - check feed ownership
