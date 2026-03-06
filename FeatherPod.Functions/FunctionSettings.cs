@@ -3,7 +3,7 @@ namespace FeatherPod.Functions;
 /// <summary>
 /// Configuration settings for the Functions app.
 /// </summary>
-public record FunctionSettings
+public class FunctionSettings
 {
     public string StorageAccountName { get; set; } = string.Empty;
     public string ContainerName { get; set; } = "featherpod";

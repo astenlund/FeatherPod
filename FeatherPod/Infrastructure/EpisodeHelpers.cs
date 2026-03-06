@@ -442,7 +442,7 @@ internal static class EpisodeHelpers
                 var errorJson = await response.Content.ReadAsStringAsync();
                 var errorObj = JsonSerializer.Deserialize<JsonElement>(errorJson);
                 var errorMsg = errorObj.TryGetProperty("error", out var err) ? err.GetString() : "Unknown error";
-                Out.Error(errorMsg ?? "Unknown error");
+                Out.Error(Markup.Escape(errorMsg ?? "Unknown error"));
 
                 return false;
             }
@@ -472,7 +472,7 @@ internal static class EpisodeHelpers
                 var errorJson = await response.Content.ReadAsStringAsync();
                 var errorObj = JsonSerializer.Deserialize<JsonElement>(errorJson);
                 var errorMsg = errorObj.TryGetProperty("error", out var err) ? err.GetString() : "Unknown error";
-                Out.Error(errorMsg ?? "Unknown error");
+                Out.Error(Markup.Escape(errorMsg ?? "Unknown error"));
 
                 return false;
             }

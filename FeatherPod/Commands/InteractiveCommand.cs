@@ -515,7 +515,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             }
                             catch (Exception ex)
                             {
-                                Out.Error($"Error: {ex.Message}");
+                                Out.Error($"Error: {Markup.Escape(ex.Message)}");
                             }
                             WaitForKeyPress();
                             break;
@@ -598,7 +598,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             }
                             catch (Exception ex)
                             {
-                                Out.Error($"Error: {ex.Message}");
+                                Out.Error($"Error: {Markup.Escape(ex.Message)}");
                             }
                             WaitForKeyPress();
                             break;
@@ -641,7 +641,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             }
                             catch (Exception ex)
                             {
-                                Out.Error($"Error: {ex.Message}");
+                                Out.Error($"Error: {Markup.Escape(ex.Message)}");
                             }
                             WaitForKeyPress();
                             break;
@@ -681,7 +681,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             }
                             catch (Exception ex)
                             {
-                                Out.Error($"Error: {ex.Message}");
+                                Out.Error($"Error: {Markup.Escape(ex.Message)}");
                             }
                             WaitForKeyPress();
                             break;
@@ -719,7 +719,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             }
                             catch (Exception ex)
                             {
-                                Out.Error($"Error: {ex.Message}");
+                                Out.Error($"Error: {Markup.Escape(ex.Message)}");
                             }
                             WaitForKeyPress();
                             break;
@@ -774,7 +774,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             }
                             catch (Exception ex)
                             {
-                                Out.Error($"Error: {ex.Message}");
+                                Out.Error($"Error: {Markup.Escape(ex.Message)}");
                             }
                             WaitForKeyPress();
                             break;
@@ -1382,7 +1382,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             }
                             catch (Exception ex)
                             {
-                                Out.Error($"Error rotating API key: {ex.Message}");
+                                Out.Error($"Error rotating API key: {Markup.Escape(ex.Message)}");
                                 WaitForKeyPress();
                             }
                             break;
@@ -1489,7 +1489,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             if (generatedCount > 0)
                             {
                                 Out.BlankLine();
-                                Out.MarkupLine($"Generated {generatedCount} file(s) to [cyan]{outputPath}[/]");
+                                Out.MarkupLine($"Generated {generatedCount} file(s) to [cyan]{Markup.Escape(outputPath)}[/]");
                             }
                             WaitForKeyPress();
                             break;
@@ -1529,8 +1529,8 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
         // Show title with server version if available
         Out.MarkupLine(!string.IsNullOrEmpty(existingServerVersion)
-            ? $"[bold]FeatherPod Episode Manager[/] [grey]v{version} (server: {existingServerVersion})[/]"
-            : $"[bold]FeatherPod Episode Manager[/] [grey]v{version}[/]");
+            ? $"[bold]FeatherPod Episode Manager[/] [grey]v{Markup.Escape(version)} (server: {Markup.Escape(existingServerVersion)})[/]"
+            : $"[bold]FeatherPod Episode Manager[/] [grey]v{Markup.Escape(version)}[/]");
         Out.BlankLine();
         var adminFeaturesEnabled = PreferencesHelpers.GetEnableAdminFeatures() ?? false;
         if (adminFeaturesEnabled)
@@ -1638,7 +1638,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                 if (!string.IsNullOrEmpty(serverVersion))
                 {
                     Out.WriteRaw("\e[s\e[2;1H\e[2K");
-                    Out.Markup($"[bold]FeatherPod Episode Manager[/] [grey]v{version} (server: {serverVersion})[/]");
+                    Out.Markup($"[bold]FeatherPod Episode Manager[/] [grey]v{Markup.Escape(version)} (server: {Markup.Escape(serverVersion)})[/]");
                     Out.WriteRaw("\e[u");
                 }
             }

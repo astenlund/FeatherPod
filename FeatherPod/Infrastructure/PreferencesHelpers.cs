@@ -173,7 +173,7 @@ internal static class PreferencesHelpers
 
         var filePath = GetPreferencesPath();
 
-        Out.Success($"API key saved to [cyan]{filePath}[/]");
+        Out.Success($"API key saved to [cyan]{Markup.Escape(filePath)}[/]");
         Out.BlankLine().Flush();
 
         return true;

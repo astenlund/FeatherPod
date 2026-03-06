@@ -21,8 +21,8 @@ internal sealed class ShowCommand : Command<KeyShowSettings>
         Out.BlankLine();
         Out.MarkupLine(
             string.IsNullOrEmpty(apiKey)
-                ? $"[yellow]API key ({env}):[/] (not configured)"
-                : $"[bold]API key ({env}):[/] {PreferencesHelpers.MaskApiKey(apiKey)}");
+                ? $"[yellow]API key ({Markup.Escape(env)}):[/] (not configured)"
+                : $"[bold]API key ({Markup.Escape(env)}):[/] {PreferencesHelpers.MaskApiKey(apiKey)}");
         Out.BlankLine();
 
         return 0;

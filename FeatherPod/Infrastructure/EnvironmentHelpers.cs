@@ -170,7 +170,7 @@ internal static class EnvironmentHelpers
         catch (Exception ex)
         {
             Out.BlankLine();
-            Out.Error($"Connection failed: {ex.Message}");
+            Out.Error($"Connection failed: {Markup.Escape(ex.Message)}");
             Out.BlankLine();
             Out.MarkupLine("Make sure the FeatherPod server is running and accessible.");
             Out.BlankLine().Flush();

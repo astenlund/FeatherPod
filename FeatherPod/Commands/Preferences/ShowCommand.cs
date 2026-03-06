@@ -22,21 +22,23 @@ internal sealed class ShowCommand : Command<PreferencesShowSettings>
         var filePath = PreferencesHelpers.GetPreferencesPath();
 
         // Show API key status
+        var escapedEnv = Markup.Escape(env);
+
         Out.MarkupLine(string.IsNullOrEmpty(apiKey)
-            ? $"[yellow]API key ({env}):[/] (not configured)"
-            : $"[bold]API key ({env}):[/] {PreferencesHelpers.MaskApiKey(apiKey)}");
+            ? $"[yellow]API key ({escapedEnv}):[/] (not configured)"
+            : $"[bold]API key ({escapedEnv}):[/] {PreferencesHelpers.MaskApiKey(apiKey)}");
 
         // Show normalization preference (defaults to enabled)
         var normPref = PreferencesHelpers.GetNormalizationEnabled(env);
         var normEnabled = normPref ?? true;
 
-        Out.MarkupLine($"[bold]Audio normalization ({env}):[/] {(normEnabled ? "enabled" : "disabled")}{(normPref.HasValue ? "" : " (default)")}");
+        Out.MarkupLine($"[bold]Audio normalization ({escapedEnv}):[/] {(normEnabled ? "enabled" : "disabled")}{(normPref.HasValue ? "" : " (default)")}");
 
         // Show auto-connect preference (defaults to enabled)
         var autoConnectPref = PreferencesHelpers.GetAutoConnectEnabled(env);
         var autoConnectEnabled = autoConnectPref ?? true;
 
-        Out.MarkupLine($"[bold]Auto-connect ({env}):[/] {(autoConnectEnabled ? "enabled" : "disabled")}{(autoConnectPref.HasValue ? "" : " (default)")}");
+        Out.MarkupLine($"[bold]Auto-connect ({escapedEnv}):[/] {(autoConnectEnabled ? "enabled" : "disabled")}{(autoConnectPref.HasValue ? "" : " (default)")}");
 
         // Show admin features preference (defaults to disabled, global not per-environment)
         var adminEnabled = PreferencesHelpers.GetEnableAdminFeatures();

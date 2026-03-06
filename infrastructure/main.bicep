@@ -155,7 +155,7 @@ resource appServicePlan 'Microsoft.Web/serverfarms@2023-01-01' = {
   tags: tags
   sku: {
     name: appServicePlanSku
-    tier: appServicePlanSku == 'F1' ? 'Free' : (appServicePlanSku == 'B1' || appServicePlanSku == 'B2' || appServicePlanSku == 'B3' ? 'Basic' : 'Standard')
+    tier: appServicePlanSku == 'F1' ? 'Free' : (appServicePlanSku == 'B1' || appServicePlanSku == 'B2' || appServicePlanSku == 'B3' ? 'Basic' : (appServicePlanSku == 'S1' || appServicePlanSku == 'S2' || appServicePlanSku == 'S3' ? 'Standard' : 'PremiumV2'))
   }
   kind: 'linux'
   properties: {
