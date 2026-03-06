@@ -209,74 +209,64 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                     Out.BlankLine();
 
-                    // Temporarily set normalization preference for upload (only for local normalization)
-                    var originalNormPref = PreferencesHelpers.GetNormalizationEnabled(env);
                     var useServerNormalize = normalizeChoice == "server";
-                    PreferencesHelpers.SetNormalizationEnabled(env, normalizeChoice == "local");
+                    var useLocalNormalize = normalizeChoice == "local";
 
-                    try
+                    var configuration = EnvironmentHelpers.BuildConfiguration(env);
+                    var uploadSettings = new PushSettings
                     {
-                        var configuration = EnvironmentHelpers.BuildConfiguration(env);
-                        var uploadSettings = new PushSettings
-                        {
-                            Files = filePattern,
-                            Title = string.IsNullOrWhiteSpace(pushTitle) ? null : pushTitle.Trim(),
-                            Description = string.IsNullOrWhiteSpace(pushDescription) ? null : pushDescription.Trim(),
-                            Summary = string.IsNullOrWhiteSpace(pushSummary) ? null : pushSummary.Trim(),
-                            ExtractDateFromFile = dateSource,
-                            ServerNormalize = useServerNormalize,
-                            DeleteAfter = deleteAfterChoice == true
-                        };
+                        Files = filePattern,
+                        Title = string.IsNullOrWhiteSpace(pushTitle) ? null : pushTitle.Trim(),
+                        Description = string.IsNullOrWhiteSpace(pushDescription) ? null : pushDescription.Trim(),
+                        Summary = string.IsNullOrWhiteSpace(pushSummary) ? null : pushSummary.Trim(),
+                        ExtractDateFromFile = dateSource,
+                        ServerNormalize = useServerNormalize,
+                        DeleteAfter = deleteAfterChoice == true
+                    };
 
-                        var successCount = 0;
-                        var failureCount = 0;
-                        var deletedCount = 0;
-                        var deleteFailedCount = 0;
+                    var successCount = 0;
+                    var failureCount = 0;
+                    var deletedCount = 0;
+                    var deleteFailedCount = 0;
 
-                        foreach (var file in filesToUpload)
+                    foreach (var file in filesToUpload)
+                    {
+                        var result = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, env, pushFeed, file, uploadSettings, currentUser, normalizationOverride: useLocalNormalize);
+                        if (result.Success)
                         {
-                            var result = await EpisodeHelpers.UploadEpisodeAsync(httpClient, configuration, env, pushFeed, file, uploadSettings, currentUser);
-                            if (result.Success)
+                            successCount++;
+
+                            if (uploadSettings.DeleteAfter && result.EpisodeId != null)
                             {
-                                successCount++;
-
-                                if (uploadSettings.DeleteAfter && result.EpisodeId != null)
-                                {
-                                    var (deleted, failed) = await EpisodeHelpers.TryDeleteSourceAfterUploadAsync(httpClient, pushFeed.Id, result.EpisodeId, file, env);
-                                    deletedCount += deleted;
-                                    deleteFailedCount += failed;
-                                }
+                                var (deleted, failed) = await EpisodeHelpers.TryDeleteSourceAfterUploadAsync(httpClient, pushFeed.Id, result.EpisodeId, file, env);
+                                deletedCount += deleted;
+                                deleteFailedCount += failed;
                             }
-                            else
-                            {
-                                failureCount++;
-                            }
-
-                            Out.BlankLine();
+                        }
+                        else
+                        {
+                            failureCount++;
                         }
 
-                        // Summary
-                        if (successCount > 0)
-                        {
-                            Out.Success($"Successfully uploaded: {successCount}");
-                        }
-                        if (deletedCount > 0)
-                        {
-                            Out.Success($"Source files deleted: {deletedCount}");
-                        }
-                        if (failureCount > 0)
-                        {
-                            Out.Error($"Failed: {failureCount}");
-                        }
-                        if (deleteFailedCount > 0)
-                        {
-                            Out.Warning($"Source file deletions failed: {deleteFailedCount}");
-                        }
+                        Out.BlankLine();
                     }
-                    finally
+
+                    // Summary
+                    if (successCount > 0)
                     {
-                        // Restore original normalization preference
-                        PreferencesHelpers.SetNormalizationEnabled(env, originalNormPref ?? true);
+                        Out.Success($"Successfully uploaded: {successCount}");
+                    }
+                    if (deletedCount > 0)
+                    {
+                        Out.Success($"Source files deleted: {deletedCount}");
+                    }
+                    if (failureCount > 0)
+                    {
+                        Out.Error($"Failed: {failureCount}");
+                    }
+                    if (deleteFailedCount > 0)
+                    {
+                        Out.Warning($"Source file deletions failed: {deleteFailedCount}");
                     }
 
                     WaitForKeyPress();

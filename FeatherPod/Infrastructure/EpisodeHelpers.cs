@@ -59,7 +59,7 @@ internal static class EpisodeHelpers
         return result;
     }
 
-    internal static async Task<UploadResult> UploadEpisodeAsync(HttpClient httpClient, IConfiguration configuration, string environment, FeedConfig feed, string filePath, PushSettings settings, CurrentUserInfo? currentUser = null)
+    internal static async Task<UploadResult> UploadEpisodeAsync(HttpClient httpClient, IConfiguration configuration, string environment, FeedConfig feed, string filePath, PushSettings settings, CurrentUserInfo? currentUser = null, bool? normalizationOverride = null)
     {
         var fileName = Path.GetFileName(filePath);
         string? uploadedEpisodeId = null;
@@ -94,9 +94,10 @@ internal static class EpisodeHelpers
             var normalizationConfig = new AudioNormalizationConfig();
             configuration.GetSection("AudioNormalization").Bind(normalizationConfig);
 
-            // Get normalization enabled from user preferences (defaults to true)
-            var userPref = PreferencesHelpers.GetNormalizationEnabled(environment);
-            normalizationConfig.Enabled = userPref ?? true;
+            // Use explicit override if provided, otherwise read from user preferences
+            normalizationConfig.Enabled = normalizationOverride
+                ?? PreferencesHelpers.GetNormalizationEnabled(environment)
+                ?? true;
 
             // Check if normalization is enabled (skip client-side if server-side requested)
             var fileToUpload = filePath;
