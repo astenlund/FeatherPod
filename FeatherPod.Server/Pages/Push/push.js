@@ -37,9 +37,30 @@ function parseVelocityOverrides() {
 
     return overrides;
 }
+/**
+ * @typedef {Object} QueueEntry
+ * @property {string} id - Unique entry ID
+ * @property {File|null} file - File object (null after session restore)
+ * @property {'queued'|'uploading'|'normalizing'|'completed'|'failed'|'cancelled'} status
+ * @property {number} progress - Progress percentage (0-100)
+ * @property {string|null} stage - Normalization stage (Queued, Analyzing, Normalizing, Finishing, Completed)
+ * @property {string|null} jobId - Server normalization job ID
+ * @property {string|null} episodeId - Episode ID after completion
+ * @property {Episode|null} episode - Full episode data after completion
+ * @property {string|null} error - Error message if failed
+ * @property {XMLHttpRequest|null} xhr - Active XHR for upload cancellation
+ * @property {EventSource|null} eventSource - Active SSE connection for normalization
+ * @property {number} fileSize - File size in bytes
+ * @property {string} fileName - Original file name
+ * @property {boolean} validationError - Whether failure is due to validation (no retry)
+ * @property {boolean} backgroundMonitoring - Whether normalization is being monitored in the background
+ * @property {Function|null} _resolveMonitor - Internal: resolve function for normalization promise
+ */
+
 let apiKey = null;
-const states = ['no-key', 'ready', 'processing', 'success', 'error'];
+const states = ['no-key', 'ready', 'queue', 'batch-complete', 'error'];
 const JOB_STORAGE_KEY = 'featherpod_job_' + FEED_ID;
+const QUEUE_STORAGE_KEY = 'featherpod_queue_' + FEED_ID;
 const HISTORY_STORAGE_KEY = 'featherpod_history_' + FEED_ID;
 const HISTORY_FILTER_KEY = 'featherpod_history_filter_' + FEED_ID;
 const API_KEY_SESSION_KEY = 'featherpod_api_key_' + FEED_ID;
@@ -56,10 +77,14 @@ const STR_INVALID_KEY = 'Invalid key';
 const STR_NO_ACCESS = 'No access';
 const STR_NO_FEED_ACCESS = 'This key does not have access to this feed';
 
-/** @type {Array<Object>|null} */
-let recentUploadsData = null;
-/** @type {string|null} */
-let selectedUploadId = null;
+/** @type {Array<QueueEntry>} - Upload queue entries */
+let uploadQueue = [];
+/** @type {string|null} - ID of the entry currently uploading */
+let activeUploadId = null;
+/** @type {boolean} - Whether an upload is currently in progress */
+let isUploading = false;
+/** @type {number} - Counter for generating unique entry IDs */
+let nextEntryId = 0;
 
 /** @type {Array<Object>|null} - History data for ready state */
 let historyData = null;
@@ -74,13 +99,6 @@ let pendingFilterRequest = 0;
 let cachedBrowserUploads = null;
 /** @type {Array<Object>|null} - Cached all uploads from server */
 let cachedAllUploads = null;
-
-/** @type {XMLHttpRequest|null} - Active upload XHR for cancellation */
-let currentXhr = null;
-/** @type {string|null} - Active normalization job ID for cancellation */
-let currentJobId = null;
-/** @type {EventSource|null} - Active SSE connection for cancellation */
-let currentEventSource = null;
 
 /** @type {number|null} - Animation ID for title text animation */
 let titleAnimationId = null;
@@ -164,8 +182,50 @@ function animateTitle(targetWord) {
     }
 }
 
+/**
+ * Immediately collapse the history section without animation.
+ * Strips all animation classes, clears inline styles, resets aria and toggle text.
+ * Safe to call even if history is already collapsed or not yet initialized.
+ */
+function collapseHistoryImmediate() {
+    const section = document.getElementById('history-section');
+    const toggle = document.getElementById('history-toggle');
+    const frostedOverlay = document.getElementById('frosted-overlay');
+    const selectFileBtn = document.getElementById('select-file');
+
+    if (section) {
+        section.classList.remove('history-section--expanded', 'history-section--settled', 'history-section--collapsing', 'history-section--fade-out');
+        section.style.height = '';
+        section.style.width = '';
+        section.style.marginLeft = '';
+        section.style.marginRight = '';
+    }
+
+    if (toggle) {
+        toggle.setAttribute('aria-expanded', 'false');
+        const textSpan = toggle.querySelector('.history-toggle-text');
+        if (textSpan) {
+            textSpan.textContent = 'Recent uploads';
+        }
+        toggle.classList.remove('text-fading');
+        toggle.style.width = '';
+    }
+
+    if (frostedOverlay) {
+        frostedOverlay.classList.remove('frosted-overlay--active');
+    }
+
+    // Re-enable select-file button (may have been disabled when history was expanded in ready state)
+    if (selectFileBtn) {
+        selectFileBtn.disabled = false;
+    }
+}
+
 /** @param {string} stateName */
 function showState(stateName) {
+    // Collapse history immediately before switching states to prevent stale expanded state
+    collapseHistoryImmediate();
+
     states.forEach(s => document.getElementById(s).style.display = s === stateName ? '' : 'none');
 
     // Update container state class for CSS styling
@@ -177,9 +237,9 @@ function showState(stateName) {
 
     // Update page title based on state (animate first word only)
     let targetWord;
-    if (stateName === 'processing') {
+    if (stateName === 'queue') {
         targetWord = 'Pushing';
-    } else if (stateName === 'success') {
+    } else if (stateName === 'batch-complete') {
         targetWord = 'Pushed';
     } else {
         targetWord = 'Push';
@@ -188,9 +248,9 @@ function showState(stateName) {
     // Debug mode: set starting word before comparison so animation triggers
     if (isFirstStateChange && DEBUG_TITLE_ANIMATION) {
         let startWord;
-        if (stateName === 'processing') {
+        if (stateName === 'queue') {
             startWord = 'Push';
-        } else if (stateName === 'success' || stateName === 'error') {
+        } else if (stateName === 'batch-complete' || stateName === 'error') {
             startWord = 'Pushing';
         } else {
             startWord = 'Pushed';
@@ -223,6 +283,26 @@ function isValidAudioFile(file) {
     const extension = '.' + file.name.split('.').pop().toLowerCase();
 
     return ALLOWED_EXTENSIONS.includes(extension);
+}
+
+/**
+ * Generate a unique entry ID for queue items.
+ * @returns {string}
+ */
+function generateEntryId() {
+    return 'q' + (nextEntryId++) + '_' + Date.now().toString(36);
+}
+
+/**
+ * Get the currently visible state name.
+ * @returns {string|null}
+ */
+function getCurrentState() {
+    return states.find(s => {
+        const el = document.getElementById(s);
+
+        return el && el.style.display !== 'none';
+    }) || null;
 }
 
 
@@ -564,8 +644,8 @@ async function init() {
         return;
     }
 
-    // Try to restore previous job state (e.g., after page refresh)
-    if (await restoreJobState()) {
+    // Try to restore previous queue state (e.g., after page refresh)
+    if (await restoreQueueState()) {
         return;
     }
 
@@ -840,33 +920,24 @@ document.getElementById('select-file').addEventListener('click', () => {
     document.getElementById('file-input').click();
 });
 
-document.getElementById('upload-another').addEventListener('click', async () => {
-    clearJobState();
-    document.getElementById('file-input').value = '';
-    showState('ready');
-    await initHistorySection();
-    document.getElementById('select-file').focus();
-});
-
 document.getElementById('try-another').addEventListener('click', async () => {
-    clearJobState();
+    clearQueueState();
     document.getElementById('file-input').value = '';
     showState('ready');
     await initHistorySection();
     document.getElementById('select-file').focus();
 });
 
-document.getElementById('file-input').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (!isValidAudioFile(file)) {
-        showError('Unsupported file type. Use MP3, M4A, WAV, OGG, FLAC, or AAC.');
+document.getElementById('file-input').addEventListener('change', (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length === 0) {
         return;
     }
-    await uploadFile(file);
+    addFilesToQueue(files);
+    e.target.value = '';
 });
 
-// Drag and drop support
+// Drag and drop support (ready state drop zone)
 const dropZone = document.getElementById('drop-zone');
 
 dropZone.addEventListener('dragover', (e) => {
@@ -879,58 +950,366 @@ dropZone.addEventListener('dragleave', (e) => {
     dropZone.classList.remove('drag-over');
 });
 
-dropZone.addEventListener('drop', async (e) => {
+dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (!file) return;
-    if (!isValidAudioFile(file)) {
-        showError('Unsupported file type. Use MP3, M4A, WAV, OGG, FLAC, or AAC.');
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) {
         return;
     }
-    await uploadFile(file);
+    addFilesToQueue(files);
 });
 
-/** @param {File} file */
-async function uploadFile(file) {
-    clearJobState();
-    showState('processing');
-    document.getElementById('processing-filename').textContent = file.name;
-    document.getElementById('processing-status').textContent = 'Uploading...';
-    const progressBar = document.getElementById('processing-progress');
-    const progressContainer = progressBar.parentElement;
-    progressContainer.setAttribute('aria-valuenow', '0');
-    progressBar.classList.remove('indeterminate');
-    progressAnimator.startWithAssumption('Uploading', progressBar, file.size);
+// Queue state: add more files button and drop zone
+document.getElementById('queue-add-files')?.addEventListener('click', () => {
+    document.getElementById('queue-file-input').click();
+});
+
+document.getElementById('queue-file-input')?.addEventListener('change', (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length === 0) {
+        return;
+    }
+    addFilesToQueue(files);
+    e.target.value = '';
+});
+
+const queueDropZone = document.getElementById('queue-drop-zone');
+if (queueDropZone) {
+    queueDropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        queueDropZone.classList.add('drag-over');
+    });
+
+    queueDropZone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        queueDropZone.classList.remove('drag-over');
+    });
+
+    queueDropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        queueDropZone.classList.remove('drag-over');
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length === 0) {
+            return;
+        }
+        addFilesToQueue(files);
+    });
+}
+
+// Upload more button (batch-complete state)
+document.getElementById('upload-more')?.addEventListener('click', async () => {
+    uploadQueue = [];
+    activeUploadId = null;
+    isUploading = false;
+    clearQueueState();
+    document.getElementById('file-input').value = '';
+    showState('ready');
+    await initHistorySection();
+    document.getElementById('select-file').focus();
+});
+
+// ============================================================================
+// QUEUE MANAGEMENT (Steps 4-8)
+// ============================================================================
+
+const Q_MORPH_DURATION = 400;
+
+/**
+ * Animate the queue drop zone morphing from the ready-state drop zone dimensions.
+ * Mirrors the history section morph pattern: set explicit start → reflow → transition to target.
+ */
+function animateQueueDropZoneMorph() {
+    const queueDZ = document.getElementById('queue-drop-zone');
+    if (!queueDZ) return;
+
+    // Measure target height before overriding
+    const targetHeight = queueDZ.getBoundingClientRect().height;
+
+    // Set starting height (matching ready-state drop zone)
+    queueDZ.classList.add('queue-drop-zone--morphing');
+    queueDZ.style.height = COLLAPSED_HEIGHT + 'px';
+
+    // Commit starting state, then transition to target
+    void queueDZ.offsetHeight;
+    queueDZ.style.height = targetHeight + 'px';
+
+    // Clean up after transition
+    setTimeout(() => {
+        queueDZ.classList.remove('queue-drop-zone--morphing');
+        queueDZ.style.height = '';
+    }, Q_MORPH_DURATION);
+}
+
+/**
+ * Prepare the ready-state drop zone for a morph animation before it becomes visible.
+ * Sets the morphing class and start height while #drop-zone is still hidden (display: none),
+ * so blur-fade-in is suppressed when showState('ready') makes it visible.
+ * @param {number} startHeight - The height to start from (queue drop zone height).
+ */
+function prepareReadyDropZoneMorph(startHeight) {
+    const dropZone = document.getElementById('drop-zone');
+    if (!dropZone) return;
+
+    dropZone.classList.add('drop-zone--morphing');
+    dropZone.style.height = startHeight + 'px';
+}
+
+/**
+ * Run the ready-state drop zone morph transition. Must be called after showState('ready')
+ * and prepareReadyDropZoneMorph() so the element is visible with its start height committed.
+ */
+function animateReadyDropZoneMorph() {
+    const dropZone = document.getElementById('drop-zone');
+    if (!dropZone) return;
+
+    // Commit the start height, then transition to target
+    void dropZone.offsetHeight;
+    dropZone.style.height = COLLAPSED_HEIGHT + 'px';
+
+    setTimeout(() => {
+        // Keep animation suppressed so blur-fade-in doesn't replay after morph class is removed
+        dropZone.style.animation = 'none';
+        dropZone.querySelector('.btn-primary')?.style.setProperty('animation', 'none');
+        dropZone.querySelector('.hint')?.style.setProperty('animation', 'none');
+        dropZone.classList.remove('drop-zone--morphing');
+        dropZone.style.height = '';
+    }, Q_MORPH_DURATION);
+}
+
+/**
+ * Add files to the upload queue. Duplicates (same name + size) of active or completed
+ * entries are silently skipped. Invalid files are marked as failed immediately.
+ * Transitions to queue state and starts processing if idle.
+ * @param {Array<File>} files
+ */
+function addFilesToQueue(files) {
+    if (files.length === 0) {
+        return;
+    }
+
+    for (const file of files) {
+        const isDuplicate = uploadQueue.some(e =>
+            e.fileName === file.name &&
+            e.fileSize === file.size &&
+            (e.status === 'queued' || e.status === 'uploading' || e.status === 'normalizing' || e.status === 'completed')
+        );
+        if (isDuplicate) continue;
+
+        const valid = isValidAudioFile(file);
+        uploadQueue.push({
+            id: generateEntryId(),
+            file: file,
+            status: valid ? 'queued' : 'failed',
+            progress: 0,
+            stage: null,
+            jobId: null,
+            episodeId: null,
+            episode: null,
+            error: valid ? null : 'Unsupported file type',
+            xhr: null,
+            eventSource: null,
+            fileSize: file.size,
+            fileName: file.name,
+            validationError: !valid,
+            _resolveMonitor: null
+        });
+    }
+
+    const previousState = getCurrentState();
+
+    if (previousState !== 'queue') {
+        showState('queue');
+    }
+
+    if (previousState === 'ready') {
+        animateQueueDropZoneMorph();
+    }
+
+    const animateItems = previousState === 'queue';
+    renderQueueList(animateItems);
+
+    saveQueueState();
+
+    if (!isUploading) {
+        processQueue();
+    }
+}
+
+/**
+ * Remove a queued (not yet started) entry from the queue.
+ * Returns to ready state if queue becomes empty.
+ * @param {string} entryId
+ */
+function removeFromQueue(entryId) {
+    const index = uploadQueue.findIndex(e => e.id === entryId);
+    if (index === -1) {
+        return;
+    }
+
+    const entry = uploadQueue[index];
+    if (entry.status !== 'queued') {
+        return;
+    }
+
+    uploadQueue.splice(index, 1);
+    removeQueueItemFromDOM(entryId);
+
+    saveQueueState();
+    checkAllComplete();
+}
+
+/**
+ * Find the next queued entry and start processing it.
+ * If no queued entries remain, transitions to batch-complete.
+ */
+function processQueue() {
+    const nextEntry = uploadQueue.find(e => e.status === 'queued');
+    if (!nextEntry) {
+        checkAllComplete();
+
+        return;
+    }
+
+    isUploading = true;
+    activeUploadId = nextEntry.id;
+    void processEntry(nextEntry);
+}
+
+/**
+ * Reset active state and advance to next queued entry.
+ */
+function advanceQueue() {
+    activeUploadId = null;
+    isUploading = false;
+    processQueue();
+}
+
+/**
+ * Transition to batch-complete state and show summary.
+ */
+function onBatchComplete() {
+    isUploading = false;
+    activeUploadId = null;
+
+    // If nothing completed or failed, go back to ready (e.g. everything was cancelled)
+    const hasResults = uploadQueue.some(e => e.status === 'completed' || e.status === 'failed');
+    if (!hasResults) {
+        const queueDZHeight = document.getElementById('queue-drop-zone')?.getBoundingClientRect().height || 0;
+        if (queueDZHeight > 0) prepareReadyDropZoneMorph(queueDZHeight);
+        clearQueueState();
+        showState('ready');
+        if (queueDZHeight > 0) animateReadyDropZoneMorph();
+        void initHistorySection();
+
+        return;
+    }
+
+    saveQueueState();
+
+    // Invalidate caches for history
+    cachedBrowserUploads = null;
+    cachedAllUploads = null;
+
+    showState('batch-complete');
+    renderBatchList();
+    updateBatchSummary();
+    document.getElementById('upload-more')?.focus();
+}
+
+/**
+ * Check if all entries have reached a terminal state and transition to batch-complete if so.
+ * Called from multiple places where background work finishes (normalization, cancellation).
+ */
+function checkAllComplete() {
+    if (getCurrentState() === 'batch-complete') return;
+
+    if (uploadQueue.length === 0) {
+        const queueDZHeight = document.getElementById('queue-drop-zone')?.getBoundingClientRect().height || 0;
+        if (queueDZHeight > 0) prepareReadyDropZoneMorph(queueDZHeight);
+        clearQueueState();
+        showState('ready');
+        if (queueDZHeight > 0) animateReadyDropZoneMorph();
+        void initHistorySection();
+
+        return;
+    }
+
+    const hasActiveWork = uploadQueue.some(e =>
+        e.status === 'queued' || e.status === 'uploading' || e.status === 'normalizing'
+    );
+    if (!hasActiveWork) {
+        onBatchComplete();
+    }
+}
+
+/**
+ * Fire-and-forget wrapper around monitorEntryNormalization for background monitoring.
+ * Sets entry.backgroundMonitoring = true so progressAnimator is not used.
+ * When the promise resolves: updates DOM, saves state, calls checkAllComplete().
+ * @param {QueueEntry} entry
+ */
+function monitorEntryNormalizationInBackground(entry) {
+    entry.backgroundMonitoring = true;
+    monitorEntryNormalization(entry).then(() => {
+        entry.backgroundMonitoring = false;
+        if (uploadQueue.includes(entry)) {
+            updateQueueItemInDOM(entry);
+        }
+        saveQueueState();
+        checkAllComplete();
+    });
+}
+
+/**
+ * Process a single queue entry — upload file, handle sync/async response.
+ * @param {QueueEntry} entry
+ */
+async function processEntry(entry) {
+    entry.status = 'uploading';
+    entry.progress = 0;
+    updateQueueItemInDOM(entry);
+
+    saveQueueState();
+
+    const progressBar = getEntryProgressBar(entry.id);
+    progressAnimator.startWithAssumption('Uploading', progressBar, entry.fileSize);
+
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', entry.file);
 
     try {
         const response = await new Promise((resolve, reject) => {
             const xhr = new XMLHttpRequest();
-            currentXhr = xhr;
+            entry.xhr = xhr;
+
             xhr.upload.addEventListener('progress', (e) => {
                 if (e.lengthComputable) {
                     const percent = Math.round((e.loaded / e.total) * 100);
+                    entry.progress = percent;
                     progressAnimator.setTarget(percent, 'Uploading');
-                    progressContainer.setAttribute('aria-valuenow', percent.toString());
+                    updateQueueItemProgress(entry);
                 }
             });
+
             xhr.onload = () => {
-                currentXhr = null;
+                entry.xhr = null;
                 progressAnimator.reset();
                 resolve({ status: xhr.status, body: xhr.responseText });
             };
+
             xhr.onerror = () => {
-                currentXhr = null;
+                entry.xhr = null;
                 progressAnimator.reset();
                 reject(new Error('Network error'));
             };
+
             xhr.onabort = () => {
-                currentXhr = null;
+                entry.xhr = null;
                 progressAnimator.reset();
                 reject(new DOMException('Upload cancelled', 'AbortError'));
             };
+
             xhr.open('POST', '/api/feeds/' + FEED_ID + '/episodes?normalize=true&source=Browser');
             xhr.setRequestHeader('X-API-Key', apiKey);
             xhr.send(formData);
@@ -938,32 +1317,57 @@ async function uploadFile(file) {
 
         if (response.status === 201) {
             const episode = JSON.parse(response.body);
-            saveJobState({ status: 'success', fileName: file.name, episode: episode });
-            await showSuccess(episode);
+            entry.status = 'completed';
+            entry.episode = episode;
+            entry.progress = 100;
+            saveToLocalHistory(episode);
+            cachedBrowserUploads = null;
+            cachedAllUploads = null;
         } else if (response.status === 202) {
             const jobResponse = JSON.parse(response.body);
-            currentJobId = jobResponse.jobId;
-            saveJobState({
-                status: 'processing',
-                jobId: jobResponse.jobId,
-                fileName: file.name,
-                fileSize: file.size
-            });
-            monitorNormalizationJob(jobResponse.jobId, file.name, file.size);
-        } else if (response.status === 401) {
-            showError(STR_INVALID_KEY);
-        } else if (response.status === 403) {
-            showError(STR_NO_FEED_ACCESS);
+            entry.jobId = jobResponse.jobId;
+            entry.status = 'normalizing';
+            entry.stage = 'Queued';
+            entry.progress = 0;
+            updateQueueItemInDOM(entry);
+            saveQueueState();
+            monitorEntryNormalizationInBackground(entry);
+            advanceQueue();
+
+            return;
+        } else if (response.status === 401 || response.status === 403) {
+            entry.status = 'failed';
+            entry.error = response.status === 401 ? STR_INVALID_KEY : STR_NO_FEED_ACCESS;
+            // Auth failure: remove all remaining queued entries (they'd fail too)
+            const queued = uploadQueue.filter(e => e.status === 'queued');
+            for (const q of queued) {
+                removeQueueItemFromDOM(q.id);
+            }
+            uploadQueue = uploadQueue.filter(e => e.status !== 'queued');
         } else {
             const error = tryParseJson(response.body);
-            showError(error?.error || 'Upload failed');
+            entry.status = 'failed';
+            entry.error = error?.error || 'Upload failed';
         }
     } catch (err) {
         if (err.name === 'AbortError') {
+            removeQueueItemFromDOM(entry.id);
+            uploadQueue.splice(uploadQueue.indexOf(entry), 1);
+        
+            saveQueueState();
+            advanceQueue();
+
             return;
         }
-        showError(err.message || 'Upload failed');
+
+        entry.status = 'failed';
+        entry.error = err.message || 'Upload failed';
     }
+
+    updateQueueItemInDOM(entry);
+
+    saveQueueState();
+    advanceQueue();
 }
 
 Number.prototype.sigDig = function(minSigDigs) {
@@ -1026,74 +1430,6 @@ function formatDuration(duration) {
 }
 
 /**
- * Display the success state and fetch recent uploads.
- * @param {Episode|string} episodeOrFileName - Episode object or just filename string
- */
-async function showSuccess(episodeOrFileName) {
-    showState('success');
-
-    // Invalidate cache since we just uploaded
-    cachedBrowserUploads = null;
-    cachedAllUploads = null;
-
-    // Save to localStorage if we have full episode data
-    if (typeof episodeOrFileName === 'object' && episodeOrFileName !== null) {
-        saveToLocalHistory(episodeOrFileName);
-    }
-
-    // Determine the selected episode ID (if we have full episode data)
-    const currentEpisodeId = (typeof episodeOrFileName === 'object' && episodeOrFileName !== null)
-        ? episodeOrFileName.id
-        : null;
-
-    // Update the info card with the current episode
-    updateInfoCard(episodeOrFileName);
-
-    // Fetch and display recent uploads (errors shouldn't break success state)
-    try {
-        const recentUploads = await fetchRecentUploads();
-        renderRecentUploads(recentUploads, currentEpisodeId);
-    } catch (err) {
-        console.error('Failed to display recent uploads:', err);
-    }
-
-    document.getElementById('upload-another').focus();
-}
-
-/**
- * Fetch recent browser uploads for this feed (uses cache, returns first 5).
- * @returns {Promise<Array<{id: string, title: string, fileName: string, fileSize: number, duration: string, uploadedAt: string|null}>>}
- */
-async function fetchRecentUploads() {
-    const uploads = await fetchBrowserUploads();
-
-    return uploads.slice(0, 5);
-}
-
-/**
- * Fetch the most recent browser upload (used after normalization completes).
- * Invalidates cache to ensure fresh data is fetched.
- * @returns {Promise<Object|null>}
- */
-async function fetchMostRecentEpisode() {
-    // Invalidate cache to ensure we get fresh data including the just-uploaded episode
-    cachedBrowserUploads = null;
-
-    try {
-        const uploads = await fetchRecentUploads();
-        if (uploads && uploads.length > 0) {
-            return uploads[0];
-        }
-
-        return null;
-    } catch (err) {
-        console.warn('Error fetching most recent episode:', err);
-
-        return null;
-    }
-}
-
-/**
  * Format a date as "28 nov 2025" (day, short month lowercase, year).
  * @param {string|null} dateString - ISO date string or null
  * @returns {string}
@@ -1151,137 +1487,8 @@ function formatRelativeTime(dateString) {
     return diffDays === 1 ? '1 day ago' : diffDays + ' days ago';
 }
 
-/**
- * Update the episode info card with the given episode data.
- * @param {Episode|string} episode - Episode object or just filename string
- */
-function updateInfoCard(episode) {
-    const infoCard = document.getElementById('episode-info');
-    const fallbackFilename = document.getElementById('ep-filename');
-
-    if (episode && typeof episode === 'object') {
-        fallbackFilename.style.display = 'none';
-        infoCard.style.display = 'grid';
-
-        document.getElementById('info-title').textContent = episode.title || episode.fileName;
-        document.getElementById('info-filename').textContent = episode.fileName || '';
-
-        // Combine duration and size: "16m 40s (31 MB)"
-        const duration = formatDuration(episode.duration);
-        const size = episode.fileSize ? episode.fileSize.formatBytes() : '';
-        let durationText = duration;
-        if (duration && size) {
-            durationText = duration + ' (' + size + ')';
-        } else if (size) {
-            durationText = size;
-        }
-        document.getElementById('info-duration').textContent = durationText;
-
-        document.getElementById('info-published').textContent = formatDate(episode.publishedDate);
-
-        // Uploaded time (shown on mobile only via CSS)
-        const uploadedTime = formatRelativeTime(episode.uploadedAt);
-        document.getElementById('info-uploaded').textContent = uploadedTime;
-        document.getElementById('info-uploaded-label').style.display = uploadedTime ? '' : 'none';
-        document.getElementById('info-uploaded').style.display = uploadedTime ? '' : 'none';
-    } else {
-        infoCard.style.display = 'none';
-        fallbackFilename.style.display = 'block';
-        fallbackFilename.textContent = episode || '';
-    }
-}
-
-/**
- * Render the recent uploads list in the success state.
- * @param {Array<Object>} uploads - Array of episode objects
- * @param {string|null} [initialSelectedId] - ID of the initially selected episode
- */
-function renderRecentUploads(uploads, initialSelectedId = null) {
-    const container = document.getElementById('recent-uploads');
-    if (!container) {
-        return;
-    }
-
-    if (!uploads || !Array.isArray(uploads) || uploads.length === 0) {
-        container.style.display = 'none';
-        recentUploadsData = null;
-
-        return;
-    }
-
-    recentUploadsData = uploads;
-    selectedUploadId = initialSelectedId;
-    container.style.display = 'block';
-    const list = container.querySelector('.upload-list');
-    list.innerHTML = '';
-
-    uploads.forEach(upload => {
-        const item = document.createElement('div');
-        item.className = 'upload-item';
-        item.dataset.id = upload.id;
-        item.tabIndex = 0;
-        item.setAttribute('role', 'option');
-        item.setAttribute('aria-selected', (upload.id === selectedUploadId).toString());
-
-        if (upload.id === selectedUploadId) {
-            item.classList.add('upload-item--selected');
-        }
-
-        const title = document.createElement('span');
-        const titleText = upload.title || upload.fileName;
-        title.className = 'upload-title';
-        title.textContent = titleText;
-
-        const time = document.createElement('span');
-        time.className = 'upload-time';
-        time.textContent = formatRelativeTime(upload.uploadedAt);
-
-        item.appendChild(title);
-        if (upload.uploadedAt) {
-            item.appendChild(time);
-        }
-
-        item.addEventListener('click', () => selectUpload(upload.id));
-
-        list.appendChild(item);
-    });
-}
-
-/**
- * Select an upload from the recent uploads list and update the info card.
- * @param {string} uploadId - The ID of the upload to select
- */
-function selectUpload(uploadId) {
-    if (!recentUploadsData) {
-        return;
-    }
-
-    const upload = recentUploadsData.find(u => u.id === uploadId);
-    if (!upload) {
-        return;
-    }
-
-    selectedUploadId = uploadId;
-
-    // Update visual selection and aria-selected (target success state's list specifically)
-    const list = document.querySelector('#recent-uploads .upload-list');
-    if (list) {
-        list.querySelectorAll('.upload-item').forEach(item => {
-            const isSelected = item.dataset.id === uploadId;
-            item.classList.toggle('upload-item--selected', isSelected);
-            item.setAttribute('aria-selected', isSelected.toString());
-        });
-    }
-
-    // Update info card
-    updateInfoCard(upload);
-
-    // Scroll to top so the info card is visible
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
 // ============================================================================
-// HISTORY SECTION (Ready State)
+// HISTORY SECTION (Ready/Queue States)
 // ============================================================================
 
 /**
@@ -1375,7 +1582,7 @@ const HISTORY_TRANSITION_DURATION = H_CTA_FALL + H_PAUSE + H_MORPH;
  * Toggle the history section collapsed/expanded state with animation.
  * On desktop: morphs from drop zone size to full width with staggered content reveal.
  * On mobile: slides down as fullscreen overlay.
- * Drop zone fades out/in via CSS, history section handles its own animated border.
+ * In ready state, drop zone fades out/in via CSS. In queue state, overlays queue content.
  * @param {boolean} [expand] - Force expand (true) or collapse (false). If omitted, toggles.
  */
 function toggleHistorySection(expand) {
@@ -1383,6 +1590,7 @@ function toggleHistorySection(expand) {
     const toggle = document.getElementById('history-toggle');
     const selectFileBtn = document.getElementById('select-file');
     const isMobile = window.matchMedia('(max-width: 768px)').matches;
+    const isQueueState = getCurrentState() === 'queue';
     if (!section || !toggle) {
         return;
     }
@@ -1422,9 +1630,7 @@ function toggleHistorySection(expand) {
         textSpan.style.visibility = '';
         toggle.style.width = currentWidth + 'px';
 
-        // Calculate timing: work backwards from end
-        // Expanding: long delay before text animation (full expand sequence)
-        // Collapsing: short animation matching panel shrink (H_MORPH)
+        // Same cadence in both ready and queue states
         const totalDuration = newState
             ? H_CTA_FALL + H_PAUSE + H_MORPH
             : H_MORPH;
@@ -1454,8 +1660,8 @@ function toggleHistorySection(expand) {
         }, totalDuration);
     }
 
-    // Disable select-file button when expanded (it's hidden via CSS but could still be activated)
-    if (selectFileBtn) {
+    // In ready state, disable select-file button when expanded (hidden via CSS but could still be activated)
+    if (!isQueueState && selectFileBtn) {
         selectFileBtn.disabled = newState;
     }
 
@@ -1470,7 +1676,7 @@ function toggleHistorySection(expand) {
     }
 
     if (newState) {
-        // Expanding: measure natural height, animate to it, then switch to auto
+        // Expanding: measure natural height, animate from collapsed to expanded
 
         // Use cached values for consistent animations
         const containerWidth = cachedContainerWidth;
@@ -1492,7 +1698,6 @@ function toggleHistorySection(expand) {
             // Force reflow to ensure starting values are applied
             void section.offsetHeight;
         }
-        // Drop zone fades out via CSS - no dimension animation needed
 
         // Animate to expanded state
         section.classList.add('history-section--expanded');
@@ -1526,7 +1731,7 @@ function toggleHistorySection(expand) {
             }
         }, HISTORY_TRANSITION_DURATION);
     } else {
-        // Collapsing: set current state explicitly, then animate to collapsed
+        // Collapsing: morph back to collapsed dimensions
 
         // Use cached values for consistent animations
         const containerWidth = cachedContainerWidth;
@@ -1588,8 +1793,8 @@ function toggleHistorySection(expand) {
             updateHistoryInfoCard(historyData[0]);
         }
 
-        // Return focus to the upload button
-        if (selectFileBtn) {
+        // In ready state, return focus to the upload button
+        if (!isQueueState && selectFileBtn) {
             selectFileBtn.focus();
         }
     }
@@ -1597,7 +1802,7 @@ function toggleHistorySection(expand) {
 
 /**
  * Fetch and cache browser uploads from server.
- * Cache is invalidated in showSuccess() after each upload.
+ * Cache is invalidated in processEntry() after each upload completes.
  * @returns {Promise<Array<Episode>>} Array of browser uploads
  */
 async function fetchBrowserUploads() {
@@ -1626,7 +1831,7 @@ async function fetchBrowserUploads() {
 
 /**
  * Fetch and cache all uploads from server.
- * Cache is invalidated in showSuccess() after each upload.
+ * Cache is invalidated in processEntry() after each upload completes.
  * @returns {Promise<Array<Episode>>} Array of all uploads
  */
 async function fetchAllUploads() {
@@ -1941,7 +2146,7 @@ async function changeHistoryFilter(filter, focusFirst = false) {
 }
 
 /**
- * Initialize the history section in the ready state.
+ * Initialize the history section in the ready or queue state.
  * Loads saved filter preference, fetches uploads, and renders the list.
  * The toggle and section are always shown (even if empty) so users can switch filters.
  */
@@ -2364,197 +2569,236 @@ const progressAnimator = {
     }
 };
 
+// ============================================================================
+// PER-FILE NORMALIZATION MONITORING (Step 6)
+// ============================================================================
+
 /**
- * Update the processing status display and progress bar.
+ * Update a queue entry's stage and progress from a job status object.
+ * Drives the progressAnimator for stages with progress tracking.
+ * @param {QueueEntry} entry
  * @param {JobStatus} job
  */
-function updateProcessingStatus(job) {
-    const statusEl = document.getElementById('processing-status');
-    const progressBar = document.getElementById('processing-progress');
-    const progressContainer = progressBar.parentElement;
+function updateEntryFromJobStatus(entry, job) {
+    if (!job.stage) {
+        return;
+    }
 
-    if (job.stage) {
-        const stagesWithProgress = ['Analyzing', 'Normalizing'];
-        const isProgressStage = stagesWithProgress.includes(job.stage);
+    entry.stage = job.stage;
+    const stagesWithProgress = ['Analyzing', 'Normalizing'];
+    const isProgressStage = stagesWithProgress.includes(job.stage);
+    const progressBar = getEntryProgressBar(entry.id);
 
-        const ellipsis = job.stage.endsWith('ing') ? '...' : '';
-        statusEl.textContent = job.stage + ellipsis;
-
+    if (entry.backgroundMonitoring) {
         if (isProgressStage) {
-            progressBar.classList.remove('indeterminate');
+            if (progressBar) {
+                progressBar.classList.remove('indeterminate');
+            }
+            if (job.progressPercent != null) {
+                entry.progress = job.progressPercent;
+                if (progressBar) progressBar.style.width = job.progressPercent + '%';
+            }
+        } else {
+            if (progressBar) {
+                progressBar.classList.add('indeterminate');
+                progressBar.style.width = '';
+            }
+        }
+    } else {
+        if (isProgressStage) {
+            if (progressBar) {
+                progressBar.classList.remove('indeterminate');
+            }
 
             if (progressAnimator.currentStage !== job.stage) {
                 progressAnimator.startWithAssumption(job.stage, progressBar);
             }
 
             if (job.progressPercent != null) {
+                entry.progress = job.progressPercent;
                 progressAnimator.setTarget(job.progressPercent, job.stage);
-                progressContainer.setAttribute('aria-valuenow', job.progressPercent.toString());
             }
 
             progressAnimator.start(progressBar);
         } else {
             progressAnimator.reset();
+            if (progressBar) {
+                progressBar.classList.add('indeterminate');
+                progressBar.style.width = '';
+            }
+        }
+    }
+}
+
+/**
+ * Monitor normalization for a queue entry via SSE with polling fallback.
+ * Returns a Promise that resolves when normalization completes/fails/cancels.
+ * @param {QueueEntry} entry
+ * @returns {Promise<void>}
+ */
+function monitorEntryNormalization(entry) {
+    return new Promise((resolve) => {
+        entry._resolveMonitor = resolve;
+
+        const progressBar = getEntryProgressBar(entry.id);
+        if (progressBar) {
             progressBar.classList.add('indeterminate');
             progressBar.style.width = '';
-            progressContainer.setAttribute('aria-valuenow', '0');
-
-            // Show ghost bar at 100% during indeterminate stages to prevent layout jump
-            if (SHOW_GHOST) {
-                const ghostBar = document.getElementById('processing-progress-ghost');
-                if (ghostBar) {
-                    ghostBar.style.width = '100%';
-                    ghostBar.parentElement.classList.add('visible');
-                }
-            }
         }
-    }
-}
-
-/**
- * Monitor normalization job via SSE with polling fallback.
- * The processing state is already shown - this function just updates status.
- * @param {string} jobId
- * @param {string} fileName
- * @param {number} fileSize - File size in bytes for velocity calculations
- */
-function monitorNormalizationJob(jobId, fileName, fileSize) {
-    document.getElementById('processing-status').textContent = 'Initializing...';
-
-    const progressBar = document.getElementById('processing-progress');
-    progressBar.classList.add('indeterminate');
-    progressBar.style.width = '';
-    progressAnimator.reset();
-    progressAnimator.currentFileSize = fileSize;
-
-    const sseUrl = '/api/jobs/' + jobId + '/progress';
-
-    if (typeof EventSource === 'undefined') {
-        void pollNormalizationJobFallback(jobId, fileName, fileSize);
-
-        return;
-    }
-
-    const eventSource = new EventSource(sseUrl);
-    currentEventSource = eventSource;
-    currentJobId = jobId;
-    let lastStatus = null;
-    let connectionEstablished = false;
-    let jobFinished = false;
-
-    function clearMonitoringState() {
-        currentEventSource = null;
-        currentJobId = null;
-    }
-
-    const connectionTimeout = setTimeout(() => {
-        if (!connectionEstablished) {
-            eventSource.close();
-            clearMonitoringState();
-            void pollNormalizationJobFallback(jobId, fileName, fileSize);
+        if (!entry.backgroundMonitoring) {
+            progressAnimator.reset();
+            progressAnimator.currentFileSize = entry.fileSize;
         }
-    }, 5000);
 
-    eventSource.onopen = () => {
-        connectionEstablished = true;
-        clearTimeout(connectionTimeout);
-    };
+        const sseUrl = '/api/jobs/' + entry.jobId + '/progress';
 
-    eventSource.addEventListener('progress', async (e) => {
-        const parsed = tryParseJson(e.data);
-        if (parsed) {
-            lastStatus = parsed;
-            if (parsed.status === 'Cancelled') {
-                clearTimeout(connectionTimeout);
-                jobFinished = true;
+        if (typeof EventSource === 'undefined') {
+            pollEntryNormalization(entry).then(() => {
+                entry._resolveMonitor = null;
+                resolve();
+            });
+
+            return;
+        }
+
+        const eventSource = new EventSource(sseUrl);
+        entry.eventSource = eventSource;
+        let lastStatus = null;
+        let connectionEstablished = false;
+        let jobFinished = false;
+
+        function finishMonitoring() {
+            entry.eventSource = null;
+            entry._resolveMonitor = null;
+            resolve();
+        }
+
+        const connectionTimeout = setTimeout(() => {
+            if (!connectionEstablished) {
                 eventSource.close();
-                clearMonitoringState();
-                clearJobState();
-                document.getElementById('file-input').value = '';
-                progressAnimator.reset();
-                showState('ready');
-                await initHistorySection();
+                entry.eventSource = null;
+                pollEntryNormalization(entry).then(() => {
+                    entry._resolveMonitor = null;
+                    resolve();
+                });
+            }
+        }, 5000);
+
+        eventSource.onopen = () => {
+            connectionEstablished = true;
+            clearTimeout(connectionTimeout);
+        };
+
+        eventSource.addEventListener('progress', (e) => {
+            const parsed = tryParseJson(e.data);
+            if (parsed) {
+                lastStatus = parsed;
+                if (parsed.status === 'Cancelled') {
+                    clearTimeout(connectionTimeout);
+                    jobFinished = true;
+                    eventSource.close();
+                    entry.status = 'cancelled';
+                    removeQueueItemFromDOM(entry.id);
+                    uploadQueue.splice(uploadQueue.indexOf(entry), 1);
+                
+                    saveQueueState();
+                    finishMonitoring();
+
+                    return;
+                }
+                updateEntryFromJobStatus(entry, parsed);
+                updateQueueItemProgress(entry);
+            }
+        });
+
+        eventSource.addEventListener('done', async () => {
+            clearTimeout(connectionTimeout);
+            jobFinished = true;
+            eventSource.close();
+
+            if (lastStatus?.status === 'Cancelled') {
+                entry.status = 'cancelled';
+                removeQueueItemFromDOM(entry.id);
+                uploadQueue.splice(uploadQueue.indexOf(entry), 1);
+            
+                saveQueueState();
+                finishMonitoring();
 
                 return;
+            } else if (lastStatus?.status === 'Completed') {
+                cachedBrowserUploads = null;
+                const uploads = await fetchBrowserUploads();
+                const episode = uploads?.find(ep => ep.fileName === entry.fileName) || null;
+                entry.status = 'completed';
+                entry.episode = episode;
+                entry.progress = 100;
+                if (episode) {
+                    saveToLocalHistory(episode);
+                }
+                cachedAllUploads = null;
+            } else {
+                entry.status = 'failed';
+                entry.error = lastStatus?.error || 'Normalization failed';
             }
-            updateProcessingStatus(lastStatus);
-        }
-    });
 
-    eventSource.addEventListener('done', async () => {
-        clearTimeout(connectionTimeout);
-        jobFinished = true;
-        eventSource.close();
-        clearMonitoringState();
-        if (lastStatus?.status === 'Cancelled') {
-            clearJobState();
-            document.getElementById('file-input').value = '';
-            progressAnimator.reset();
-            showState('ready');
-            await initHistorySection();
-        } else if (lastStatus?.status === 'Completed') {
-            // Fetch the episode details for the info card
-            const episode = await fetchMostRecentEpisode();
-            saveJobState({ status: 'success', fileName, episode: episode });
-            await showSuccess(episode || fileName);
-        } else {
-            const errorMsg = lastStatus?.error || 'Normalization failed';
-            saveJobState({ status: 'error', fileName, error: errorMsg });
-            showError(errorMsg);
-        }
-    });
+            updateQueueItemInDOM(entry);
+            finishMonitoring();
+        });
 
-    // Named 'error' event from server (e.g., job not found)
-    // Only handle if it has data (server-sent), otherwise let onerror handle it
-    eventSource.addEventListener('error', (e) => {
-        if (!e.data) {
-            // This is a connection error, not a server-sent error event
-            // Let onerror handle it (falls back to polling)
-            return;
-        }
-        clearTimeout(connectionTimeout);
-        jobFinished = true;
-        eventSource.close();
-        clearMonitoringState();
-        const data = tryParseJson(e.data);
-        const errorMsg = data?.error || 'An error occurred';
-        saveJobState({ status: 'error', fileName, error: errorMsg });
-        showError(errorMsg);
-    });
+        // Named 'error' event from server (e.g., job not found)
+        eventSource.addEventListener('error', (e) => {
+            if (!e.data) {
+                return;
+            }
+            clearTimeout(connectionTimeout);
+            jobFinished = true;
+            eventSource.close();
+            const data = tryParseJson(e.data);
+            entry.status = 'failed';
+            entry.error = data?.error || 'An error occurred';
+            updateQueueItemInDOM(entry);
+            finishMonitoring();
+        });
 
-    // Connection error (network failure or unexpected disconnect) - fall back to polling
-    eventSource.onerror = () => {
-        if (jobFinished) {
-            return;
-        }
-        clearTimeout(connectionTimeout);
-        eventSource.close();
-        clearMonitoringState();
-        void pollNormalizationJobFallback(jobId, fileName, fileSize);
-    };
+        // Connection error - fall back to polling
+        eventSource.onerror = () => {
+            if (jobFinished) {
+                return;
+            }
+            clearTimeout(connectionTimeout);
+            eventSource.close();
+            entry.eventSource = null;
+            pollEntryNormalization(entry).then(() => {
+                entry._resolveMonitor = null;
+                resolve();
+            });
+        };
+    });
 }
 
 /**
- * Poll normalization job status (fallback when SSE unavailable).
- * The processing state is already shown - this function just updates status.
- * @param {string} jobId
- * @param {string} fileName
- * @param {number} fileSize - File size in bytes for velocity calculations
+ * Poll normalization job status for a queue entry (fallback when SSE unavailable).
+ * @param {QueueEntry} entry
+ * @returns {Promise<void>}
  */
-async function pollNormalizationJobFallback(jobId, fileName, fileSize) {
-    progressAnimator.currentFileSize = fileSize;
-
+async function pollEntryNormalization(entry) {
     const pollInterval = 2000;
 
     while (true) {
+        // Check if entry was cancelled externally
+        if (entry.status === 'cancelled') {
+            return;
+        }
+
         try {
-            const response = await fetch('/api/jobs/' + jobId, {
+            const response = await fetch('/api/jobs/' + entry.jobId, {
                 headers: { 'X-API-Key': apiKey }
             });
 
             if (!response.ok) {
-                saveJobState({ status: 'error', fileName, error: 'Failed to check job status' });
-                showError('Failed to check job status');
+                entry.status = 'failed';
+                entry.error = 'Failed to check job status';
+                updateQueueItemInDOM(entry);
 
                 return;
             }
@@ -2562,120 +2806,612 @@ async function pollNormalizationJobFallback(jobId, fileName, fileSize) {
             const job = await response.json();
 
             if (job.status === 'Completed') {
-                const episode = await fetchMostRecentEpisode();
-                saveJobState({ status: 'success', fileName, episode: episode });
-                await showSuccess(episode || fileName);
+                cachedBrowserUploads = null;
+                const uploads = await fetchBrowserUploads();
+                const episode = uploads?.find(ep => ep.fileName === entry.fileName) || null;
+                entry.status = 'completed';
+                entry.episode = episode;
+                entry.progress = 100;
+                if (episode) {
+                    saveToLocalHistory(episode);
+                }
+                cachedAllUploads = null;
+                updateQueueItemInDOM(entry);
 
                 return;
             } else if (job.status === 'Failed') {
-                const errorMsg = job.error || 'Normalization failed';
-                saveJobState({ status: 'error', fileName, error: errorMsg });
-                showError(errorMsg);
+                entry.status = 'failed';
+                entry.error = job.error || 'Normalization failed';
+                updateQueueItemInDOM(entry);
 
                 return;
             } else if (job.status === 'Cancelled') {
-                currentJobId = null;
-                clearJobState();
-                document.getElementById('file-input').value = '';
-                progressAnimator.reset();
-                showState('ready');
-                await initHistorySection();
+                entry.status = 'cancelled';
+                removeQueueItemFromDOM(entry.id);
+                uploadQueue.splice(uploadQueue.indexOf(entry), 1);
+            
+                saveQueueState();
 
                 return;
             }
 
-            updateProcessingStatus(job);
+            updateEntryFromJobStatus(entry, job);
+            updateQueueItemProgress(entry);
 
-            await new Promise(resolve => setTimeout(resolve, pollInterval));
+            await new Promise(r => setTimeout(r, pollInterval));
         } catch (err) {
-            saveJobState({ status: 'error', fileName, error: 'Failed to check job status' });
-            showError('Failed to check job status');
+            entry.status = 'failed';
+            entry.error = 'Failed to check job status';
+            updateQueueItemInDOM(entry);
 
             return;
         }
     }
 }
 
+// ============================================================================
+// CANCEL AND RETRY (Step 8)
+// ============================================================================
+
 /**
- * Cancel the current upload or normalization job.
- * During upload phase: aborts the XHR.
- * During normalization phase: POSTs cancel to server, closes SSE.
+ * Cancel a single queue entry, removing it from the queue and DOM.
+ * Queued: removes immediately. Uploading: aborts XHR. Normalizing: closes SSE, POSTs cancel.
+ * @param {string} entryId
  */
-async function cancelUpload() {
-    if (currentXhr) {
-        currentXhr.abort();
-        currentXhr = null;
-        currentJobId = null;
-        clearJobState();
-        document.getElementById('file-input').value = '';
-        progressAnimator.reset();
-        showState('ready');
-        await initHistorySection();
-    } else if (currentJobId) {
-        const jobId = currentJobId;
-        if (currentEventSource) {
-            currentEventSource.close();
-            currentEventSource = null;
+async function cancelEntry(entryId) {
+    const entry = uploadQueue.find(e => e.id === entryId);
+    if (!entry) {
+        return;
+    }
+
+    if (entry.status === 'queued') {
+        removeFromQueue(entryId);
+
+        return;
+    }
+
+    if (entry.status === 'uploading') {
+        if (entry.xhr) {
+            entry.xhr.abort();
         }
-        currentJobId = null;
-        clearJobState();
-        document.getElementById('file-input').value = '';
-        progressAnimator.reset();
-        showState('ready');
-        await initHistorySection();
+
+        return;
+    }
+
+    if (entry.status === 'normalizing') {
+        const jobId = entry.jobId;
+
+        if (entry.eventSource) {
+            entry.eventSource.close();
+            entry.eventSource = null;
+        }
+
+        entry.status = 'cancelled';
+        if (!entry.backgroundMonitoring) {
+            progressAnimator.reset();
+        }
+        removeQueueItemFromDOM(entryId);
+        uploadQueue.splice(uploadQueue.indexOf(entry), 1);
+
+        saveQueueState();
+
+        // Force-resolve the monitoring promise so the promise chain completes
+        if (entry._resolveMonitor) {
+            entry._resolveMonitor();
+            entry._resolveMonitor = null;
+        }
+
+        checkAllComplete();
 
         // Fire-and-forget cancel request to server
-        try {
-            await fetch('/api/jobs/' + jobId + '/cancel', {
-                method: 'POST',
-                headers: { 'X-API-Key': apiKey }
-            });
-        } catch {
-            // Best-effort — UI already reset
+        if (jobId) {
+            try {
+                await fetch('/api/jobs/' + jobId + '/cancel', {
+                    method: 'POST',
+                    headers: { 'X-API-Key': apiKey }
+                });
+            } catch {
+                // Best-effort
+            }
         }
     }
 }
 
-/** @param {object} state */
-function saveJobState(state) {
-    sessionStorage.setItem(JOB_STORAGE_KEY, JSON.stringify(state));
+/**
+ * Retry a failed or cancelled entry. Resets it to queued and moves to end of queue.
+ * @param {string} entryId
+ */
+function retryEntry(entryId) {
+    const entry = uploadQueue.find(e => e.id === entryId);
+    if (!entry) {
+        return;
+    }
+    if (entry.status !== 'failed' && entry.status !== 'cancelled') {
+        return;
+    }
+    if (!entry.file) {
+        return;
+    }
+
+    entry.status = 'queued';
+    entry.progress = 0;
+    entry.stage = null;
+    entry.jobId = null;
+    entry.episodeId = null;
+    entry.episode = null;
+    entry.error = null;
+    entry.xhr = null;
+    entry.eventSource = null;
+    entry._resolveMonitor = null;
+
+    // Move to end of queue
+    const index = uploadQueue.indexOf(entry);
+    if (index > -1) {
+        uploadQueue.splice(index, 1);
+        uploadQueue.push(entry);
+    }
+
+    if (getCurrentState() === 'batch-complete') {
+        showState('queue');
+        renderQueueList();
+    
+    } else {
+        updateQueueItemInDOM(entry);
+    
+    }
+
+    saveQueueState();
+
+    if (!isUploading) {
+        processQueue();
+    }
 }
 
-function clearJobState() {
-    sessionStorage.removeItem(JOB_STORAGE_KEY);
+// ============================================================================
+// QUEUE DOM RENDERING (Step 7)
+// ============================================================================
+
+/**
+ * Render the full queue list into #queue-list.
+ */
+/**
+ * @param {boolean} [animateNew=false] - Whether to animate newly added items with blur-fade-in.
+ */
+function renderQueueList(animateNew) {
+    const container = document.getElementById('queue-list');
+    if (!container) {
+        return;
+    }
+    const existingIds = new Set(Array.from(container.children).map(el => el.id));
+    container.innerHTML = '';
+
+    for (const entry of uploadQueue) {
+        const el = createQueueItemElement(entry);
+        if (animateNew && !existingIds.has('queue-item-' + entry.id)) {
+            el.style.animation = 'blur-fade-in 0.3s ease both';
+        }
+        container.appendChild(el);
+    }
 }
 
-async function restoreJobState() {
-    const saved = sessionStorage.getItem(JOB_STORAGE_KEY);
+/**
+ * Render the batch-complete list into #batch-list.
+ */
+function renderBatchList() {
+    const container = document.getElementById('batch-list');
+    if (!container) {
+        return;
+    }
+    container.innerHTML = '';
+
+    for (const entry of uploadQueue) {
+        if (entry.status === 'cancelled') continue;
+        container.appendChild(createQueueItemElement(entry));
+    }
+}
+
+/**
+ * Update the batch summary text.
+ */
+function updateBatchSummary() {
+    const summary = document.getElementById('batch-summary');
+    if (!summary) {
+        return;
+    }
+
+    const completed = uploadQueue.filter(e => e.status === 'completed').length;
+    const failed = uploadQueue.filter(e => e.status === 'failed').length;
+
+    const parts = [];
+    if (completed > 0) {
+        parts.push(completed + ' uploaded');
+    }
+    if (failed > 0) {
+        parts.push(failed + ' failed');
+    }
+
+    summary.textContent = parts.join(', ') || 'No files processed';
+    summary.style.display = parts.length > 0 ? '' : 'none';
+}
+
+/**
+ * Create a queue item DOM element for a given entry.
+ * @param {QueueEntry} entry
+ * @returns {HTMLElement}
+ */
+function createQueueItemElement(entry) {
+    const item = document.createElement('div');
+    item.className = 'queue-item queue-item--' + entry.status;
+    item.id = 'queue-item-' + entry.id;
+
+    // Icon
+    const icon = document.createElement('span');
+    icon.className = 'queue-item-icon ' + getIconClass(entry);
+    icon.textContent = getIconText(entry);
+    item.appendChild(icon);
+
+    // Filename
+    const name = document.createElement('span');
+    name.className = 'queue-item-name';
+    name.textContent = entry.fileName;
+    name.title = entry.fileName;
+    item.appendChild(name);
+
+    // Status text
+    const status = document.createElement('span');
+    status.className = 'queue-item-status';
+    status.id = 'queue-status-' + entry.id;
+    status.textContent = getStatusText(entry);
+    item.appendChild(status);
+
+    // Thin progress bar at bottom
+    const progressWrap = document.createElement('div');
+    progressWrap.className = 'queue-item-progress-wrap';
+    const progressBar = document.createElement('div');
+    progressBar.className = 'queue-item-progress';
+    progressBar.id = 'queue-progress-' + entry.id;
+
+    if (entry.status === 'uploading') {
+        progressBar.style.width = entry.progress + '%';
+    } else if (entry.status === 'normalizing') {
+        if (entry.stage && !['Analyzing', 'Normalizing'].includes(entry.stage)) {
+            progressBar.classList.add('indeterminate');
+        } else {
+            progressBar.style.width = entry.progress + '%';
+        }
+    }
+
+    progressWrap.appendChild(progressBar);
+    item.appendChild(progressWrap);
+
+    // Action button (grid column 4, symmetric with icon)
+    const actionBtn = createActionButton(entry);
+    if (actionBtn) {
+        item.appendChild(actionBtn);
+    }
+
+    return item;
+}
+
+/**
+ * Get the CSS class for a queue item icon.
+ * @param {QueueEntry} entry
+ * @returns {string}
+ */
+function getIconClass(entry) {
+    switch (entry.status) {
+        case 'uploading':
+        case 'normalizing':
+            return 'queue-item-icon--active';
+        case 'completed':
+            return 'queue-item-icon--done';
+        case 'failed':
+            return 'queue-item-icon--failed';
+        case 'cancelled':
+            return 'queue-item-icon--cancelled';
+        default:
+            return 'queue-item-icon--queued';
+    }
+}
+
+/**
+ * Get the icon character for a queue item.
+ * @param {QueueEntry} entry
+ * @returns {string}
+ */
+function getIconText(entry) {
+    switch (entry.status) {
+        case 'uploading':
+        case 'normalizing':
+            return '\u25CF'; // ●
+        case 'completed':
+            return '\u2713'; // ✓
+        case 'failed':
+            return '\u2717'; // ✗
+        default:
+            return '\u2013'; // –
+    }
+}
+
+/**
+ * Get the status text for a queue item.
+ * @param {QueueEntry} entry
+ * @returns {string}
+ */
+function getStatusText(entry) {
+    switch (entry.status) {
+        case 'uploading':
+            return 'Uploading...';
+        case 'normalizing': {
+            const stage = entry.stage || 'Queued';
+            const ellipsis = stage.endsWith('ing') ? '...' : '';
+            return stage + ellipsis;
+        }
+        case 'completed':
+            return 'Done';
+        case 'failed':
+            return entry.error || 'Failed';
+        case 'cancelled':
+            return 'Cancelled';
+        default:
+            return 'Waiting';
+    }
+}
+
+/**
+ * Create the action button for a queue item (remove/cancel/retry).
+ * @param {QueueEntry} entry
+ * @returns {HTMLElement|null}
+ */
+function createActionButton(entry) {
+    if (entry.status === 'queued') {
+        const btn = document.createElement('button');
+        btn.className = 'queue-item-action queue-item-action--remove';
+        btn.type = 'button';
+        btn.title = 'Remove from queue';
+        btn.textContent = '\u00D7'; // ×
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            removeFromQueue(entry.id);
+        });
+
+        return btn;
+    }
+
+    if (entry.status === 'uploading' || entry.status === 'normalizing') {
+        const btn = document.createElement('button');
+        btn.className = 'queue-item-action queue-item-action--cancel';
+        btn.type = 'button';
+        btn.title = 'Cancel';
+        btn.textContent = '\u00D7'; // ×
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            void cancelEntry(entry.id);
+        });
+
+        return btn;
+    }
+
+    if (entry.status === 'failed' && !entry.validationError && entry.file) {
+        const btn = document.createElement('button');
+        btn.className = 'queue-item-action queue-item-action--retry';
+        btn.type = 'button';
+        btn.textContent = 'Retry';
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            retryEntry(entry.id);
+        });
+
+        return btn;
+    }
+
+    return null;
+}
+
+/**
+ * Replace a queue item element in the DOM with an updated version.
+ * @param {QueueEntry} entry
+ */
+function updateQueueItemInDOM(entry) {
+    const existingEl = document.getElementById('queue-item-' + entry.id);
+    if (!existingEl) {
+        return;
+    }
+    existingEl.replaceWith(createQueueItemElement(entry));
+}
+
+/**
+ * Lightweight progress-only update for a queue item (status text only).
+ * @param {QueueEntry} entry
+ */
+function updateQueueItemProgress(entry) {
+    const statusEl = document.getElementById('queue-status-' + entry.id);
+    if (statusEl) {
+        statusEl.textContent = getStatusText(entry);
+    }
+}
+
+/**
+ * Remove a queue item element from the DOM.
+ * @param {string} entryId
+ */
+function removeQueueItemFromDOM(entryId) {
+    const el = document.getElementById('queue-item-' + entryId);
+    if (el) {
+        el.remove();
+    }
+}
+
+/**
+ * Get the progress bar element for a queue entry.
+ * @param {string} entryId
+ * @returns {HTMLElement|null}
+ */
+function getEntryProgressBar(entryId) {
+    return document.getElementById('queue-progress-' + entryId);
+}
+
+// ============================================================================
+// SESSION PERSISTENCE (Step 10)
+// ============================================================================
+
+/**
+ * Save queue state to sessionStorage (omits File objects and XHR/EventSource refs).
+ */
+function saveQueueState() {
+    try {
+        const serialized = uploadQueue.map(e => ({
+            id: e.id,
+            fileName: e.fileName,
+            fileSize: e.fileSize,
+            status: e.status,
+            progress: e.progress,
+            stage: e.stage,
+            jobId: e.jobId,
+            episodeId: e.episodeId,
+            episode: e.episode,
+            error: e.error,
+            validationError: e.validationError
+        }));
+        sessionStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(serialized));
+    } catch (e) {
+        // Ignore
+    }
+}
+
+/**
+ * Clear in-memory queue and persisted queue state from sessionStorage.
+ */
+function clearQueueState() {
+    uploadQueue = [];
+    try {
+        sessionStorage.removeItem(QUEUE_STORAGE_KEY);
+        sessionStorage.removeItem(JOB_STORAGE_KEY);
+    } catch (e) {
+        // Ignore
+    }
+}
+
+/**
+ * Restore queue state from sessionStorage.
+ * Handles migration from old single-job format.
+ * @returns {Promise<boolean>} True if state was restored
+ */
+async function restoreQueueState() {
+    // Migration: check for old job state format
+    const oldState = sessionStorage.getItem(JOB_STORAGE_KEY);
+    if (oldState) {
+        const job = tryParseJson(oldState);
+        if (job) {
+            sessionStorage.removeItem(JOB_STORAGE_KEY);
+
+            if (job.status === 'success') {
+                uploadQueue = [{
+                    id: generateEntryId(), file: null,
+                    status: 'completed', progress: 100, stage: null,
+                    jobId: null, episodeId: null, episode: job.episode || null,
+                    error: null, xhr: null, eventSource: null,
+                    fileSize: 0, fileName: job.fileName || 'Unknown',
+                    validationError: false, _resolveMonitor: null
+                }];
+                showState('batch-complete');
+                renderBatchList();
+                updateBatchSummary();
+
+                return true;
+            } else if (job.status === 'error') {
+                showError(job.error);
+
+                return true;
+            } else if (job.status === 'processing') {
+                const entry = {
+                    id: generateEntryId(), file: null,
+                    status: 'normalizing', progress: 0, stage: 'Queued',
+                    jobId: job.jobId, episodeId: null, episode: null,
+                    error: null, xhr: null, eventSource: null,
+                    fileSize: job.fileSize || 0, fileName: job.fileName || 'Unknown',
+                    validationError: false, backgroundMonitoring: false, _resolveMonitor: null
+                };
+                uploadQueue = [entry];
+                showState('queue');
+                renderQueueList();
+                void initHistorySection();
+
+                monitorEntryNormalizationInBackground(entry);
+
+                return true;
+            }
+        }
+    }
+
+    // Restore queue state
+    const saved = sessionStorage.getItem(QUEUE_STORAGE_KEY);
     if (!saved) {
         return false;
     }
 
-    const job = tryParseJson(saved);
-    if (!job) {
-        clearJobState();
+    const entries = tryParseJson(saved);
+    if (!entries || !Array.isArray(entries) || entries.length === 0) {
+        clearQueueState();
 
         return false;
     }
 
-    if (job.status === 'success') {
-        await showSuccess(job.episode || job.fileName);
+    // Rebuild queue (File/XHR/EventSource are not serializable)
+    uploadQueue = entries.map(e => ({
+        ...e,
+        file: null,
+        xhr: null,
+        eventSource: null,
+        _resolveMonitor: null
+    }));
+
+    // Mark uploading entries as failed (can't resume XHR)
+    for (const entry of uploadQueue) {
+        if (entry.status === 'uploading') {
+            entry.status = 'failed';
+            entry.error = 'Upload interrupted';
+        }
+    }
+
+    const hasNormalizing = uploadQueue.filter(e => e.status === 'normalizing' && e.jobId);
+    const hasQueued = uploadQueue.some(e => e.status === 'queued');
+
+    if (hasNormalizing.length > 0) {
+        // Reconnect to all normalizing entries; mark remaining queued entries as cancelled (files lost on reload)
+        for (const e of uploadQueue) {
+            if (e.status === 'queued') {
+                e.status = 'cancelled';
+            }
+        }
+        showState('queue');
+        renderQueueList();
+        void initHistorySection();
+        for (const entry of hasNormalizing) {
+            monitorEntryNormalizationInBackground(entry);
+        }
 
         return true;
-    } else if (job.status === 'error') {
-        showError(job.error);
+    } else if (hasQueued) {
+        // Files lost on reload — mark queued entries as cancelled
+        for (const entry of uploadQueue) {
+            if (entry.status === 'queued') {
+                entry.status = 'cancelled';
+            }
+        }
+        showState('batch-complete');
+        renderBatchList();
+        updateBatchSummary();
+
         return true;
-    } else if (job.status === 'processing') {
-        showState('processing');
-        document.getElementById('processing-filename').textContent = job.fileName;
-        progressAnimator.setRestoring();
-        monitorNormalizationJob(job.jobId, job.fileName, job.fileSize || 0);
-        document.getElementById('processing-progress').style.width = '0%';
+    } else {
+        // All terminal
+        showState('batch-complete');
+        renderBatchList();
+        updateBatchSummary();
 
         return true;
     }
-
-    return false;
 }
 
 window.addEventListener('DOMContentLoaded', init);
@@ -2683,14 +3419,10 @@ window.addEventListener('hashchange', init);
 
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && progressAnimator.currentStage) {
-        // Tab became visible while progress is being tracked - snap to actual value on next SSE update
         progressAnimator.awaitingFirstUpdate = true;
         progressAnimator.isRestoring = true;
     }
 });
-
-// Cancel button
-document.getElementById('cancel-upload')?.addEventListener('click', cancelUpload);
 
 // History section event listeners
 // Toggle button - toggles between expanded/collapsed
@@ -2768,29 +3500,3 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// Global keyboard shortcuts for success state
-document.addEventListener('keydown', (e) => {
-    const successState = document.getElementById('success');
-    if (!successState || successState.style.display === 'none') {
-        return;
-    }
-
-    if (!recentUploadsData || recentUploadsData.length === 0) {
-        return;
-    }
-
-    const currentIndex = recentUploadsData.findIndex(u => u.id === selectedUploadId);
-    let newIndex = currentIndex;
-
-    if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        newIndex = Math.min(currentIndex + 1, recentUploadsData.length - 1);
-    } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        newIndex = Math.max(currentIndex - 1, 0);
-    }
-
-    if (newIndex !== currentIndex) {
-        selectUpload(recentUploadsData[newIndex].id);
-    }
-});

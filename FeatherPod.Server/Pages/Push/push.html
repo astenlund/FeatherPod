@@ -34,85 +34,62 @@
                 <div class="drop-zone-inner">
                     <div class="drop-zone-cta">
                         <button id="select-file" class="btn-primary">Select audio file</button>
-                        <input type="file" id="file-input" accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac,.aac" hidden>
+                        <input type="file" id="file-input" accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac,.aac" multiple hidden>
                         <p class="hint drop-hint">(or drop here)</p>
                     </div>
                 </div>
             </div>
-
-            <button id="history-toggle" class="history-toggle" type="button" aria-expanded="false" aria-controls="history-section" style="display: none;">
-                <span class="history-toggle-text">Recent uploads</span>
-            </button>
-            <div id="history-section" class="history-section" style="display: none;">
-                <div class="history-panel upload-list-container">
-                    <h3 class="history-title">Recent uploads</h3>
-                    <div class="history-filters" role="tablist" aria-label="Filter uploads">
-                        <button class="filter-tab filter-tab--active" role="tab" aria-selected="true" data-filter="local" id="filter-local" aria-controls="history-tabpanel">This browser</button>
-                        <button class="filter-tab" role="tab" aria-selected="false" data-filter="browser" id="filter-browser" aria-controls="history-tabpanel">All browsers</button>
-                        <button class="filter-tab" role="tab" aria-selected="false" data-filter="all" id="filter-all" aria-controls="history-tabpanel">All uploads</button>
-                    </div>
-                    <div id="history-tabpanel" role="tabpanel" aria-labelledby="filter-local">
-                    <dl id="history-info" class="episode-info" style="display: none;">
-                        <dt>Title</dt>
-                        <dd id="history-info-title"></dd>
-                        <dt>File</dt>
-                        <dd id="history-info-filename"></dd>
-                        <dt>Dur.</dt>
-                        <dd id="history-info-duration"></dd>
-                        <dt>Pub.</dt>
-                        <dd id="history-info-published"></dd>
-                        <dt id="history-info-uploaded-label" class="mobile-only">Added</dt>
-                        <dd id="history-info-uploaded" class="mobile-only"></dd>
-                    </dl>
-                    <p id="history-empty" class="history-empty" style="display: none;">No uploads yet</p>
-                    <div id="history-list" class="upload-list" role="listbox" aria-label="Recent uploads"></div>
-                    </div>
-                </div>
-            </div>
         </div>
 
-        <div id="processing" class="state" style="display: none;">
-            <div class="progress-container" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Processing progress">
-                <div class="progress-bar" id="processing-progress"></div>
+        <div id="queue" class="state" style="display: none;">
+            <div id="queue-drop-zone" class="queue-drop-zone">
+                <button id="queue-add-files" class="btn-queue-add" type="button">+ Add more files</button>
+                <input type="file" id="queue-file-input" accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac,.aac" multiple hidden>
+                <span class="queue-drop-hint">or drop here</span>
             </div>
-            <div class="progress-container progress-container-ghost">
-                <div class="progress-bar-ghost" id="processing-progress-ghost"></div>
-            </div>
-            <div class="progress-row">
-                <p id="processing-status" aria-live="polite">Uploading...</p>
-                <p id="processing-filename" class="progress-filename"></p>
-            </div>
-            <button id="cancel-upload" class="btn-cancel" type="button">Cancel</button>
+            <div id="queue-list" class="queue-list"></div>
         </div>
 
-        <div id="success" class="state" style="display: none;">
-            <button id="upload-another" class="btn-secondary">Upload another file</button>
-
-            <dl id="episode-info" class="episode-info" style="display: none;">
-                <dt>Title</dt>
-                <dd id="info-title"></dd>
-                <dt>File</dt>
-                <dd id="info-filename"></dd>
-                <dt>Dur.</dt>
-                <dd id="info-duration"></dd>
-                <dt>Pub.</dt>
-                <dd id="info-published"></dd>
-                <dt id="info-uploaded-label" class="mobile-only">Added</dt>
-                <dd id="info-uploaded" class="mobile-only"></dd>
-            </dl>
-
-            <p id="ep-filename" class="success-filename"></p>
-
-            <div id="recent-uploads" class="recent-uploads upload-list-container" style="display: none;">
-                <h3>Recent uploads</h3>
-                <div class="upload-list"></div>
-            </div>
+        <div id="batch-complete" class="state" style="display: none;">
+            <p id="batch-summary" class="batch-summary"></p>
+            <button id="upload-more" class="btn-secondary">Upload more</button>
+            <div id="batch-list" class="queue-list"></div>
         </div>
 
         <div id="error" class="state" style="display: none;">
             <button id="try-another" class="btn-secondary">Try another file</button>
             <div class="error-card">
                 <p id="error-message" class="error-text" aria-live="assertive"></p>
+            </div>
+        </div>
+
+        <button id="history-toggle" class="history-toggle" type="button" aria-expanded="false" aria-controls="history-section" style="display: none;">
+            <span class="history-toggle-text">Recent uploads</span>
+        </button>
+        <div id="history-section" class="history-section" style="display: none;">
+            <div class="history-panel upload-list-container">
+                <h3 class="history-title">Recent uploads</h3>
+                <div class="history-filters" role="tablist" aria-label="Filter uploads">
+                    <button class="filter-tab filter-tab--active" role="tab" aria-selected="true" data-filter="local" id="filter-local" aria-controls="history-tabpanel">This browser</button>
+                    <button class="filter-tab" role="tab" aria-selected="false" data-filter="browser" id="filter-browser" aria-controls="history-tabpanel">All browsers</button>
+                    <button class="filter-tab" role="tab" aria-selected="false" data-filter="all" id="filter-all" aria-controls="history-tabpanel">All uploads</button>
+                </div>
+                <div id="history-tabpanel" role="tabpanel" aria-labelledby="filter-local">
+                <dl id="history-info" class="episode-info" style="display: none;">
+                    <dt>Title</dt>
+                    <dd id="history-info-title"></dd>
+                    <dt>File</dt>
+                    <dd id="history-info-filename"></dd>
+                    <dt>Dur.</dt>
+                    <dd id="history-info-duration"></dd>
+                    <dt>Pub.</dt>
+                    <dd id="history-info-published"></dd>
+                    <dt id="history-info-uploaded-label" class="mobile-only">Added</dt>
+                    <dd id="history-info-uploaded" class="mobile-only"></dd>
+                </dl>
+                <p id="history-empty" class="history-empty" style="display: none;">No uploads yet</p>
+                <div id="history-list" class="upload-list" role="listbox" aria-label="Recent uploads"></div>
+                </div>
             </div>
         </div>
     </div>
