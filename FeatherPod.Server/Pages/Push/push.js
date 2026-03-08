@@ -92,6 +92,8 @@ let historyData = null;
 let historySelectedId = null;
 /** @type {'local'|'browser'|'all'} - Current history filter */
 let historyFilter = 'local';
+/** @type {boolean} - Whether a history.pushState entry exists for the open history panel */
+let historyPanelPushedState = false;
 /** @type {number} - Counter for tracking pending filter requests (prevents race conditions) */
 let pendingFilterRequest = 0;
 
@@ -185,6 +187,7 @@ function animateTitle(targetWord) {
 /**
  * Immediately collapse the history section without animation.
  * Strips all animation classes, clears inline styles, resets aria and toggle text.
+ * Pops the pushed browser history entry if one exists (so back button navigates normally).
  * Safe to call even if history is already collapsed or not yet initialized.
  */
 function collapseHistoryImmediate() {
@@ -218,6 +221,12 @@ function collapseHistoryImmediate() {
     // Re-enable select-file button (may have been disabled when history was expanded in ready state)
     if (selectFileBtn) {
         selectFileBtn.disabled = false;
+    }
+
+    // Pop the pushed history entry if one exists
+    if (historyPanelPushedState) {
+        historyPanelPushedState = false;
+        history.back();
     }
 }
 
@@ -1583,6 +1592,7 @@ const HISTORY_TRANSITION_DURATION = H_CTA_FALL + H_PAUSE + H_MORPH;
  * On desktop: morphs from drop zone size to full width with staggered content reveal.
  * On mobile: slides down as fullscreen overlay.
  * In ready state, drop zone fades out/in via CSS. In queue state, overlays queue content.
+ * Pushes a browser history entry when expanding so the back button closes the panel.
  * @param {boolean} [expand] - Force expand (true) or collapse (false). If omitted, toggles.
  */
 function toggleHistorySection(expand) {
@@ -1599,6 +1609,12 @@ function toggleHistorySection(expand) {
     const newState = expand !== undefined ? expand : !isExpanded;
 
     toggle.setAttribute('aria-expanded', newState.toString());
+
+    // Push browser history entry when expanding so the back button closes the panel
+    if (newState && !historyPanelPushedState) {
+        history.pushState({ historyPanel: true }, '');
+        historyPanelPushedState = true;
+    }
 
     // Animate text change: 1) delay, 2) fade out, 3) resize, 4) fade in, 5) end
     const newText = newState ? '← Back' : 'Recent uploads';
@@ -3427,7 +3443,13 @@ document.addEventListener('visibilitychange', () => {
 // History section event listeners
 // Toggle button - toggles between expanded/collapsed
 document.getElementById('history-toggle')?.addEventListener('click', () => {
-    toggleHistorySection();
+    const toggle = document.getElementById('history-toggle');
+    if (toggle?.getAttribute('aria-expanded') === 'true' && historyPanelPushedState) {
+        // Close via history.back() so the popstate handler does the actual collapse
+        history.back();
+    } else {
+        toggleHistorySection();
+    }
 });
 
 document.querySelectorAll('#history-section .filter-tab').forEach(tab => {
@@ -3452,7 +3474,12 @@ document.addEventListener('keydown', (e) => {
     // Escape to close
     if (e.key === 'Escape') {
         e.preventDefault();
-        toggleHistorySection(false);
+        if (historyPanelPushedState) {
+            // Close via history.back() so the popstate handler does the actual collapse
+            history.back();
+        } else {
+            toggleHistorySection(false);
+        }
 
         return;
     }
@@ -3496,6 +3523,17 @@ document.addEventListener('keydown', (e) => {
         if (newIndex !== currentIndex) {
             e.preventDefault();
             selectHistoryUpload(historyData[newIndex].id, true);
+        }
+    }
+});
+
+// Browser back button closes history panel instead of navigating away
+window.addEventListener('popstate', () => {
+    if (historyPanelPushedState) {
+        historyPanelPushedState = false;
+        const toggle = document.getElementById('history-toggle');
+        if (toggle?.getAttribute('aria-expanded') === 'true') {
+            toggleHistorySection(false);
         }
     }
 });
