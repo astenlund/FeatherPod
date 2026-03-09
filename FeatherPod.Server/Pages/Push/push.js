@@ -771,15 +771,15 @@ function extractColors(img) {
 }
 
 /**
- * Apply a complete color palette derived from extracted hues to the document
- * root. Overrides all hue-dependent CSS custom properties while preserving
+ * Apply a complete color palette derived from extracted hues to the body
+ * element. Overrides all hue-dependent CSS custom properties while preserving
  * each variable's original saturation and lightness values.
  *
  * @param {number} hue - Primary hue in degrees (0-360)
  * @param {number} accentHue - Accent hue in degrees (0-360)
  */
 function applyArtworkPalette(hue, accentHue) {
-    const s = document.documentElement.style;
+    const s = document.body.style;
 
     // Background colors
     s.setProperty('--bg-base', 'hsl(' + hue + ', 28%, 14%)');
@@ -838,9 +838,58 @@ function applyArtworkPalette(hue, accentHue) {
 }
 
 /**
+ * Apply the default indigo palette to body.style, overriding the monochrome
+ * :root defaults. Uses exact Tailwind indigo hex values (each shade has its own
+ * hue) so the result matches the original pre-artwork-extraction appearance.
+ */
+function applyDefaultPalette() {
+    const s = document.body.style;
+
+    s.setProperty('--bg-base', '#1a1a2e');
+    s.setProperty('--bg-elevated', '#2a2a50');
+    s.setProperty('--bg-surface', '#252541');
+    s.setProperty('--bg-grad-1', '#28284a');
+    s.setProperty('--bg-grad-2', '#242445');
+    s.setProperty('--bg-grad-3', '#202040');
+    s.setProperty('--bg-grad-4', '#1c1c35');
+
+    s.setProperty('--border-subtle', '#3a3a5a');
+    s.setProperty('--border-muted', '#4b4a6a');
+
+    s.setProperty('--primary-900', '#312e81');
+    s.setProperty('--primary-800', '#3730a3');
+    s.setProperty('--primary-500', '#6366f1');
+    s.setProperty('--primary-400', '#818cf8');
+    s.setProperty('--primary-300', '#a5b4fc');
+    s.setProperty('--primary-200', '#c7d2fe');
+
+    s.setProperty('--accent-500', '#8b5cf6');
+    s.setProperty('--success', '#adb4ff');
+
+    s.setProperty('--text-tertiary', '#b8b8d0');
+    s.setProperty('--text-muted', '#9898b8');
+
+    const alphaBase = [99, 102, 241];
+    for (const [prop, a] of [
+        ['--primary-a5', 0.05], ['--primary-a8', 0.08], ['--primary-a10', 0.1],
+        ['--primary-a12', 0.12], ['--primary-a15', 0.15], ['--primary-a20', 0.2],
+        ['--primary-a25', 0.25], ['--primary-a30', 0.3], ['--primary-a40', 0.4]
+    ]) {
+        s.setProperty(prop, 'rgba(' + alphaBase[0] + ', ' + alphaBase[1] + ', ' + alphaBase[2] + ', ' + a + ')');
+    }
+
+    s.setProperty('--glow-400-50', 'rgba(129, 140, 248, 0.5)');
+    s.setProperty('--glow-400-40', 'rgba(129, 140, 248, 0.4)');
+    s.setProperty('--glow-300-40', 'rgba(165, 180, 252, 0.4)');
+    s.setProperty('--glow-300-50', 'rgba(165, 180, 252, 0.5)');
+    s.setProperty('--glow-300-60', 'rgba(165, 180, 252, 0.6)');
+    s.setProperty('--glow-200-60', 'rgba(199, 210, 254, 0.6)');
+}
+
+/**
  * Initialize feed artwork with dynamic color theming. The page starts with a
- * black background; once colors are determined (from artwork extraction or
- * defaults), the themed gradient fades in via a `theme-ready` class on the body.
+ * monochrome (B&W) appearance; once colors are determined (from artwork
+ * extraction or defaults), the colored gradient crossfades in via `theme-ready`.
  * Loads the feed icon, extracts primary and accent colors via median cut
  * quantization, and re-themes the page's CSS custom properties. Sets the artwork
  * image inside the drop zone (making it clickable to select files, hiding the
@@ -851,6 +900,7 @@ function applyArtworkPalette(hue, accentHue) {
 function initFeedArtwork() {
     const artwork = document.getElementById('feed-artwork');
     if (!artwork) {
+        applyDefaultPalette();
         document.body.classList.add('theme-ready');
 
         return;
@@ -869,6 +919,7 @@ function initFeedArtwork() {
 
         const backdrop = document.getElementById('artwork-backdrop');
         if (!backdrop) {
+            applyDefaultPalette();
             document.body.classList.add('theme-ready');
 
             return;
@@ -892,6 +943,8 @@ function initFeedArtwork() {
         if (colors) {
             applyArtworkPalette(colors.primaryHue, colors.accentHue);
             backdrop.style.background = 'linear-gradient(135deg, hsl(' + colors.primaryHue + ', 50%, 18%), hsl(' + colors.accentHue + ', 50%, 18%))';
+        } else {
+            applyDefaultPalette();
         }
 
         document.body.classList.add('theme-ready');
@@ -906,6 +959,7 @@ function initFeedArtwork() {
         artwork.remove();
         // Server may have pre-set artwork layout, but icon failed — revert to CTA
         document.getElementById('drop-zone')?.classList.remove('drop-zone--has-artwork');
+        applyDefaultPalette();
         document.body.classList.add('theme-ready');
     });
 
@@ -916,6 +970,7 @@ function initFeedArtwork() {
         } else {
             artwork.remove();
             document.getElementById('drop-zone')?.classList.remove('drop-zone--has-artwork');
+            applyDefaultPalette();
             document.body.classList.add('theme-ready');
         }
     }

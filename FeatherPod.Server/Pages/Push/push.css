@@ -5,62 +5,62 @@
    ============================================================================ */
 
 :root {
-    /* Background colors */
-    --bg-base: #1a1a2e;
-    --bg-elevated: #2a2a50;
-    --bg-surface: #252541;
+    /* Background colors (monochrome — colored values applied via body.style by JS) */
+    --bg-base: #1a1a1a;
+    --bg-elevated: #2d2d2d;
+    --bg-surface: #262626;
     --bg-code: #333;
-    --bg-grad-1: #28284a;
-    --bg-grad-2: #242445;
-    --bg-grad-3: #202040;
-    --bg-grad-4: #1c1c35;
+    --bg-grad-1: #2a2a2a;
+    --bg-grad-2: #272727;
+    --bg-grad-3: #242424;
+    --bg-grad-4: #212121;
 
     /* Border colors */
-    --border-subtle: #3a3a5a;
-    --border-muted: #4b4a6a;
+    --border-subtle: #3a3a3a;
+    --border-muted: #4b4b4b;
 
-    /* Primary palette (indigo) */
-    --primary-900: #312e81;
-    --primary-800: #3730a3;
-    --primary-500: #6366f1;
-    --primary-400: #818cf8;
-    --primary-300: #a5b4fc;
-    --primary-200: #c7d2fe;
+    /* Primary palette (monochrome) */
+    --primary-900: #474747;
+    --primary-800: #555555;
+    --primary-500: #9a9a9a;
+    --primary-400: #ababab;
+    --primary-300: #c4c4c4;
+    --primary-200: #dedede;
 
-    /* Accent (violet) */
-    --accent-500: #8b5cf6;
+    /* Accent */
+    --accent-500: #999999;
 
     /* Success / completed */
-    --success: #adb4ff;
+    --success: #cccccc;
 
-    /* Error (red) */
+    /* Error (red — stays colored, semantic) */
     --error-500: #ef4444;
 
     /* Text colors */
     --text-primary: #fff;
     --text-body: #eee;
     --text-secondary: #ccc;
-    --text-tertiary: #b8b8d0;
-    --text-muted: #9898b8;
+    --text-tertiary: #b8b8b8;
+    --text-muted: #989898;
 
-    /* Primary with alpha (for backgrounds, glows) */
-    --primary-a5: rgba(99, 102, 241, 0.05);
-    --primary-a8: rgba(99, 102, 241, 0.08);
-    --primary-a10: rgba(99, 102, 241, 0.1);
-    --primary-a12: rgba(99, 102, 241, 0.12);
-    --primary-a15: rgba(99, 102, 241, 0.15);
-    --primary-a20: rgba(99, 102, 241, 0.2);
-    --primary-a25: rgba(99, 102, 241, 0.25);
-    --primary-a30: rgba(99, 102, 241, 0.3);
-    --primary-a40: rgba(99, 102, 241, 0.4);
+    /* Primary with alpha (monochrome RGB: 154, 154, 154) */
+    --primary-a5: rgba(154, 154, 154, 0.05);
+    --primary-a8: rgba(154, 154, 154, 0.08);
+    --primary-a10: rgba(154, 154, 154, 0.1);
+    --primary-a12: rgba(154, 154, 154, 0.12);
+    --primary-a15: rgba(154, 154, 154, 0.15);
+    --primary-a20: rgba(154, 154, 154, 0.2);
+    --primary-a25: rgba(154, 154, 154, 0.25);
+    --primary-a30: rgba(154, 154, 154, 0.3);
+    --primary-a40: rgba(154, 154, 154, 0.4);
 
-    /* Glow colors (for box-shadow, text-shadow) */
-    --glow-400-50: rgba(129, 140, 248, 0.5);
-    --glow-400-40: rgba(129, 140, 248, 0.4);
-    --glow-300-40: rgba(165, 180, 252, 0.4);
-    --glow-300-50: rgba(165, 180, 252, 0.5);
-    --glow-300-60: rgba(165, 180, 252, 0.6);
-    --glow-200-60: rgba(199, 210, 254, 0.6);
+    /* Glow colors (monochrome) */
+    --glow-400-50: rgba(171, 171, 171, 0.5);
+    --glow-400-40: rgba(171, 171, 171, 0.4);
+    --glow-300-40: rgba(196, 196, 196, 0.4);
+    --glow-300-50: rgba(196, 196, 196, 0.5);
+    --glow-300-60: rgba(196, 196, 196, 0.6);
+    --glow-200-60: rgba(222, 222, 222, 0.6);
     --glow-error-50: rgba(239, 68, 68, 0.5);
 
     /* Typography */
@@ -135,7 +135,29 @@ body {
     position: relative;
 }
 
+/* Monochrome gradient layer — hardcoded grays so it stays B&W even after JS sets colored vars */
 body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -3;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 0.6s ease;
+    background: #1a1a1a;
+    background-image: radial-gradient(
+        ellipse at 50% 0%,
+        #2d2d2d 0%,
+        #2a2a2a 15%,
+        #272727 30%,
+        #242424 45%,
+        #212121 60%,
+        #1a1a1a 80%
+    );
+}
+
+/* Colored gradient layer — reads CSS vars (overridden by JS before theme-ready) */
+body::after {
     content: '';
     position: fixed;
     inset: 0;
@@ -156,6 +178,10 @@ body::before {
 }
 
 body.theme-ready::before {
+    opacity: 0;
+}
+
+body.theme-ready::after {
     opacity: 1;
 }
 
