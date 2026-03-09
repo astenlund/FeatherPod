@@ -1753,7 +1753,7 @@ h1 {
     .container.state-queue .feed-name,
     .container.state-no-key .feed-name {
         position: fixed;
-        top: calc(10svh + 2.5rem);
+        top: calc(10svh + 3rem);
         left: 0;
         right: 0;
         margin: 0;
@@ -1798,7 +1798,7 @@ h1 {
 
     /* Queue state on mobile: add top padding to clear fixed h1/h2 */
     #queue {
-        padding-top: calc(10svh + 5rem);
+        padding-top: calc(10svh + 5.5rem);
     }
 
     /* No drag-and-drop on mobile — fix add-more button above history toggle */
@@ -1875,8 +1875,8 @@ h1 {
         display: contents;
     }
 
-    /* Hide feed name on mobile when artwork is present (image speaks for itself) */
-    .container:has(.drop-zone--has-artwork) .feed-name {
+    /* Hide feed name on mobile when artwork is visible (image speaks for itself) */
+    .container.state-ready:has(.drop-zone--has-artwork) .feed-name {
         display: none;
     }
 
