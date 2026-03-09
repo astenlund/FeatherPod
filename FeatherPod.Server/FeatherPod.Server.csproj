@@ -37,6 +37,8 @@
     <PackageReference Include="Azure.Storage.Blobs" Version="12.26.0" />
     <PackageReference Include="Azure.Storage.Queues" Version="12.24.0" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
+    <PackageReference Include="SkiaSharp" Version="3.119.0" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.119.0" />
     <PackageReference Include="TagLibSharp" Version="2.3.0" />
   </ItemGroup>
 
@@ -48,6 +50,7 @@
     <EmbeddedResource Include="Pages\Push\push.html" />
     <EmbeddedResource Include="Pages\Push\push.css" />
     <EmbeddedResource Include="Pages\Push\push.js" />
+    <EmbeddedResource Include="Pages\Push\push-sw.js" />
   </ItemGroup>
 
 </Project>

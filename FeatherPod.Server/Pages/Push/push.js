@@ -59,13 +59,13 @@ function parseVelocityOverrides() {
 
 let apiKey = null;
 const states = ['no-key', 'ready', 'queue', 'batch-complete', 'error'];
-const JOB_STORAGE_KEY = 'featherpod_job_' + FEED_ID;
 const QUEUE_STORAGE_KEY = 'featherpod_queue_' + FEED_ID;
 const HISTORY_STORAGE_KEY = 'featherpod_history_' + FEED_ID;
 const HISTORY_FILTER_KEY = 'featherpod_history_filter_' + FEED_ID;
 const API_KEY_SESSION_KEY = 'featherpod_api_key_' + FEED_ID;
 const API_KEY_LOCAL_KEY = 'featherpod_api_key_local_' + FEED_ID;
 const API_KEY_COOKIE_KEY = 'featherpod_key_' + FEED_ID;
+const QUEUE_COOKIE_KEY = 'featherpod_queue_' + FEED_ID;
 const MAX_LOCAL_HISTORY = 50;
 
 // No-key state UI strings
@@ -880,10 +880,12 @@ function initFeedArtwork() {
         }
 
         const dropZone = document.getElementById('drop-zone');
-        if (dropZone) {
+        if (dropZone && !dropZone.classList.contains('drop-zone--has-artwork')) {
             dropZone.classList.add('drop-zone--has-artwork');
             dropZone.addEventListener('click', () => {
-                document.getElementById('file-input')?.click();
+                if (dropZone.classList.contains('drop-zone--has-artwork')) {
+                    document.getElementById('file-input')?.click();
+                }
             });
         }
 
@@ -902,6 +904,8 @@ function initFeedArtwork() {
     artwork.addEventListener('load', processArtwork);
     artwork.addEventListener('error', () => {
         artwork.remove();
+        // Server may have pre-set artwork layout, but icon failed — revert to CTA
+        document.getElementById('drop-zone')?.classList.remove('drop-zone--has-artwork');
         document.body.classList.add('theme-ready');
     });
 
@@ -911,6 +915,7 @@ function initFeedArtwork() {
             processArtwork();
         } else {
             artwork.remove();
+            document.getElementById('drop-zone')?.classList.remove('drop-zone--has-artwork');
             document.body.classList.add('theme-ready');
         }
     }
@@ -1031,6 +1036,14 @@ async function init() {
         return;
     }
 
+    // Consume any files shared via PWA Share Target. If found, skip restoreQueueState
+    // because it overwrites uploadQueue and would discard the shared files.
+    if (await consumeSharedFiles()) {
+        await initHistorySection();
+
+        return;
+    }
+
     // Try to restore previous queue state (e.g., after page refresh)
     if (await restoreQueueState()) {
         return;
@@ -1146,6 +1159,11 @@ function initNoKeyState() {
      */
     async function transitionToReadyState() {
         resetNoKeyState();
+        if (await consumeSharedFiles()) {
+            await initHistorySection();
+
+            return;
+        }
         showState('ready');
         await initHistorySection();
         document.getElementById('select-file').focus();
@@ -1306,6 +1324,17 @@ function initNoKeyState() {
 document.getElementById('select-file').addEventListener('click', () => {
     document.getElementById('file-input').click();
 });
+
+// If server pre-set artwork class, register drop zone click handler immediately
+// (processArtwork would normally do this, but the image hasn't loaded yet)
+const dropZoneEl = document.getElementById('drop-zone');
+if (dropZoneEl && dropZoneEl.classList.contains('drop-zone--has-artwork')) {
+    dropZoneEl.addEventListener('click', () => {
+        if (dropZoneEl.classList.contains('drop-zone--has-artwork')) {
+            document.getElementById('file-input')?.click();
+        }
+    });
+}
 
 document.getElementById('try-another').addEventListener('click', async () => {
     clearQueueState();
@@ -3671,7 +3700,8 @@ function getEntryProgressBar(entryId) {
 // ============================================================================
 
 /**
- * Save queue state to sessionStorage (omits File objects and XHR/EventSource refs).
+ * Save queue state to localStorage (omits File objects and XHR/EventSource refs).
+ * Active jobs (normalizing with a jobId) are also saved to a cookie as fallback.
  */
 function saveQueueState() {
     try {
@@ -3688,81 +3718,108 @@ function saveQueueState() {
             error: e.error,
             validationError: e.validationError
         }));
-        sessionStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(serialized));
+        localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(serialized));
+    } catch (e) {
+        // Ignore
+    }
+
+    // Cookie fallback: store only active server-side jobs (compact, fits in ~4 kB)
+    const activeJobs = uploadQueue
+        .filter(e => e.status === 'normalizing' && e.jobId)
+        .map(e => ({ j: e.jobId, f: e.fileName, s: e.fileSize }));
+    try {
+        if (activeJobs.length > 0) {
+            setCookie(QUEUE_COOKIE_KEY, JSON.stringify(activeJobs), 1);
+        } else {
+            deleteCookie(QUEUE_COOKIE_KEY);
+        }
     } catch (e) {
         // Ignore
     }
 }
 
 /**
- * Clear in-memory queue and persisted queue state from sessionStorage.
+ * Clear in-memory queue and persisted queue state from localStorage and cookie.
  */
 function clearQueueState() {
     uploadQueue = [];
     try {
-        sessionStorage.removeItem(QUEUE_STORAGE_KEY);
-        sessionStorage.removeItem(JOB_STORAGE_KEY);
+        localStorage.removeItem(QUEUE_STORAGE_KEY);
     } catch (e) {
         // Ignore
     }
+    try { deleteCookie(QUEUE_COOKIE_KEY); } catch (e) { /* ignore */ }
 }
 
 /**
- * Restore queue state from sessionStorage.
- * Handles migration from old single-job format.
+ * Check for files shared via the PWA Share Target API.
+ * The service worker stores shared files in the 'share-target' cache.
+ * Consumes all pending files and adds them to the upload queue.
+ * @returns {Promise<boolean>} True if shared files were found and queued
+ */
+async function consumeSharedFiles() {
+    if (!('caches' in window)) {
+        return false;
+    }
+
+    const cache = await caches.open('share-target');
+    const keys = await cache.keys();
+    if (keys.length === 0) {
+        return false;
+    }
+
+    const files = [];
+    for (const request of keys) {
+        const response = await cache.match(request);
+        const blob = await response.blob();
+        const name = new URL(request.url).pathname.split('/shared/')[1]?.replace(/^\d+-[a-z0-9]+-/, '') || 'shared-audio';
+        files.push(new File([blob], name, { type: blob.type }));
+        await cache.delete(request);
+    }
+
+    addFilesToQueue(files);
+
+    return true;
+}
+
+/**
+ * Restore queue state from localStorage.
+ * Falls back to cookie for active normalization jobs if localStorage is empty.
  * @returns {Promise<boolean>} True if state was restored
  */
 async function restoreQueueState() {
-    // Migration: check for old job state format
-    const oldState = sessionStorage.getItem(JOB_STORAGE_KEY);
-    if (oldState) {
-        const job = tryParseJson(oldState);
-        if (job) {
-            sessionStorage.removeItem(JOB_STORAGE_KEY);
-
-            if (job.status === 'success') {
-                uploadQueue = [{
-                    id: generateEntryId(), file: null,
-                    status: 'completed', progress: 100, stage: null,
-                    jobId: null, episodeId: null, episode: job.episode || null,
-                    error: null, xhr: null, eventSource: null,
-                    fileSize: 0, fileName: job.fileName || 'Unknown',
-                    validationError: false, _resolveMonitor: null
-                }];
-                showState('batch-complete');
-                renderBatchList();
-                updateBatchSummary();
-
-                return true;
-            } else if (job.status === 'error') {
-                showError(job.error);
-
-                return true;
-            } else if (job.status === 'processing') {
-                const entry = {
-                    id: generateEntryId(), file: null,
-                    status: 'normalizing', progress: 0, stage: 'Queued',
-                    jobId: job.jobId, episodeId: null, episode: null,
-                    error: null, xhr: null, eventSource: null,
-                    fileSize: job.fileSize || 0, fileName: job.fileName || 'Unknown',
-                    validationError: false, backgroundMonitoring: false, _resolveMonitor: null
-                };
-                uploadQueue = [entry];
-                showState('queue');
-                renderQueueList();
-                void initHistorySection();
-
-                monitorEntryNormalizationInBackground(entry);
-
-                return true;
-            }
-        }
-    }
-
-    // Restore queue state
-    const saved = sessionStorage.getItem(QUEUE_STORAGE_KEY);
+    // Restore queue state (localStorage with cookie fallback for active jobs)
+    const saved = localStorage.getItem(QUEUE_STORAGE_KEY);
     if (!saved) {
-        return false;
+        // Cookie fallback: restore active server-side jobs
+        const cookieState = getCookie(QUEUE_COOKIE_KEY);
+        if (!cookieState) {
+            return false;
+        }
+
+        const activeJobs = tryParseJson(cookieState);
+        if (!activeJobs || !Array.isArray(activeJobs) || activeJobs.length === 0) {
+            deleteCookie(QUEUE_COOKIE_KEY);
+
+            return false;
+        }
+
+        uploadQueue = activeJobs.map(j => ({
+            id: generateEntryId(), file: null,
+            status: 'normalizing', progress: 0, stage: 'Queued',
+            jobId: j.j, episodeId: null, episode: null,
+            error: null, xhr: null, eventSource: null,
+            fileSize: j.s || 0, fileName: j.f || 'Unknown',
+            validationError: false, backgroundMonitoring: false, _resolveMonitor: null
+        }));
+        showState('queue');
+        renderQueueList();
+        void initHistorySection();
+        for (const entry of uploadQueue) {
+            monitorEntryNormalizationInBackground(entry);
+        }
+
+        return true;
     }
 
     const entries = tryParseJson(saved);
