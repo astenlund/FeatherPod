@@ -81,9 +81,9 @@ public class JobService : IJobService
         }
     }
 
-    public async Task CreateJobStatusAsync(string jobId, string feedId, CancellationToken cancellationToken = default)
+    public async Task CreateJobStatusAsync(string jobId, string feedId, string? fileName = null, CancellationToken cancellationToken = default)
     {
-        var entity = JobStatusEntity.CreateQueued(jobId, feedId);
+        var entity = JobStatusEntity.CreateQueued(jobId, feedId, fileName);
         try
         {
             await _tableClient.AddEntityAsync(entity, cancellationToken);
@@ -94,6 +94,23 @@ public class JobService : IJobService
             // Job already exists (duplicate queue message) - preserve original QueuedAt
             _logger.LogDebug("Job status entry already exists for {JobId}, skipping creation", jobId);
         }
+    }
+
+    public async Task<List<JobStatusEntity>> GetActiveJobsByFeedAsync(string feedId, CancellationToken cancellationToken = default)
+    {
+        var filter = $"PartitionKey eq 'jobs' and FeedId eq '{feedId}'";
+        var results = new List<JobStatusEntity>();
+
+        await foreach (var entity in _tableClient.QueryAsync<JobStatusEntity>(filter, cancellationToken: cancellationToken))
+        {
+            var status = entity.GetJobStatus();
+            if (status is not (JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled))
+            {
+                results.Add(entity);
+            }
+        }
+
+        return results;
     }
 
     public async Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default)

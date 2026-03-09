@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FeatherPod.Server.Services;
+using FeatherPod.Server.Validation;
 using FeatherPod.Shared.Models;
 using Microsoft.AspNetCore.Mvc;
 
@@ -11,15 +12,46 @@ public class JobsController : ControllerBase
 {
     private readonly IJobService _jobService;
     private readonly IBlobStorageService _blobService;
+    private readonly IUserService _userService;
 
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public JobsController(IJobService jobService, IBlobStorageService blobService)
+    public JobsController(IJobService jobService, IBlobStorageService blobService, IUserService userService)
     {
         _jobService = jobService;
         _blobService = blobService;
+        _userService = userService;
+    }
+
+    /// <summary>
+    /// Get active normalization jobs for a feed.
+    /// </summary>
+    [HttpGet("/api/feeds/{feedId}/jobs")]
+    [ProducesResponseType<List<JobStatusResponse>>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> GetActiveJobsByFeed(string feedId)
+    {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
+        var user = HttpContext.Items["User"] as User;
+        if (user != null && user.Role != UserRole.Admin && !await _userService.ValidatePermissionAsync(user, feedId))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have permission to view jobs for this feed" });
+        }
+
+        var entities = await _jobService.GetActiveJobsByFeedAsync(feedId, HttpContext.RequestAborted);
+        var response = entities
+            .OrderBy(e => e.QueuedAt)
+            .Select(JobStatusResponse.FromEntity)
+            .ToList();
+
+        return Ok(response);
     }
 
     /// <summary>

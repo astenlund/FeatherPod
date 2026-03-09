@@ -1036,22 +1036,29 @@ async function init() {
         return;
     }
 
+    // Start fetching active jobs from server (fire-and-forget, merges when resolved)
+    const serverJobsPromise = fetchActiveJobsFromServer();
+
     // Consume any files shared via PWA Share Target. If found, skip restoreQueueState
     // because it overwrites uploadQueue and would discard the shared files.
     if (await consumeSharedFiles()) {
         await initHistorySection();
+        serverJobsPromise.then(mergeServerJobs).catch(() => {});
 
         return;
     }
 
     // Try to restore previous queue state (e.g., after page refresh)
     if (await restoreQueueState()) {
+        serverJobsPromise.then(mergeServerJobs).catch(() => {});
+
         return;
     }
 
     showState('ready');
     await initHistorySection();
     document.getElementById('select-file').focus();
+    serverJobsPromise.then(mergeServerJobs).catch(() => {});
 }
 
 /** @type {boolean} - Whether initNoKeyState has already been called (prevents duplicate listeners) */
@@ -3884,6 +3891,101 @@ async function restoreQueueState() {
 
         return true;
     }
+}
+
+/**
+ * Fetch active normalization jobs for this feed from the server.
+ * Returns an empty array on any error (silent fallback to local-only state).
+ * @returns {Promise<Array<Object>>} Array of JobStatusResponse objects
+ */
+async function fetchActiveJobsFromServer() {
+    try {
+        const response = await fetch('/api/feeds/' + FEED_ID + '/jobs', {
+            headers: { 'X-API-Key': apiKey }
+        });
+        if (!response.ok) {
+            return [];
+        }
+
+        return await response.json();
+    } catch (err) {
+        return [];
+    }
+}
+
+/**
+ * Merge server-known active jobs into the local upload queue.
+ * Updates existing entries with fresh server data and adds new entries for
+ * jobs not in the local queue (e.g., jobs started from CLI or another tab).
+ * @param {Array<Object>} serverJobs - Array of JobStatusResponse objects from server
+ */
+function mergeServerJobs(serverJobs) {
+    if (!serverJobs || serverJobs.length === 0) {
+        return;
+    }
+
+    const existingJobIds = new Set(uploadQueue.map(e => e.jobId).filter(Boolean));
+    let changed = false;
+
+    // Update existing entries with fresh server data
+    for (const serverJob of serverJobs) {
+        const existing = uploadQueue.find(e => e.jobId === serverJob.jobId);
+        if (existing && existing.status === 'normalizing') {
+            existing.stage = serverJob.stage || existing.stage;
+            existing.progress = serverJob.progressPercent ?? existing.progress;
+            changed = true;
+        }
+    }
+
+    // Add new entries for server jobs not in local queue
+    const newEntries = [];
+    for (const serverJob of serverJobs) {
+        if (!existingJobIds.has(serverJob.jobId)) {
+            newEntries.push({
+                id: generateEntryId(),
+                file: null,
+                status: 'normalizing',
+                progress: serverJob.progressPercent ?? 0,
+                stage: serverJob.stage || 'Queued',
+                jobId: serverJob.jobId,
+                episodeId: serverJob.episodeId || null,
+                episode: null,
+                error: null,
+                xhr: null,
+                eventSource: null,
+                fileSize: 0,
+                fileName: serverJob.fileName || 'Unknown',
+                validationError: false,
+                backgroundMonitoring: false,
+                _resolveMonitor: null
+            });
+        }
+    }
+
+    if (newEntries.length === 0 && !changed) {
+        return;
+    }
+
+    uploadQueue.push(...newEntries);
+
+    const currentState = getCurrentState();
+
+    if (newEntries.length > 0 && (currentState === 'ready' || currentState === 'batch-complete')) {
+        // Switch to queue state to show server-discovered jobs
+        showState('queue');
+        renderQueueList();
+        void initHistorySection();
+    } else if (currentState === 'queue') {
+        // Already in queue state — render new items and refresh existing
+        renderQueueList(true);
+    }
+
+    // Start SSE monitoring for new entries
+    for (const entry of newEntries) {
+        monitorEntryNormalizationInBackground(entry);
+    }
+
+    saveQueueState();
 }
 
 window.addEventListener('DOMContentLoaded', init);

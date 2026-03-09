@@ -166,7 +166,7 @@ public class EpisodesController : ControllerBase
                 };
 
                 await _jobService.QueueNormalizationJobAsync(job, HttpContext.RequestAborted);
-                await _jobService.CreateJobStatusAsync(jobId, feedId, HttpContext.RequestAborted);
+                await _jobService.CreateJobStatusAsync(jobId, feedId, file.FileName, HttpContext.RequestAborted);
 
                 var response = new JobStatusResponse
                 {
@@ -174,6 +174,7 @@ public class EpisodesController : ControllerBase
                     FeedId = feedId,
                     Status = nameof(JobStatus.Queued),
                     EpisodeId = effectiveEpisodeId,
+                    FileName = file.FileName,
                     QueuedAt = job.QueuedAt
                 };
 

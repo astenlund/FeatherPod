@@ -75,6 +75,11 @@ public class JobStatusEntity : ITableEntity
     public long? TotalDurationMs { get; set; }
 
     /// <summary>
+    /// Original file name of the uploaded audio file.
+    /// </summary>
+    public string? FileName { get; set; }
+
+    /// <summary>
     /// Azure Table Storage timestamp (managed by the service).
     /// </summary>
     public DateTimeOffset? Timestamp { get; set; }
@@ -103,7 +108,7 @@ public class JobStatusEntity : ITableEntity
     /// <summary>
     /// Create a new JobStatusEntity for a queued job.
     /// </summary>
-    public static JobStatusEntity CreateQueued(string jobId, string feedId)
+    public static JobStatusEntity CreateQueued(string jobId, string feedId, string? fileName = null)
     {
         return new JobStatusEntity
         {
@@ -112,6 +117,7 @@ public class JobStatusEntity : ITableEntity
             Status = nameof(JobStatus.Queued),
             Stage = nameof(NormalizationStage.Queued),
             FeedId = feedId,
+            FileName = fileName,
             QueuedAt = DateTimeOffset.UtcNow,
             ProgressPercent = 0,
             ProgressMessage = "Waiting in queue"

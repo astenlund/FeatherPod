@@ -76,6 +76,11 @@ public record JobStatusResponse
     public long? TotalDurationMs { get; init; }
 
     /// <summary>
+    /// Original file name of the uploaded audio file.
+    /// </summary>
+    public string? FileName { get; init; }
+
+    /// <summary>
     /// Time taken to process the job, or elapsed time if still processing.
     /// </summary>
     public TimeSpan? Duration => QueuedAt.HasValue
@@ -107,7 +112,8 @@ public record JobStatusResponse
             ProgressPercent = entity.ProgressPercent,
             ProgressMessage = entity.ProgressMessage,
             CurrentPositionMs = entity.CurrentPositionMs,
-            TotalDurationMs = entity.TotalDurationMs
+            TotalDurationMs = entity.TotalDurationMs,
+            FileName = entity.FileName
         };
     }
 }
