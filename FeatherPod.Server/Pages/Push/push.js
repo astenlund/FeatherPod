@@ -321,8 +321,41 @@ let cachedContainerWidth = 0;
 let cachedCollapsedMargin = 0;
 /** @type {number} - Width of the collapsed drop zone / history section */
 const COLLAPSED_WIDTH = 500;
-/** @type {number} - Height of the collapsed drop zone / history section */
-const COLLAPSED_HEIGHT = 280;
+/** @type {number} - Default height of the collapsed drop zone / history section */
+const COLLAPSED_HEIGHT_DEFAULT = 280;
+
+/**
+ * Get the CSS-driven drop zone height (ignoring any inline overrides).
+ * Temporarily clears inline height to read the computed value, or falls back
+ * to computing from the aspect-ratio when the element is hidden.
+ * @returns {number} Height in pixels
+ */
+function getCollapsedHeight() {
+    const dropZone = document.getElementById('drop-zone');
+    if (!dropZone) {
+
+        return COLLAPSED_HEIGHT_DEFAULT;
+    }
+
+    // Temporarily clear inline height to read CSS-driven value
+    const savedHeight = dropZone.style.height;
+    dropZone.style.height = '';
+    const measured = dropZone.offsetHeight;
+    dropZone.style.height = savedHeight;
+
+    if (measured > 0) {
+
+        return measured;
+    }
+
+    // Element hidden (display: none) — compute from CSS aspect-ratio
+    if (dropZone.classList.contains('drop-zone--has-artwork')) {
+
+        return COLLAPSED_WIDTH;
+    }
+
+    return COLLAPSED_HEIGHT_DEFAULT;
+}
 
 /**
  * Calculate and cache layout dimensions used for history panel animations.
@@ -540,7 +573,352 @@ async function validateApiKeyWithRetry(key, retries = 2) {
     return result;
 }
 
+/**
+ * Recursive median cut color quantization. Splits an array of RGB pixels
+ * along the channel with the largest range at the median, producing 2^depth
+ * representative color buckets.
+ *
+ * @param {number[][]} pixels - Array of [r, g, b] triplets
+ * @param {number} depth - Recursion depth (produces 2^depth buckets)
+ * @returns {{color: number[], count: number}[]} Representative colors with pixel counts
+ */
+function medianCut(pixels, depth) {
+    if (depth === 0 || pixels.length === 0) {
+        if (pixels.length === 0) {
+            return [];
+        }
+        let rSum = 0, gSum = 0, bSum = 0;
+        for (const p of pixels) {
+            rSum += p[0];
+            gSum += p[1];
+            bSum += p[2];
+        }
+        const n = pixels.length;
+
+        return [{ color: [Math.round(rSum / n), Math.round(gSum / n), Math.round(bSum / n)], count: n }];
+    }
+
+    let rMin = 255, rMax = 0, gMin = 255, gMax = 0, bMin = 255, bMax = 0;
+    for (const p of pixels) {
+        if (p[0] < rMin) { rMin = p[0]; }
+        if (p[0] > rMax) { rMax = p[0]; }
+        if (p[1] < gMin) { gMin = p[1]; }
+        if (p[1] > gMax) { gMax = p[1]; }
+        if (p[2] < bMin) { bMin = p[2]; }
+        if (p[2] > bMax) { bMax = p[2]; }
+    }
+
+    const rRange = rMax - rMin;
+    const gRange = gMax - gMin;
+    const bRange = bMax - bMin;
+    const channel = rRange >= gRange && rRange >= bRange ? 0 : gRange >= bRange ? 1 : 2;
+
+    pixels.sort((a, b) => a[channel] - b[channel]);
+    const mid = Math.floor(pixels.length / 2);
+
+    return [
+        ...medianCut(pixels.slice(0, mid), depth - 1),
+        ...medianCut(pixels.slice(mid), depth - 1)
+    ];
+}
+
+/**
+ * Convert RGB values (0-255) to HSL. Returns an object with h (0-360),
+ * s (0-100), and l (0-100).
+ *
+ * @param {number} r - Red (0-255)
+ * @param {number} g - Green (0-255)
+ * @param {number} b - Blue (0-255)
+ * @returns {{h: number, s: number, l: number}}
+ */
+function rgbToHsl(r, g, b) {
+    r /= 255;
+    g /= 255;
+    b /= 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    const d = max - min;
+
+    if (d === 0) {
+        return { h: 0, s: 0, l: l * 100 };
+    }
+
+    const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    let h;
+    if (max === r) {
+        h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+    } else if (max === g) {
+        h = ((b - r) / d + 2) / 6;
+    } else {
+        h = ((r - g) / d + 4) / 6;
+    }
+
+    return { h: h * 360, s: s * 100, l: l * 100 };
+}
+
+/**
+ * Convert HSL values to an RGB array [r, g, b] with values 0-255.
+ *
+ * @param {number} h - Hue in degrees (0-360)
+ * @param {number} s - Saturation percentage (0-100)
+ * @param {number} l - Lightness percentage (0-100)
+ * @returns {number[]} [r, g, b] values (0-255, rounded)
+ */
+function hslToRgb(h, s, l) {
+    s /= 100;
+    l /= 100;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+    let r, g, b;
+    if (h < 60) { r = c; g = x; b = 0; }
+    else if (h < 120) { r = x; g = c; b = 0; }
+    else if (h < 180) { r = 0; g = c; b = x; }
+    else if (h < 240) { r = 0; g = x; b = c; }
+    else if (h < 300) { r = x; g = 0; b = c; }
+    else { r = c; g = 0; b = x; }
+
+    return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+
+/**
+ * Extract primary and accent colors from a loaded image using median cut
+ * quantization. Stride-samples ~2500 pixels at native resolution (no
+ * downscale blending), quantizes to 8 representative colors, then selects
+ * primary (most pixels, excluding near-black/white) and accent (most
+ * saturated color at least 30 degrees from primary hue).
+ *
+ * @param {HTMLImageElement} img - A loaded, same-origin image element
+ * @returns {{primaryHue: number, accentHue: number}|null} Hues in degrees, or null if grayscale
+ */
+function extractColors(img) {
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    if (w === 0 || h === 0) {
+        return null;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+
+    let data;
+    try {
+        data = ctx.getImageData(0, 0, w, h).data;
+    } catch (e) {
+        return null;
+    }
+
+    // Stride-sample ~2500 pixels evenly across the image
+    const targetSamples = 2500;
+    const stride = Math.max(1, Math.floor(Math.sqrt(w * h / targetSamples)));
+    const pixels = [];
+    for (let y = 0; y < h; y += stride) {
+        for (let x = 0; x < w; x += stride) {
+            const i = (y * w + x) * 4;
+            pixels.push([data[i], data[i + 1], data[i + 2]]);
+        }
+    }
+
+    // Quantize to 8 representative colors
+    const palette = medianCut(pixels, 3);
+
+    // Filter out near-black and near-white, convert to HSL
+    const candidates = [];
+    for (const entry of palette) {
+        const hsl = rgbToHsl(entry.color[0], entry.color[1], entry.color[2]);
+        if (hsl.l < 12 || hsl.l > 88) {
+            continue;
+        }
+        candidates.push({ hsl, count: entry.count });
+    }
+
+    if (candidates.length === 0) {
+        return null;
+    }
+
+    // Check if image is too desaturated (grayscale)
+    let totalSat = 0;
+    let totalCount = 0;
+    for (const c of candidates) {
+        totalSat += c.hsl.s * c.count;
+        totalCount += c.count;
+    }
+    if (totalCount === 0 || totalSat / totalCount < 10) {
+        return null;
+    }
+
+    // Primary = color with most pixels
+    candidates.sort((a, b) => b.count - a.count);
+    const primaryHue = candidates[0].hsl.h;
+
+    // Accent = most saturated color at least 30° from primary
+    let accentHue = (primaryHue + 20) % 360;
+    let bestAccentSat = -1;
+    for (let i = 1; i < candidates.length; i++) {
+        const hueDiff = Math.abs(candidates[i].hsl.h - primaryHue);
+        const angularDiff = Math.min(hueDiff, 360 - hueDiff);
+        if (angularDiff >= 30 && candidates[i].hsl.s > bestAccentSat) {
+            bestAccentSat = candidates[i].hsl.s;
+            accentHue = candidates[i].hsl.h;
+        }
+    }
+
+    return { primaryHue, accentHue };
+}
+
+/**
+ * Apply a complete color palette derived from extracted hues to the document
+ * root. Overrides all hue-dependent CSS custom properties while preserving
+ * each variable's original saturation and lightness values.
+ *
+ * @param {number} hue - Primary hue in degrees (0-360)
+ * @param {number} accentHue - Accent hue in degrees (0-360)
+ */
+function applyArtworkPalette(hue, accentHue) {
+    const s = document.documentElement.style;
+
+    // Background colors
+    s.setProperty('--bg-base', 'hsl(' + hue + ', 28%, 14%)');
+    s.setProperty('--bg-elevated', 'hsl(' + hue + ', 31%, 24%)');
+    s.setProperty('--bg-surface', 'hsl(' + hue + ', 27%, 20%)');
+    s.setProperty('--bg-grad-1', 'hsl(' + hue + ', 30%, 22%)');
+    s.setProperty('--bg-grad-2', 'hsl(' + hue + ', 31%, 20%)');
+    s.setProperty('--bg-grad-3', 'hsl(' + hue + ', 30%, 18%)');
+    s.setProperty('--bg-grad-4', 'hsl(' + hue + ', 30%, 16%)');
+
+    // Border colors
+    s.setProperty('--border-subtle', 'hsl(' + hue + ', 22%, 29%)');
+    s.setProperty('--border-muted', 'hsl(' + hue + ', 18%, 35%)');
+
+    // Primary palette
+    s.setProperty('--primary-900', 'hsl(' + hue + ', 47%, 34%)');
+    s.setProperty('--primary-800', 'hsl(' + hue + ', 55%, 41%)');
+    s.setProperty('--primary-500', 'hsl(' + hue + ', 84%, 67%)');
+    s.setProperty('--primary-400', 'hsl(' + hue + ', 89%, 74%)');
+    s.setProperty('--primary-300', 'hsl(' + hue + ', 94%, 82%)');
+    s.setProperty('--primary-200', 'hsl(' + hue + ', 96%, 89%)');
+
+    // Accent
+    s.setProperty('--accent-500', 'hsl(' + accentHue + ', 90%, 66%)');
+
+    // Success
+    s.setProperty('--success', 'hsl(' + hue + ', 100%, 84%)');
+
+    // Text colors (tertiary and muted have hue tint)
+    s.setProperty('--text-tertiary', 'hsl(' + hue + ', 20%, 77%)');
+    s.setProperty('--text-muted', 'hsl(' + hue + ', 18%, 66%)');
+
+    // Primary alpha variants
+    const primary500 = hslToRgb(hue, 84, 67);
+    const alphas = [
+        ['--primary-a5', 0.05], ['--primary-a8', 0.08], ['--primary-a10', 0.1],
+        ['--primary-a12', 0.12], ['--primary-a15', 0.15], ['--primary-a20', 0.2],
+        ['--primary-a25', 0.25], ['--primary-a30', 0.3], ['--primary-a40', 0.4]
+    ];
+    for (const [prop, alpha] of alphas) {
+        s.setProperty(prop, 'rgba(' + primary500[0] + ', ' + primary500[1] + ', ' + primary500[2] + ', ' + alpha + ')');
+    }
+
+    // Glow variants
+    const glow400 = hslToRgb(hue, 89, 74);
+    s.setProperty('--glow-400-50', 'rgba(' + glow400[0] + ', ' + glow400[1] + ', ' + glow400[2] + ', 0.5)');
+    s.setProperty('--glow-400-40', 'rgba(' + glow400[0] + ', ' + glow400[1] + ', ' + glow400[2] + ', 0.4)');
+
+    const glow300 = hslToRgb(hue, 94, 82);
+    s.setProperty('--glow-300-40', 'rgba(' + glow300[0] + ', ' + glow300[1] + ', ' + glow300[2] + ', 0.4)');
+    s.setProperty('--glow-300-50', 'rgba(' + glow300[0] + ', ' + glow300[1] + ', ' + glow300[2] + ', 0.5)');
+    s.setProperty('--glow-300-60', 'rgba(' + glow300[0] + ', ' + glow300[1] + ', ' + glow300[2] + ', 0.6)');
+
+    const glow200 = hslToRgb(hue, 96, 89);
+    s.setProperty('--glow-200-60', 'rgba(' + glow200[0] + ', ' + glow200[1] + ', ' + glow200[2] + ', 0.6)');
+}
+
+/**
+ * Initialize feed artwork with dynamic color theming. The page starts with a
+ * black background; once colors are determined (from artwork extraction or
+ * defaults), the themed gradient fades in via a `theme-ready` class on the body.
+ * Loads the feed icon, extracts primary and accent colors via median cut
+ * quantization, and re-themes the page's CSS custom properties. Sets the artwork
+ * image inside the drop zone (making it clickable to select files, hiding the
+ * CTA button), and displays a gradient backdrop for ambient color. On load
+ * failure (404), adds `theme-ready` so the default indigo gradient fades in;
+ * the CTA button is shown as fallback.
+ */
+function initFeedArtwork() {
+    const artwork = document.getElementById('feed-artwork');
+    if (!artwork) {
+        document.body.classList.add('theme-ready');
+
+        return;
+    }
+
+    let artworkProcessed = false;
+
+    /** Process a successfully loaded artwork image (guarded against double invocation). */
+    function processArtwork() {
+        if (artworkProcessed) {
+            return;
+        }
+        artworkProcessed = true;
+
+        const colors = extractColors(artwork);
+
+        const backdrop = document.getElementById('artwork-backdrop');
+        if (!backdrop) {
+            document.body.classList.add('theme-ready');
+
+            return;
+        }
+
+        const backdropImg = document.getElementById('artwork-backdrop-img');
+        if (backdropImg) {
+            backdropImg.src = artwork.src;
+        }
+
+        const dropZone = document.getElementById('drop-zone');
+        if (dropZone) {
+            dropZone.classList.add('drop-zone--has-artwork');
+            dropZone.addEventListener('click', () => {
+                document.getElementById('file-input')?.click();
+            });
+        }
+
+        if (colors) {
+            applyArtworkPalette(colors.primaryHue, colors.accentHue);
+            backdrop.style.background = 'linear-gradient(135deg, hsl(' + colors.primaryHue + ', 50%, 18%), hsl(' + colors.accentHue + ', 50%, 18%))';
+        }
+
+        document.body.classList.add('theme-ready');
+
+        // Force layout read so the browser paints the image before the opacity transition
+        backdrop.offsetHeight;
+        backdrop.classList.add('artwork-backdrop--visible');
+    }
+
+    artwork.addEventListener('load', processArtwork);
+    artwork.addEventListener('error', () => {
+        artwork.remove();
+        document.body.classList.add('theme-ready');
+    });
+
+    // Handle cached image that loaded before event listeners attached
+    if (artwork.complete) {
+        if (artwork.naturalWidth > 0) {
+            processArtwork();
+        } else {
+            artwork.remove();
+            document.body.classList.add('theme-ready');
+        }
+    }
+}
+
 async function init() {
+    initFeedArtwork();
+
     // Cache layout dimensions for consistent animations
     cacheLayoutDimensions();
     // Recalculate on resize
@@ -1037,7 +1415,7 @@ function animateQueueDropZoneMorph() {
 
     // Set starting height (matching ready-state drop zone)
     queueDZ.classList.add('queue-drop-zone--morphing');
-    queueDZ.style.height = COLLAPSED_HEIGHT + 'px';
+    queueDZ.style.height = getCollapsedHeight() + 'px';
 
     // Commit starting state, then transition to target
     void queueDZ.offsetHeight;
@@ -1072,9 +1450,18 @@ function animateReadyDropZoneMorph() {
     const dropZone = document.getElementById('drop-zone');
     if (!dropZone) return;
 
-    // Commit the start height, then transition to target
+    // Compute target from CSS constants — avoids a reflow that would commit the target
+    // value prematurely and cause the transition to snap (280→48→280 in one frame)
+    const targetHeight = dropZone.classList.contains('drop-zone--has-artwork')
+        ? COLLAPSED_WIDTH
+        : COLLAPSED_HEIGHT_DEFAULT;
+
+    // Start height was set by prepareReadyDropZoneMorph while element was hidden.
+    // Commit it now that the element is visible.
     void dropZone.offsetHeight;
-    dropZone.style.height = COLLAPSED_HEIGHT + 'px';
+
+    // Transition to target
+    dropZone.style.height = targetHeight + 'px';
 
     setTimeout(() => {
         // Keep animation suppressed so blur-fade-in doesn't replay after morph class is removed
@@ -1579,13 +1966,13 @@ function saveFilterPreference(filter) {
 }
 
 // Animation timing constants (match CSS --h-* variables)
-// Step 1: CTA + border fall/blur together
-const H_CTA_FALL = 150;
+// Step 1: Drop zone / queue blurs behind panel
+const H_BLUR_DELAY = 150;
 // Step 2: Pause before swap
 const H_PAUSE = 100;
 // Step 3: History panel morphs
 const H_MORPH = 400;
-const HISTORY_TRANSITION_DURATION = H_CTA_FALL + H_PAUSE + H_MORPH;
+const HISTORY_TRANSITION_DURATION = H_BLUR_DELAY + H_PAUSE + H_MORPH;
 
 /**
  * Toggle the history section collapsed/expanded state with animation.
@@ -1625,7 +2012,7 @@ function toggleHistorySection(expand) {
     // On mobile, button is full-width so skip width animation
     if (isMobile) {
         // Simple text swap with fade
-        const delay = newState ? H_CTA_FALL + H_PAUSE : 0;
+        const delay = newState ? H_BLUR_DELAY + H_PAUSE : 0;
         setTimeout(() => {
             toggle.classList.add('text-fading');
         }, delay);
@@ -1648,7 +2035,7 @@ function toggleHistorySection(expand) {
 
         // Same cadence in both ready and queue states
         const totalDuration = newState
-            ? H_CTA_FALL + H_PAUSE + H_MORPH
+            ? H_BLUR_DELAY + H_PAUSE + H_MORPH
             : H_MORPH;
         const fadeInStart = totalDuration - TEXT_FADE;
         const widthStart = fadeInStart - WIDTH_ANIM;
@@ -1694,6 +2081,18 @@ function toggleHistorySection(expand) {
     if (newState) {
         // Expanding: measure natural height, animate from collapsed to expanded
 
+        // Clear blur-fade-in animation so filter property is free for CSS transitions.
+        // Force reflow so the base filter: blur(0) is committed before the expanded
+        // class triggers blur(12px), ensuring the transition animates.
+        const container = document.querySelector('.container');
+        const blurTarget = container?.classList.contains('state-queue')
+            ? document.getElementById('queue')
+            : document.getElementById('drop-zone');
+        if (blurTarget) {
+            blurTarget.style.animation = 'none';
+            void blurTarget.offsetHeight;
+        }
+
         // Use cached values for consistent animations
         const containerWidth = cachedContainerWidth;
         const collapsedMargin = cachedCollapsedMargin + 'px';
@@ -1707,7 +2106,7 @@ function toggleHistorySection(expand) {
         // Set explicit starting state for history section
         // Only on desktop (mobile uses position: fixed fullscreen, no animation needed)
         if (!isMobile) {
-            section.style.height = COLLAPSED_HEIGHT + 'px';
+            section.style.height = getCollapsedHeight() + 'px';
             section.style.width = COLLAPSED_WIDTH + 'px';
             section.style.marginLeft = collapsedMargin;
             section.style.marginRight = collapsedMargin;
@@ -1773,7 +2172,7 @@ function toggleHistorySection(expand) {
         void section.offsetHeight; // Force reflow
         section.classList.add('history-section--fade-out');
         if (!isMobile) {
-            section.style.height = COLLAPSED_HEIGHT + 'px';
+            section.style.height = getCollapsedHeight() + 'px';
             section.style.width = COLLAPSED_WIDTH + 'px';
             section.style.marginLeft = collapsedMargin;
             section.style.marginRight = collapsedMargin;

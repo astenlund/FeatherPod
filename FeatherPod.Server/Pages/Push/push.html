@@ -9,8 +9,10 @@
     <style>/* {{CSS}} */</style>
 </head>
 <body>
+    <div id="artwork-backdrop" class="artwork-backdrop"></div>
     <div class="container">
         <h1 id="page-title">Push to Feed</h1>
+        <img id="feed-artwork" src="/{{FEED_ID}}/icon.png" alt="" hidden>
         <h2 id="feed-name" class="feed-name">{{FEED_TITLE}}</h2>
 
         <div id="no-key" class="state" style="display: none;">
@@ -31,6 +33,7 @@
 
         <div id="ready" class="state" style="display: none;">
             <div id="drop-zone">
+                <img id="artwork-backdrop-img" class="artwork-backdrop-img" alt="">
                 <div class="drop-zone-inner">
                     <div class="drop-zone-cta">
                         <button id="select-file" class="btn-primary">Select audio file</button>

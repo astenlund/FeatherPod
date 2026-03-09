@@ -10,6 +10,10 @@
     --bg-elevated: #2a2a50;
     --bg-surface: #252541;
     --bg-code: #333;
+    --bg-grad-1: #28284a;
+    --bg-grad-2: #242445;
+    --bg-grad-3: #202040;
+    --bg-grad-4: #1c1c35;
 
     /* Border colors */
     --border-subtle: #3a3a5a;
@@ -78,26 +82,25 @@
      * History panel expand/collapse animation choreography:
      *
      * EXPAND SEQUENCE:
-     *   0ms:   CTA "falls into depth" (blur + translateZ) + border blurs out
-     *   150ms: Pause (drop zone hidden, panel swap begins)
-     *   250ms: Panel morphs from 500x280 to full width, content reveals with stagger
+     *   0ms:   Drop zone / queue blurs behind panel
+     *   150ms: Pause (panel swap begins)
+     *   250ms: Panel morphs from drop zone dimensions to full width, content reveals with stagger
      *   650ms: Settled (inline styles cleared, --settled class added)
      *
      * COLLAPSE SEQUENCE:
-     *   0ms:   Content fades, panel morphs back to 500x280, CTA rises back
-     *   400ms: Complete (classes cleared, drop zone visible)
+     *   0ms:   Content fades, panel morphs back to drop zone dimensions, blur clears
+     *   400ms: Complete (classes cleared)
      *
      * Mobile uses frosted overlay instead of morph animation.
-     * JS timing constants (H_CTA_FALL, H_PAUSE, H_MORPH) must match these values.
+     * JS timing constants (H_BLUR_DELAY, H_PAUSE, H_MORPH) must match these values.
      */
-    --h-cta-fall: 0.15s;
+    --h-blur-delay: 0.15s;
     --h-pause: 0.1s;
     --h-morph: 0.4s;
     --h-stagger: 0.05s;
 
-    /* Cumulative delays (when each step starts) */
-    --h-after-cta: var(--h-cta-fall);                          /* 0.15s */
-    --h-after-pause: calc(var(--h-cta-fall) + var(--h-pause)); /* 0.25s */
+    /* Cumulative delay (when morph step starts) */
+    --h-after-pause: calc(var(--h-blur-delay) + var(--h-pause));    /* 0.25s */
 
     /* Layout dimensions (set by JS, fallback for static analysis) */
     --history-container-width: 100%;
@@ -122,17 +125,7 @@
 
 body {
     font-family: var(--font-body), sans-serif;
-    background: var(--bg-base);
-    /* Multi-stop gradient with subtle hue shifts to reduce banding */
-    background-image: radial-gradient(
-        ellipse at 50% 0%,
-        var(--bg-elevated) 0%,
-        #28284a 15%,
-        #242445 30%,
-        #202040 45%,
-        #1c1c35 60%,
-        var(--bg-base) 80%
-    );
+    background: #000;
     color: var(--text-body);
     min-height: 100vh;
     display: flex;
@@ -140,6 +133,30 @@ body {
     justify-content: center;
     padding: 20px;
     position: relative;
+}
+
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -2;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.6s ease;
+    background: var(--bg-base);
+    background-image: radial-gradient(
+        ellipse at 50% 0%,
+        var(--bg-elevated) 0%,
+        var(--bg-grad-1) 15%,
+        var(--bg-grad-2) 30%,
+        var(--bg-grad-3) 45%,
+        var(--bg-grad-4) 60%,
+        var(--bg-base) 80%
+    );
+}
+
+body.theme-ready::before {
+    opacity: 1;
 }
 
 .container {
@@ -183,6 +200,48 @@ h2 {
     margin-left: calc((100% - 500px) / 2);
     /* Step 4: move with history panel */
     transition: margin-left var(--h-morph) ease var(--h-after-pause);
+}
+
+/* ============================================================================
+   ARTWORK BACKDROP
+   ============================================================================ */
+
+.artwork-backdrop {
+    position: fixed;
+    inset: -30px;
+    z-index: -1;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+}
+
+.artwork-backdrop-img {
+    display: none;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    border-radius: var(--radius-2xl);
+}
+
+#drop-zone.drop-zone--has-artwork .artwork-backdrop-img {
+    display: block;
+}
+
+.artwork-backdrop--visible {
+    opacity: 1;
+}
+
+.artwork-backdrop::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 0.45) 0%,
+        rgba(0, 0, 0, 0.55) 50%,
+        rgba(0, 0, 0, 0.7) 100%
+    );
 }
 
 /* ============================================================================
@@ -331,6 +390,7 @@ h1 {
     max-width: 600px;
     margin: 0 auto;
     width: 100%;
+    transition: filter 0.4s ease;
 }
 
 .container.state-queue .history-toggle {
@@ -710,6 +770,15 @@ h1 {
     margin-right: var(--history-collapsed-margin, calc((100% - 500px) / 2));
     /* Leave space for the history toggle below */
     margin-bottom: 2.5rem;
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--radius-2xl);
+    transition: filter 0.4s ease;
+}
+
+#drop-zone.drop-zone--has-artwork {
+    height: auto;
+    aspect-ratio: 1;
 }
 
 .drop-zone-inner {
@@ -724,6 +793,7 @@ h1 {
     overflow: visible;
     transition: background-color var(--transition-normal), box-shadow var(--transition-normal);
     position: relative;
+    z-index: 1;
 }
 
 /* Dashed border */
@@ -735,20 +805,7 @@ h1 {
     border: 4px dashed var(--border-muted);
     border-radius: var(--radius-2xl);
     opacity: 0;
-    filter: blur(0);
-    /* Border blurs/fades together with CTA fall */
-    transition: opacity var(--h-cta-fall) ease-in, filter var(--h-cta-fall) ease-in, border-color 0.3s ease;
-}
-
-/* Blur and fade out the border when history expands */
-.container.state-ready:has(.history-section--expanded) .drop-zone-inner::before {
-    opacity: 0;
-    filter: blur(60px);
-}
-
-/* Collapsing: border animates back without delay */
-.container.state-ready:has(.history-section--collapsing) .drop-zone-inner::before {
-    transition: opacity var(--h-morph) ease, filter var(--h-morph) ease, border-color 0.3s ease;
+    transition: border-color 0.3s ease;
 }
 
 #drop-zone.drag-over .drop-zone-inner {
@@ -848,7 +905,7 @@ h1 {
     transition: opacity 0.2s ease;
 }
 
-/* Ready drop zone morph: animates height from compact queue size up to 280px */
+/* Ready drop zone morph: animates height from compact queue size up to target */
 #drop-zone.drop-zone--morphing {
     transition: height 0.4s ease;
     overflow: hidden;
@@ -858,6 +915,11 @@ h1 {
 /* Suppress blur-fade-in on all children during morph, fade CTA in after height settles */
 #drop-zone.drop-zone--morphing * {
     animation: none !important;
+}
+
+/* Keep artwork full-width during morph — clip vertically instead of shrinking */
+#drop-zone.drop-zone--morphing .artwork-backdrop-img {
+    object-fit: cover;
 }
 
 #drop-zone.drop-zone--morphing .drop-zone-cta {
@@ -1208,6 +1270,16 @@ h1 {
     grid-row: 3;
 }
 
+/* When artwork is present, hide CTA — the image itself is clickable */
+#drop-zone.drop-zone--has-artwork {
+    cursor: pointer;
+}
+
+#drop-zone.drop-zone--has-artwork .drop-zone-cta,
+#drop-zone.drop-zone--has-artwork .drop-zone-inner::before {
+    display: none;
+}
+
 .history-section {
     text-align: left;
     pointer-events: none;
@@ -1215,7 +1287,14 @@ h1 {
     border-radius: var(--radius-2xl);
     overflow: hidden;
     position: relative;
+    z-index: 2;
     opacity: 0;
+}
+
+/* When artwork present, collapsed history matches square drop zone */
+.container.state-ready:has(.drop-zone--has-artwork) .history-section:not(.history-section--expanded):not(.history-section--collapsing) {
+    height: auto;
+    aspect-ratio: 1;
 }
 
 /* Ready state: morph animation from drop zone dimensions */
@@ -1250,15 +1329,12 @@ h1 {
     margin-right: 0;
 }
 
-/* Step 3: Hide drop zone after border blurs out + pause */
-.container.state-ready:has(.history-section--expanded) #drop-zone {
-    visibility: hidden;
-    transition: visibility 0s linear var(--h-after-pause);
-}
-
-/* "Falling into depth" effect for CTA and hint when history is expanded */
-.drop-zone-inner {
-    perspective: 800px;
+/* Blur drop zone / queue behind history panel */
+.container.state-ready:has(.history-section--expanded) #drop-zone,
+.container.state-ready:has(.history-section--collapsing) #drop-zone,
+.container.state-queue:has(.history-section--expanded) #queue,
+.container.state-queue:has(.history-section--collapsing) #queue {
+    filter: blur(12px);
 }
 
 .drop-zone-cta {
@@ -1266,20 +1342,6 @@ h1 {
     flex-direction: column;
     align-items: center;
     gap: 1.5rem;
-    transform-style: preserve-3d;
-    transform: translateZ(0);
-    opacity: 1;
-    filter: blur(0) brightness(1);
-    /* Step 1: CTA falls away */
-    transition: opacity var(--h-cta-fall) cubic-bezier(0.6, 0.04, 0.98, 0.335),
-                filter var(--h-cta-fall) cubic-bezier(0.6, 0.04, 0.98, 0.335),
-                transform var(--h-cta-fall) cubic-bezier(0.6, 0.04, 0.98, 0.335);
-}
-
-.container.state-ready:has(.history-section--expanded) .drop-zone-cta {
-    opacity: 0;
-    filter: blur(12px) brightness(0);
-    transform: translateZ(-2000px);
 }
 
 /* When expanded: move toggle to right edge and change to back button */
@@ -1411,12 +1473,6 @@ h1 {
         margin-left var(--h-morph) ease,
         margin-right var(--h-morph) ease,
         border-radius 0.3s ease;
-}
-
-/* Collapsing: CTA animates back without delay; h1/h2/toggle keep their default
-   delay so they move after the panel collapses */
-.container.state-ready:has(.history-section--collapsing) .drop-zone-cta {
-    transition: opacity var(--h-morph) ease, filter var(--h-morph) ease, transform var(--h-morph) ease;
 }
 
 /* Collapsing: keep content visible while fading out */
@@ -1719,11 +1775,25 @@ h1 {
         padding-top: calc(10svh + 5rem);
     }
 
-    /* No drag-and-drop on mobile — show just the button, no drop zone */
+    /* No drag-and-drop on mobile — fix add-more button above history toggle */
     .queue-drop-zone {
         border: none;
+        background: none;
         padding: 0;
-        margin-bottom: 0.75rem;
+        margin: 0;
+        position: fixed;
+        bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
+        left: 1rem;
+        right: 1rem;
+        width: auto;
+        z-index: 101;
+    }
+
+    /* Match toggle button styling */
+    .btn-queue-add {
+        padding: 0.6rem 1.25rem;
+        border-radius: var(--radius-lg);
+        font-size: 0.8rem;
     }
 
     .btn-primary {
@@ -1777,6 +1847,20 @@ h1 {
     #drop-zone,
     .drop-zone-inner {
         display: contents;
+    }
+
+    /* Hide feed name on mobile when artwork is present (image speaks for itself) */
+    .container:has(.drop-zone--has-artwork) .feed-name {
+        display: none;
+    }
+
+    /* On mobile #drop-zone is display:contents, so style the image directly */
+    #drop-zone.drop-zone--has-artwork .artwork-backdrop-img {
+        position: static;
+        width: calc(100% - 2rem);
+        height: auto;
+        margin: 0.5rem auto 0;
+        border-radius: var(--radius-xl);
     }
 
     .history-toggle {
@@ -1838,27 +1922,27 @@ h1 {
 
     .history-section--expanded .filter-tab,
     .history-section--collapsing .filter-tab {
-        background: rgba(37, 37, 65, 0.6);
+        background: var(--bg-elevated);
     }
 
     .history-section--expanded .filter-tab--active,
     .history-section--collapsing .filter-tab--active {
-        background: rgba(55, 48, 163, 0.8);
+        background: var(--primary-900);
     }
 
     .history-section--expanded .upload-item,
     .history-section--collapsing .upload-item {
-        background: rgba(42, 42, 80, 0.5);
+        background: var(--bg-surface);
     }
 
     .history-section--expanded .upload-item--selected,
     .history-section--collapsing .upload-item--selected {
-        background: rgba(55, 48, 163, 0.7);
+        background: var(--primary-900);
     }
 
     .history-section--expanded #history-info,
     .history-section--collapsing #history-info {
-        background: rgba(42, 42, 80, 0.5);
+        background: var(--bg-surface);
     }
 
     /* Disable desktop animations on mobile - content stays visible under frosted glass */
@@ -1884,16 +1968,12 @@ h1 {
         transform: translateX(-50%) !important;
     }
 
-    /* Keep drop zone CTA visible on mobile */
-    .container.state-ready:has(.history-section--expanded) .drop-zone-cta {
-        opacity: 1 !important;
+    /* Keep drop zone / queue unblurred on mobile (frosted overlay handles it) */
+    .container.state-ready:has(.history-section--expanded) #drop-zone,
+    .container.state-ready:has(.history-section--collapsing) #drop-zone,
+    .container.state-queue:has(.history-section--expanded) #queue,
+    .container.state-queue:has(.history-section--collapsing) #queue {
         filter: none !important;
-        transform: none !important;
-    }
-
-    /* Keep drop zone visible on mobile */
-    .container.state-ready:has(.history-section--expanded) #drop-zone {
-        visibility: visible !important;
     }
 
     /* During collapse, hide h1/h2/CTA so they don't show through semi-transparent panel */
