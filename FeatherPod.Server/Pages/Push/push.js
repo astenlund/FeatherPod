@@ -1709,8 +1709,6 @@ function onBatchComplete() {
  * Called from multiple places where background work finishes (normalization, cancellation).
  */
 function checkAllComplete() {
-    if (getCurrentState() === 'batch-complete') return;
-
     if (uploadQueue.length === 0) {
         const queueDZHeight = document.getElementById('queue-drop-zone')?.getBoundingClientRect().height || 0;
         if (queueDZHeight > 0) prepareReadyDropZoneMorph(queueDZHeight);
@@ -1721,6 +1719,8 @@ function checkAllComplete() {
 
         return;
     }
+
+    if (getCurrentState() === 'batch-complete') return;
 
     const hasActiveWork = uploadQueue.some(e =>
         e.status === 'queued' || e.status === 'uploading' || e.status === 'normalizing'
@@ -3951,8 +3951,8 @@ async function restoreQueueState() {
 
 /**
  * Fetch active normalization jobs for this feed from the server.
- * Returns an empty array on any error (silent fallback to local-only state).
- * @returns {Promise<Array<Object>>} Array of JobStatusResponse objects
+ * Returns null on any error (silent fallback to local-only state).
+ * @returns {Promise<Array<Object>|null>} Array of JobStatusResponse objects, or null on error
  */
 async function fetchActiveJobsFromServer() {
     try {
@@ -3960,28 +3960,51 @@ async function fetchActiveJobsFromServer() {
             headers: { 'X-API-Key': apiKey }
         });
         if (!response.ok) {
-            return [];
+            return null;
         }
 
         return await response.json();
     } catch (err) {
-        return [];
+        return null;
     }
 }
 
 /**
  * Merge server-known active jobs into the local upload queue.
- * Updates existing entries with fresh server data and adds new entries for
- * jobs not in the local queue (e.g., jobs started from CLI or another tab).
- * @param {Array<Object>} serverJobs - Array of JobStatusResponse objects from server
+ * Reconciles local state with server's authoritative list of active jobs:
+ * - Removes local entries whose jobs the server no longer considers active
+ * - Updates existing entries with fresh server data
+ * - Recovers failed entries that the server says are still active
+ * - Adds new entries for jobs not in the local queue (e.g., from CLI or another tab)
+ * If serverJobs is null (fetch failed), skips reconciliation entirely.
+ * @param {Array<Object>|null} serverJobs - Array of JobStatusResponse objects, or null on error
  */
 function mergeServerJobs(serverJobs) {
-    if (!serverJobs || serverJobs.length === 0) {
-        return;
+    if (serverJobs === null) {
+        return; // Server fetch failed — don't reconcile, let SSE handle it
     }
 
+    const serverJobIds = new Set(serverJobs.map(j => j.jobId));
     const existingJobIds = new Set(uploadQueue.map(e => e.jobId).filter(Boolean));
     let changed = false;
+
+    // Remove local entries whose jobs the server no longer considers active
+    // (e.g., job was cancelled/failed from another tab, CLI, or a previous session)
+    const staleEntries = uploadQueue.filter(e => e.jobId && (e.status === 'normalizing' || e.status === 'failed') && !serverJobIds.has(e.jobId));
+    for (const stale of staleEntries) {
+        if (stale.eventSource) {
+            stale.eventSource.close();
+            stale.eventSource = null;
+        }
+        stale.status = 'cancelled';
+        removeQueueItemFromDOM(stale.id);
+        uploadQueue.splice(uploadQueue.indexOf(stale), 1);
+        if (stale._resolveMonitor) {
+            stale._resolveMonitor();
+            stale._resolveMonitor = null;
+        }
+        changed = true;
+    }
 
     // Update existing entries with fresh server data
     for (const serverJob of serverJobs) {
@@ -3990,6 +4013,15 @@ function mergeServerJobs(serverJobs) {
             existing.stage = serverJob.stage || existing.stage;
             existing.progress = serverJob.progressPercent ?? existing.progress;
             changed = true;
+        } else if (existing && existing.status === 'failed') {
+            // Recover failed entries that the server says are still active
+            // (e.g., SSE failed due to transient network error)
+            existing.status = 'normalizing';
+            existing.stage = serverJob.stage || 'Queued';
+            existing.progress = serverJob.progressPercent ?? 0;
+            existing.error = null;
+            changed = true;
+            monitorEntryNormalizationInBackground(existing);
         }
     }
 
@@ -4042,6 +4074,7 @@ function mergeServerJobs(serverJobs) {
     }
 
     saveQueueState();
+    checkAllComplete();
 }
 
 window.addEventListener('DOMContentLoaded', init);
