@@ -81,9 +81,9 @@ public class JobService : IJobService
         }
     }
 
-    public async Task CreateJobStatusAsync(string jobId, string feedId, string? fileName = null, CancellationToken cancellationToken = default)
+    public async Task CreateJobStatusAsync(string jobId, string feedId, string? fileName = null, string? progressMode = null, int? progressIntervalMs = null, CancellationToken cancellationToken = default)
     {
-        var entity = JobStatusEntity.CreateQueued(jobId, feedId, fileName);
+        var entity = JobStatusEntity.CreateQueued(jobId, feedId, fileName, progressMode, progressIntervalMs);
         try
         {
             await _tableClient.AddEntityAsync(entity, cancellationToken);
@@ -138,7 +138,7 @@ public class JobService : IJobService
 
                 return entity;
             }
-            catch (Azure.RequestFailedException ex) when (ex.Status == 412 && attempt < maxRetries)
+            catch (Azure.RequestFailedException ex) when (ex.Status == 412 && attempt <= maxRetries)
             {
                 // ETag conflict — job was modified concurrently, retry
                 _logger.LogDebug("ETag conflict cancelling job {JobId}, attempt {Attempt}", jobId, attempt);

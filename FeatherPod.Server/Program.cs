@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using FeatherPod.Server.Hubs;
 using FeatherPod.Server.Middleware;
 using FeatherPod.Server.Services;
 using FeatherPod.Server.Validation;
@@ -34,6 +35,7 @@ builder.Services.AddSingleton<IBlobStorageService, BlobStorageService>();
 builder.Services.AddSingleton<EpisodeService>();
 builder.Services.AddSingleton<IUserService, UserService>();
 builder.Services.AddSingleton<IJobService, JobService>();
+builder.Services.AddSingleton<IJobProgressChannel, JobProgressChannel>();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IconResizeService>();
 
@@ -44,6 +46,13 @@ builder.Services.AddHostedService<BlobSyncBackgroundService>();
 builder.Services
     .AddControllers()
     .AddJsonOptions(options => { options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()); });
+
+var signalRBuilder = builder.Services.AddSignalR();
+var signalRConnectionString = builder.Configuration["Azure:SignalR:ConnectionString"];
+if (!string.IsNullOrEmpty(signalRConnectionString))
+{
+    signalRBuilder.AddAzureSignalR(signalRConnectionString);
+}
 
 builder.Services.AddEndpointsApiExplorer();
 
@@ -64,6 +73,9 @@ var baseUrl = app.Configuration.GetSection("Podcast")["BaseUrl"]
 
 // Map controllers (handles all /api/* endpoints)
 app.MapControllers();
+
+// Map SignalR hub for real-time progress push from Function App
+app.MapHub<ProgressHub>("/api/internal/signalrhub");
 
 // ============================================================================
 // HEALTH CHECK ENDPOINT

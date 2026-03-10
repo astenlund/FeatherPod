@@ -1043,6 +1043,7 @@ internal class FeatherPodWebApplicationFactory : WebApplicationFactory<FeatherPo
     // API key in new fp_ format: fp_{userId}_{secret}
     // The secret is 22 chars base64url (128 bits)
     public const string ApiKey = "fp_test-admin_AAAAAAAAAAAAAAAAAAAAAA";
+    public const string InternalKey = "test-internal-key";
     private const string TestAdminUserId = "test-admin";
 
     private readonly string ContainerName;
@@ -1065,7 +1066,15 @@ internal class FeatherPodWebApplicationFactory : WebApplicationFactory<FeatherPo
                 ["Azure:ContainerName"] = ContainerName,
 
                 // Podcast configuration (BaseUrl only)
-                ["Podcast:BaseUrl"] = "http://localhost:5000"
+                ["Podcast:BaseUrl"] = "http://localhost:5000",
+
+                // Internal key for service-to-service endpoints
+                ["Internal:Key"] = InternalKey,
+
+                // Push page defaults for tests (push mode enables instant SSE delivery via channel)
+                ["PushPage:ProgressMode"] = "push",
+                ["PushPage:ProgressIntervalMs"] = "250",
+                ["PushPage:PollIntervalMs"] = "500"
             }!);
         });
 

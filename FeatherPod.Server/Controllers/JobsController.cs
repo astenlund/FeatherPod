@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Threading.Channels;
 using FeatherPod.Server.Services;
 using FeatherPod.Server.Validation;
 using FeatherPod.Shared.Models;
@@ -13,16 +14,20 @@ public class JobsController : ControllerBase
     private readonly IJobService _jobService;
     private readonly IBlobStorageService _blobService;
     private readonly IUserService _userService;
+    private readonly IJobProgressChannel _progressChannel;
+    private readonly int _pollIntervalMs;
 
-    private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan PushFallbackTimeout = TimeSpan.FromMilliseconds(1500);
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public JobsController(IJobService jobService, IBlobStorageService blobService, IUserService userService)
+    public JobsController(IJobService jobService, IBlobStorageService blobService, IUserService userService, IJobProgressChannel progressChannel, IConfiguration configuration)
     {
         _jobService = jobService;
         _blobService = blobService;
         _userService = userService;
+        _progressChannel = progressChannel;
+        _pollIntervalMs = configuration.GetValue("PushPage:PollIntervalMs", 500);
     }
 
     /// <summary>
@@ -100,6 +105,9 @@ public class JobsController : ControllerBase
             return Conflict(new { error = "Job is already in a terminal state" });
         }
 
+        // Publish cancellation to channel for instant SSE notification
+        _progressChannel.Publish(jobId, JobStatusResponse.FromEntity(cancelled));
+
         // Clean up pending blobs (idempotent — safe even if Function also deletes)
         if (cancelled.FeedId != null)
         {
@@ -111,6 +119,7 @@ public class JobsController : ControllerBase
 
     /// <summary>
     /// Stream real-time progress updates for a job via Server-Sent Events.
+    /// Supports three modes: poll (default), push (HTTP POST from Function), and signalr.
     /// </summary>
     [HttpGet("{jobId}/progress")]
     public async Task StreamJobProgress(string jobId, CancellationToken cancellationToken)
@@ -120,31 +129,63 @@ public class JobsController : ControllerBase
         Response.Headers.Append("Connection", "keep-alive");
         Response.Headers.Append("X-Accel-Buffering", "no");
 
+        // Initial poll to get mode and interval
+        var entity = await _jobService.GetJobStatusAsync(jobId, cancellationToken);
+        if (entity == null)
+        {
+            await WriteEventAsync("error", """{"error":"Job not found"}""", cancellationToken);
+
+            return;
+        }
+
+        var progressMode = entity.ProgressMode ?? "poll";
+        var pollInterval = TimeSpan.FromMilliseconds(_pollIntervalMs);
+
+        // Send initial state
+        var initialResponse = JobStatusResponse.FromEntity(entity);
+        await WriteEventAsync("progress", JsonSerializer.Serialize(initialResponse, JsonOptions), cancellationToken);
+
+        if (IsTerminal(entity.Status))
+        {
+            await WriteEventAsync("done", "{}", cancellationToken);
+
+            return;
+        }
+
+        if (progressMode is "push" or "signalr")
+        {
+            await StreamWithPushAsync(jobId, initialResponse, cancellationToken);
+        }
+        else
+        {
+            await StreamWithPollingAsync(jobId, entity, pollInterval, cancellationToken);
+        }
+    }
+
+    private async Task StreamWithPollingAsync(string jobId, JobStatusEntity lastEntity, TimeSpan pollInterval, CancellationToken cancellationToken)
+    {
         var lastHeartbeat = DateTime.UtcNow;
-        JobStatusEntity? lastEntity = null;
 
         try
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                var entity = await _jobService.GetJobStatusAsync(jobId, cancellationToken);
+                await Task.Delay(pollInterval, cancellationToken);
 
+                var entity = await _jobService.GetJobStatusAsync(jobId, cancellationToken);
                 if (entity == null)
                 {
-                    await WriteEventAsync("error", """{"error":"Job not found"}""", cancellationToken);
-
                     break;
                 }
 
-                if (lastEntity == null || HasChanged(lastEntity, entity))
+                if (HasChanged(lastEntity, entity))
                 {
                     var response = JobStatusResponse.FromEntity(entity);
-                    var json = JsonSerializer.Serialize(response, JsonOptions);
-                    await WriteEventAsync("progress", json, cancellationToken);
+                    await WriteEventAsync("progress", JsonSerializer.Serialize(response, JsonOptions), cancellationToken);
                     lastEntity = entity;
                 }
 
-                if (entity.Status is nameof(JobStatus.Completed) or nameof(JobStatus.Failed) or nameof(JobStatus.Cancelled))
+                if (IsTerminal(entity.Status))
                 {
                     await WriteEventAsync("done", "{}", cancellationToken);
 
@@ -156,13 +197,76 @@ public class JobsController : ControllerBase
                     await WriteCommentAsync("keepalive", cancellationToken);
                     lastHeartbeat = DateTime.UtcNow;
                 }
-
-                await Task.Delay(PollInterval, cancellationToken);
             }
         }
         catch (OperationCanceledException)
         {
             // Client disconnected - normal
+        }
+    }
+
+    private async Task StreamWithPushAsync(string jobId, JobStatusResponse lastResponse, CancellationToken cancellationToken)
+    {
+        var reader = _progressChannel.Subscribe(jobId);
+        try
+        {
+            var lastHeartbeat = DateTime.UtcNow;
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                // Wait for push with fallback timeout
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeoutCts.CancelAfter(PushFallbackTimeout);
+
+                JobStatusResponse? update = null;
+                try
+                {
+                    if (await reader.WaitToReadAsync(timeoutCts.Token))
+                    {
+                        // Drain all available items, keep the latest
+                        while (reader.TryRead(out var item))
+                        {
+                            update = item;
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // Timeout — fall back to Table Storage poll
+                    var entity = await _jobService.GetJobStatusAsync(jobId, cancellationToken);
+                    if (entity != null)
+                    {
+                        update = JobStatusResponse.FromEntity(entity);
+                    }
+                }
+
+                if (update != null && HasChanged(lastResponse, update))
+                {
+                    await WriteEventAsync("progress", JsonSerializer.Serialize(update, JsonOptions), cancellationToken);
+                    lastResponse = update;
+                }
+
+                if (update != null && IsTerminal(update.Status))
+                {
+                    await WriteEventAsync("done", "{}", cancellationToken);
+
+                    break;
+                }
+
+                if (DateTime.UtcNow - lastHeartbeat >= HeartbeatInterval)
+                {
+                    await WriteCommentAsync("keepalive", cancellationToken);
+                    lastHeartbeat = DateTime.UtcNow;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Client disconnected - normal
+        }
+        finally
+        {
+            _progressChannel.Unsubscribe(jobId, reader);
         }
     }
 
@@ -186,5 +290,24 @@ public class JobsController : ControllerBase
                old.ProgressPercent != current.ProgressPercent ||
                old.ProgressMessage != current.ProgressMessage ||
                old.Error != current.Error;
+    }
+
+    private static bool HasChanged(JobStatusResponse? last, JobStatusResponse current)
+    {
+        if (last == null)
+        {
+            return true;
+        }
+
+        return last.Status != current.Status ||
+               last.Stage != current.Stage ||
+               last.ProgressPercent != current.ProgressPercent ||
+               last.ProgressMessage != current.ProgressMessage ||
+               last.Error != current.Error;
+    }
+
+    private static bool IsTerminal(string? status)
+    {
+        return status is nameof(JobStatus.Completed) or nameof(JobStatus.Failed) or nameof(JobStatus.Cancelled);
     }
 }

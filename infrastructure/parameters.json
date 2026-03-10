@@ -31,6 +31,9 @@
     },
     "functionAppName": {
       "value": "featherpod-func"
+    },
+    "signalRServiceName": {
+      "value": "featherpod-signalr"
     }
   }
 }

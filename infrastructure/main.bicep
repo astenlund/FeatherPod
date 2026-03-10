@@ -60,6 +60,9 @@ param functionAppName string
 @secure()
 param internalApiKey string
 
+@description('Name of the Azure SignalR Service')
+param signalRServiceName string
+
 // Resource tags
 var tags = {
   Environment: environment
@@ -196,6 +199,7 @@ resource appServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
     Azure__ContainerName: containerName
     Podcast__BaseUrl: 'https://${appServiceName}.azurewebsites.net'
     Internal__Key: internalApiKey
+    Azure__SignalR__ConnectionString: signalRService.listKeys().primaryConnectionString
     APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.properties.ConnectionString
   }
 }
@@ -365,6 +369,27 @@ resource functionAppTableRoleAssignment 'Microsoft.Authorization/roleAssignments
   }
 }
 
+// Azure SignalR Service (Free tier for progress push)
+resource signalRService 'Microsoft.SignalRService/signalR@2024-03-01' = {
+  name: signalRServiceName
+  location: location
+  tags: tags
+  sku: {
+    name: 'Free_F1'
+    tier: 'Free'
+    capacity: 1
+  }
+  kind: 'SignalR'
+  properties: {
+    features: [
+      {
+        flag: 'ServiceMode'
+        value: 'Default'
+      }
+    ]
+  }
+}
+
 // Outputs
 output storageAccountId string = storageAccount.id
 output storageAccountName string = storageAccount.name
@@ -380,3 +405,4 @@ output functionAppName string = functionApp.name
 output functionAppDefaultHostname string = functionApp.properties.defaultHostName
 output functionAppPrincipalId string = functionApp.identity.principalId
 output appInsightsName string = appInsights.name
+output signalRServiceName string = signalRService.name

@@ -1797,7 +1797,8 @@ async function processEntry(entry) {
                 reject(new DOMException('Upload cancelled', 'AbortError'));
             };
 
-            xhr.open('POST', '/api/feeds/' + FEED_ID + '/episodes?normalize=true&source=Browser');
+            let uploadUrl = '/api/feeds/' + FEED_ID + '/episodes?normalize=true&source=Browser';
+            xhr.open('POST', uploadUrl);
             xhr.setRequestHeader('X-API-Key', apiKey);
             xhr.send(formData);
         });

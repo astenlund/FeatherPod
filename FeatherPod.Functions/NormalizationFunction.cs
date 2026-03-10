@@ -10,6 +10,7 @@ using FFMpegCore;
 using Microsoft.ApplicationInsights;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Options;
 
 using static FeatherPod.Shared.Models.NormalizationStage;
@@ -35,7 +36,7 @@ public class NormalizationFunction
     private const string TableName = "normalizationjobs";
     private const string QueueName = "normalization-jobs";
     private static readonly TimeSpan LeaseDuration = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan ProgressUpdateThrottle = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan DefaultProgressThrottle = TimeSpan.FromMilliseconds(500);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
 
     public NormalizationFunction(
@@ -105,15 +106,52 @@ public class NormalizationFunction
         using var cancellationCheckingCts = CreateCancellationCheckingSource(tableClient, job.JobId, cancellationToken);
         var linkedToken = cancellationCheckingCts.Token;
 
+        // Automatic fallback: signalr → push → poll
+        HubConnection? signalRConnection = null;
+        var effectiveProgressMode = job.ProgressMode;
+
+        if (effectiveProgressMode == "signalr")
+        {
+            signalRConnection = CreateSignalRConnection();
+            if (signalRConnection != null)
+            {
+                try
+                {
+                    await signalRConnection.StartAsync(linkedToken);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "SignalR connection failed for job {JobId}, falling back to push mode", job.JobId);
+                    await signalRConnection.DisposeAsync();
+                    signalRConnection = null;
+                    effectiveProgressMode = "push";
+                }
+            }
+            else
+            {
+                // No AppServiceUrl configured — can't use signalr or push
+                effectiveProgressMode = null;
+            }
+        }
+
+        if (effectiveProgressMode == "push" && string.IsNullOrEmpty(_settings.AppServiceUrl))
+        {
+            _logger.LogWarning("Push mode requested but AppServiceUrl not configured for job {JobId}, falling back to poll", job.JobId);
+            effectiveProgressMode = null;
+        }
+
+        // Update job to use effective mode so all downstream code picks it up
+        job = job with { ProgressMode = effectiveProgressMode };
+
         try
         {
             if (job.Phase == NormalizationPhase.Analyze)
             {
-                await ProcessAnalyzePhaseAsync(job, tableClient, linkedToken);
+                await ProcessAnalyzePhaseAsync(job, tableClient, linkedToken, signalRConnection);
             }
             else
             {
-                await ProcessNormalizePhaseAsync(job, tableClient, linkedToken);
+                await ProcessNormalizePhaseAsync(job, tableClient, linkedToken, signalRConnection);
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -131,20 +169,28 @@ public class NormalizationFunction
             // Not a user cancellation — re-throw so the Functions runtime can handle it
             throw;
         }
+        finally
+        {
+            if (signalRConnection != null)
+            {
+                await signalRConnection.DisposeAsync();
+            }
+        }
     }
 
     /// <summary>
     /// Phase 1: Download file and analyze loudness, then queue Phase 2.
     /// </summary>
-    private async Task ProcessAnalyzePhaseAsync(NormalizationJob job, TableClient tableClient, CancellationToken cancellationToken)
+    private async Task ProcessAnalyzePhaseAsync(NormalizationJob job, TableClient tableClient, CancellationToken cancellationToken, HubConnection? signalRConnection = null)
     {
         var containerClient = _blobClient.GetBlobContainerClient(_settings.ContainerName);
         var pendingBlobPath = $"{job.FeedId}/pending/{job.JobId}/{job.FileName}";
         string? tempInputFile = null;
+        var progressThrottle = job.ProgressIntervalMs.HasValue ? TimeSpan.FromMilliseconds(job.ProgressIntervalMs.Value) : DefaultProgressThrottle;
 
         try
         {
-            tempInputFile = await DownloadPendingBlobAsync(containerClient, pendingBlobPath, job, tableClient, Analyzing, cancellationToken);
+            tempInputFile = await DownloadPendingBlobAsync(containerClient, pendingBlobPath, job, tableClient, Analyzing, cancellationToken, signalRConnection);
 
             // Analyze audio
             var inputFileSize = new FileInfo(tempInputFile).Length;
@@ -158,14 +204,14 @@ public class NormalizationFunction
                 progressCallback: progress =>
                 {
                     var now = DateTime.UtcNow;
-                    if (now - lastProgressUpdate < ProgressUpdateThrottle)
+                    if (now - lastProgressUpdate < progressThrottle)
                     {
                         return;
                     }
                     lastProgressUpdate = now;
 
                     _logger.LogDebug("Progress callback: {Stage} {Percent}%", progress.Stage, progress.ProgressPercent);
-                    pendingProgressUpdate = UpdateProgressAsync(tableClient, job.JobId, progress)
+                    pendingProgressUpdate = UpdateProgressAsync(tableClient, job.JobId, progress, job.ProgressMode, signalRConnection)
                         .ContinueWith(t => _logger.LogError(t.Exception, "Analysis progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
                 },
                 cancellationToken);
@@ -186,7 +232,7 @@ public class NormalizationFunction
                 Stage = Analyzing,
                 ProgressPercent = 100,
                 Message = "Analysis complete"
-            });
+            }, job.ProgressMode, signalRConnection);
 
             _logger.LogInformation("Analysis complete for {FileName}: {InputLufs} LUFS, duration {Duration}",
                 job.FileName, analysisResult.Analysis.InputI, analysisResult.Duration);
@@ -213,7 +259,7 @@ public class NormalizationFunction
             _telemetryClient.Flush();
 
             var sanitizedError = SanitizeErrorMessage(ex);
-            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Failed, error: sanitizedError, cancellationToken: cancellationToken);
+            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Failed, job.ProgressMode, signalRConnection, error: sanitizedError, cancellationToken: cancellationToken);
 
             throw;
         }
@@ -226,7 +272,7 @@ public class NormalizationFunction
     /// <summary>
     /// Phase 2: Download file, apply normalization with analysis data, upload, and create episode.
     /// </summary>
-    private async Task ProcessNormalizePhaseAsync(NormalizationJob job, TableClient tableClient, CancellationToken cancellationToken)
+    private async Task ProcessNormalizePhaseAsync(NormalizationJob job, TableClient tableClient, CancellationToken cancellationToken, HubConnection? signalRConnection = null)
     {
         if (job.Analysis == null || job.TotalDurationMs == null)
         {
@@ -237,13 +283,15 @@ public class NormalizationFunction
         var pendingBlobPath = $"{job.FeedId}/pending/{job.JobId}/{job.FileName}";
         var finalBlobPath = $"{job.FeedId}/audio/{job.FileName}";
         var episodesJsonPath = $"{job.FeedId}/episodes.json";
+        var progressThrottle = job.ProgressIntervalMs.HasValue ? TimeSpan.FromMilliseconds(job.ProgressIntervalMs.Value) : DefaultProgressThrottle;
+        var progressMode = job.ProgressMode;
 
         string? tempInputFile = null;
         string? normalizedFile = null;
 
         try
         {
-            tempInputFile = await DownloadPendingBlobAsync(containerClient, pendingBlobPath, job, tableClient, Normalizing, cancellationToken);
+            tempInputFile = await DownloadPendingBlobAsync(containerClient, pendingBlobPath, job, tableClient, Normalizing, cancellationToken, signalRConnection);
 
             // Apply normalization with pre-computed analysis
             var totalDuration = TimeSpan.FromMilliseconds(job.TotalDurationMs.Value);
@@ -261,14 +309,14 @@ public class NormalizationFunction
                 progressCallback: progress =>
                 {
                     var now = DateTime.UtcNow;
-                    if (now - lastProgressUpdate < ProgressUpdateThrottle)
+                    if (now - lastProgressUpdate < progressThrottle)
                     {
                         return;
                     }
                     lastProgressUpdate = now;
 
                     _logger.LogDebug("Progress callback: {Stage} {Percent}%", progress.Stage, progress.ProgressPercent);
-                    pendingProgressUpdate = UpdateProgressAsync(tableClient, job.JobId, progress)
+                    pendingProgressUpdate = UpdateProgressAsync(tableClient, job.JobId, progress, progressMode, signalRConnection)
                         .ContinueWith(t => _logger.LogError(t.Exception, "Normalization progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
                 },
                 cancellationToken);
@@ -289,7 +337,7 @@ public class NormalizationFunction
                 Stage = Normalizing,
                 ProgressPercent = 100,
                 Message = "Normalization complete"
-            });
+            }, progressMode, signalRConnection);
 
             // Get duration from normalized file
             var mediaInfo = await FFProbe.AnalyseAsync(normalizedFile, cancellationToken: cancellationToken);
@@ -302,7 +350,7 @@ public class NormalizationFunction
                 Stage = Finishing,
                 ProgressPercent = 0,
                 Message = "Finishing up"
-            });
+            }, progressMode, signalRConnection);
 
             _logger.LogDebug("Uploading normalized file to {FinalPath}", finalBlobPath);
             var finalBlob = containerClient.GetBlobClient(finalBlobPath);
@@ -311,7 +359,7 @@ public class NormalizationFunction
             {
                 var now = DateTime.UtcNow;
                 var percent = normalizedFileSize > 0 ? (int)(bytesUploaded * 100 / normalizedFileSize) : 0;
-                if (percent < 100 && now - uploadLastUpdate < ProgressUpdateThrottle)
+                if (percent < 100 && now - uploadLastUpdate < progressThrottle)
                 {
                     return;
                 }
@@ -323,7 +371,7 @@ public class NormalizationFunction
                     Stage = Finishing,
                     ProgressPercent = percent,
                     Message = "Finishing up"
-                }).ContinueWith(t => _logger.LogError(t.Exception, "Upload progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
+                }, progressMode, signalRConnection).ContinueWith(t => _logger.LogError(t.Exception, "Upload progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
             });
 
             await using (var stream = File.OpenRead(normalizedFile))
@@ -339,7 +387,7 @@ public class NormalizationFunction
                 Stage = Finishing,
                 ProgressPercent = 100,
                 Message = "Almost done"
-            });
+            }, progressMode, signalRConnection);
 
             // Create episode entry
             var episode = new Episode
@@ -362,7 +410,7 @@ public class NormalizationFunction
                 Stage = Finishing,
                 ProgressPercent = 0,
                 Message = "Updating episode list"
-            });
+            }, progressMode, signalRConnection);
 
             await AddEpisodeToFeedAsync(containerClient, episodesJsonPath, episode, _logger, cancellationToken);
 
@@ -373,9 +421,9 @@ public class NormalizationFunction
                 ProgressPercent = 100,
                 Message = "Normalization complete",
                 TotalDuration = duration
-            });
+            }, progressMode, signalRConnection);
 
-            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Completed, episodeId: job.EpisodeId, cancellationToken: cancellationToken);
+            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Completed, progressMode, signalRConnection, episodeId: job.EpisodeId, cancellationToken: cancellationToken);
 
             await RefreshAppServiceCacheAsync(job.FeedId, cancellationToken);
 
@@ -392,7 +440,7 @@ public class NormalizationFunction
             _telemetryClient.Flush();
 
             var sanitizedError = SanitizeErrorMessage(ex);
-            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Failed, error: sanitizedError, cancellationToken: cancellationToken);
+            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Failed, progressMode, signalRConnection, error: sanitizedError, cancellationToken: cancellationToken);
 
             throw;
         }
@@ -412,18 +460,21 @@ public class NormalizationFunction
         NormalizationJob job,
         TableClient tableClient,
         NormalizationStage stage,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        HubConnection? signalRConnection = null)
     {
         var pendingBlob = containerClient.GetBlobClient(pendingBlobPath);
         var blobProperties = await pendingBlob.GetPropertiesAsync(cancellationToken: cancellationToken);
         var downloadSize = blobProperties.Value.ContentLength;
+        var progressThrottle = job.ProgressIntervalMs.HasValue ? TimeSpan.FromMilliseconds(job.ProgressIntervalMs.Value) : DefaultProgressThrottle;
+        var progressMode = job.ProgressMode;
 
         await UpdateProgressAsync(tableClient, job.JobId, new()
         {
             Stage = stage,
             ProgressPercent = 0,
             Message = "Preparing audio file"
-        });
+        }, progressMode, signalRConnection);
 
         var tempInputFile = Path.Combine(Path.GetTempPath(), $"{job.JobId}_{job.FileName}");
 
@@ -433,7 +484,7 @@ public class NormalizationFunction
         {
             var now = DateTime.UtcNow;
             var percent = downloadSize > 0 ? (int)(bytesDownloaded * 100 / downloadSize) : 0;
-            if (percent < 100 && now - downloadLastUpdate < ProgressUpdateThrottle)
+            if (percent < 100 && now - downloadLastUpdate < progressThrottle)
             {
                 return;
             }
@@ -445,7 +496,7 @@ public class NormalizationFunction
                 Stage = stage,
                 ProgressPercent = percent,
                 Message = "Preparing audio file"
-            }).ContinueWith(t => _logger.LogError(t.Exception, "Download progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
+            }, progressMode, signalRConnection).ContinueWith(t => _logger.LogError(t.Exception, "Download progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
         });
 
         await pendingBlob.DownloadToAsync(tempInputFile, new() { ProgressHandler = downloadProgress }, cancellationToken);
@@ -482,7 +533,7 @@ public class NormalizationFunction
         var tableClient = _tableClient.GetTableClient(TableName);
 
         // Ensure status is marked as Failed
-        await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Failed, error: "Job failed after maximum retry attempts", cancellationToken: cancellationToken);
+        await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Failed, job.ProgressMode, error: "Job failed after maximum retry attempts", cancellationToken: cancellationToken);
 
         // Clean up pending blob
         var containerClient = _blobClient.GetBlobContainerClient(_settings.ContainerName);
@@ -493,11 +544,13 @@ public class NormalizationFunction
         _logger.LogInformation("Poison job {JobId} cleanup completed", job.JobId);
     }
 
-    private static async Task UpdateJobStatusAsync(
+    private async Task UpdateJobStatusAsync(
         TableClient tableClient,
         string jobId,
         string feedId,
         JobStatus status,
+        string? progressMode = null,
+        HubConnection? signalRConnection = null,
         string? episodeId = null,
         string? error = null,
         CancellationToken cancellationToken = default)
@@ -508,6 +561,15 @@ public class NormalizationFunction
         {
             var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
             entity = existingResponse.Value;
+
+            // Don't overwrite a terminal state — first terminal state wins (e.g., user cancelled)
+            var currentStatus = entity.GetJobStatus();
+            if (currentStatus is JobStatus.Cancelled or JobStatus.Completed or JobStatus.Failed)
+            {
+                _logger.LogDebug("Skipping status update to {NewStatus} for job {JobId} — already in terminal state {Status}", status, jobId, currentStatus);
+
+                return;
+            }
         }
         catch (RequestFailedException ex) when (ex.Status == 404)
         {
@@ -530,15 +592,42 @@ public class NormalizationFunction
         }
 
         await tableClient.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
+
+        // Fire-and-forget push for terminal states
+        if (progressMode == "push")
+        {
+            _ = PushProgressToServerAsync(jobId, entity);
+        }
+        else if (progressMode == "signalr" && signalRConnection != null)
+        {
+            // Await terminal states to ensure delivery before HubConnection disposal
+            if (status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+            {
+                await PushProgressViaSignalRAsync(signalRConnection, jobId, entity);
+            }
+            else
+            {
+                _ = PushProgressViaSignalRAsync(signalRConnection, jobId, entity);
+            }
+        }
     }
 
-    private async Task UpdateProgressAsync(TableClient tableClient, string jobId, ProgressUpdate progress)
+    private async Task UpdateProgressAsync(TableClient tableClient, string jobId, ProgressUpdate progress, string? progressMode = null, HubConnection? signalRConnection = null)
     {
         try
         {
             // Read existing entity to preserve QueuedAt and other fields
             var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId);
             var entity = existingResponse.Value;
+
+            // Don't overwrite terminal states (e.g., user cancelled the job)
+            var currentStatus = entity.GetJobStatus();
+            if (currentStatus is JobStatus.Cancelled or JobStatus.Completed or JobStatus.Failed)
+            {
+                _logger.LogDebug("Skipping progress update for job {JobId} — already in terminal state {Status}", jobId, currentStatus);
+
+                return;
+            }
 
             // Update progress fields
             entity.Stage = progress.Stage.ToString();
@@ -569,6 +658,24 @@ public class NormalizationFunction
 
             await tableClient.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace);
             _logger.LogDebug("Progress update saved: {Stage} {Percent}%", progress.Stage, progress.ProgressPercent);
+
+            // Fire-and-forget push after successful Table Storage write
+            if (progressMode == "push")
+            {
+                _ = PushProgressToServerAsync(jobId, entity);
+            }
+            else if (progressMode == "signalr" && signalRConnection != null)
+            {
+                // Await terminal stages to ensure delivery before HubConnection disposal
+                if (progress.Stage is Completed or Failed or Cancelled)
+                {
+                    await PushProgressViaSignalRAsync(signalRConnection, jobId, entity);
+                }
+                else
+                {
+                    _ = PushProgressViaSignalRAsync(signalRConnection, jobId, entity);
+                }
+            }
         }
         catch (RequestFailedException ex) when (ex.Status == 412)
         {
@@ -582,6 +689,67 @@ public class NormalizationFunction
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to update progress for job {JobId}", jobId);
+        }
+    }
+
+    private async Task PushProgressToServerAsync(string jobId, JobStatusEntity entity)
+    {
+        if (string.IsNullOrEmpty(_settings.AppServiceUrl))
+        {
+            return;
+        }
+
+        try
+        {
+            using var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(3);
+
+            if (!string.IsNullOrEmpty(_settings.InternalKey))
+            {
+                client.DefaultRequestHeaders.Add("X-Internal-Key", _settings.InternalKey);
+            }
+
+            var response = JobStatusResponse.FromEntity(entity);
+            var json = JsonSerializer.Serialize(response, JsonOptions);
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+
+            await client.PostAsync($"{_settings.AppServiceUrl}/api/internal/jobs/{jobId}/progress", content);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to push progress for job {JobId}", jobId);
+        }
+    }
+
+    private HubConnection? CreateSignalRConnection()
+    {
+        if (string.IsNullOrEmpty(_settings.AppServiceUrl))
+        {
+            return null;
+        }
+
+        var hubUrl = $"{_settings.AppServiceUrl}/api/internal/signalrhub";
+        if (!string.IsNullOrEmpty(_settings.InternalKey))
+        {
+            hubUrl += $"?key={Uri.EscapeDataString(_settings.InternalKey)}";
+        }
+
+        return new HubConnectionBuilder()
+            .WithUrl(hubUrl)
+            .WithAutomaticReconnect()
+            .Build();
+    }
+
+    private async Task PushProgressViaSignalRAsync(HubConnection connection, string jobId, JobStatusEntity entity)
+    {
+        try
+        {
+            var response = JobStatusResponse.FromEntity(entity);
+            await connection.SendAsync("SendProgress", jobId, response);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to push progress via SignalR for job {JobId}", jobId);
         }
     }
 

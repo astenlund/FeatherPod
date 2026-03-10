@@ -96,6 +96,16 @@ public record NormalizationJob
     /// Loudness analysis results from Pass 1. Set when Phase=Normalize.
     /// </summary>
     public LoudnessAnalysisData? Analysis { get; init; }
+
+    /// <summary>
+    /// Progress delivery mode: "poll", "push", or "signalr" (null = poll).
+    /// </summary>
+    public string? ProgressMode { get; init; }
+
+    /// <summary>
+    /// Progress update throttle interval in milliseconds (null = 500).
+    /// </summary>
+    public int? ProgressIntervalMs { get; init; }
 }
 
 /// <summary>

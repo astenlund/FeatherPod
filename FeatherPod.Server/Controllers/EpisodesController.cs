@@ -15,6 +15,8 @@ public class EpisodesController : ControllerBase
     private readonly IJobService _jobService;
     private readonly IUserService _userService;
     private readonly string _baseUrl;
+    private readonly string? _progressMode;
+    private readonly int _progressIntervalMs;
 
     public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IConfiguration configuration)
     {
@@ -24,6 +26,10 @@ public class EpisodesController : ControllerBase
         _userService = userService;
         _baseUrl = configuration.GetSection("Podcast")["BaseUrl"]
             ?? throw new InvalidOperationException("Podcast.BaseUrl must be configured in appsettings.json");
+
+        var mode = configuration.GetValue("PushPage:ProgressMode", "signalr");
+        _progressMode = mode is "push" or "signalr" ? mode : null;
+        _progressIntervalMs = configuration.GetValue("PushPage:ProgressIntervalMs", 250);
     }
 
     [HttpGet]
@@ -162,11 +168,13 @@ public class EpisodesController : ControllerBase
                     Summary = summary,
                     PublishedDate = effectivePublishedDate,
                     QueuedAt = DateTime.UtcNow,
-                    Source = source
+                    Source = source,
+                    ProgressMode = _progressMode,
+                    ProgressIntervalMs = _progressIntervalMs
                 };
 
                 await _jobService.QueueNormalizationJobAsync(job, HttpContext.RequestAborted);
-                await _jobService.CreateJobStatusAsync(jobId, feedId, file.FileName, HttpContext.RequestAborted);
+                await _jobService.CreateJobStatusAsync(jobId, feedId, file.FileName, _progressMode, _progressIntervalMs, HttpContext.RequestAborted);
 
                 var response = new JobStatusResponse
                 {

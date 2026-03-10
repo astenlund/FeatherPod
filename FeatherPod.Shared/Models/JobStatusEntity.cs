@@ -80,6 +80,16 @@ public class JobStatusEntity : ITableEntity
     public string? FileName { get; set; }
 
     /// <summary>
+    /// Progress delivery mode: "poll", "push", or "signalr" (null = poll).
+    /// </summary>
+    public string? ProgressMode { get; set; }
+
+    /// <summary>
+    /// Progress update throttle interval in milliseconds (null = 500).
+    /// </summary>
+    public int? ProgressIntervalMs { get; set; }
+
+    /// <summary>
     /// Azure Table Storage timestamp (managed by the service).
     /// </summary>
     public DateTimeOffset? Timestamp { get; set; }
@@ -108,7 +118,7 @@ public class JobStatusEntity : ITableEntity
     /// <summary>
     /// Create a new JobStatusEntity for a queued job.
     /// </summary>
-    public static JobStatusEntity CreateQueued(string jobId, string feedId, string? fileName = null)
+    public static JobStatusEntity CreateQueued(string jobId, string feedId, string? fileName = null, string? progressMode = null, int? progressIntervalMs = null)
     {
         return new JobStatusEntity
         {
@@ -118,6 +128,8 @@ public class JobStatusEntity : ITableEntity
             Stage = nameof(NormalizationStage.Queued),
             FeedId = feedId,
             FileName = fileName,
+            ProgressMode = progressMode,
+            ProgressIntervalMs = progressIntervalMs,
             QueuedAt = DateTimeOffset.UtcNow,
             ProgressPercent = 0,
             ProgressMessage = "Waiting in queue"

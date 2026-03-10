@@ -56,7 +56,9 @@ public partial class JobProgressIntegrationTests : IDisposable
         content.Add(fileContent, "file", "test-normalize.mp3");
         content.Add(new StringContent("Normalize Test Episode"), "title");
 
-        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{feedId}/episodes?normalize=true");
+        var url = $"/api/feeds/{feedId}/episodes?normalize=true";
+
+        var request = new HttpRequestMessage(HttpMethod.Post, url);
         request.Content = content;
         request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
 
@@ -377,6 +379,90 @@ public partial class JobProgressIntegrationTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var content = await response.Content.ReadAsStringAsync();
         Assert.Contains("\"status\":\"Cancelled\"", content);
+    }
+
+    [AzuriteFact]
+    public async Task CancelJob_ActiveJobsEndpoint_ShouldExcludeCancelledJob()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+        var jobId1 = await UploadWithNormalizeAsync();
+        var jobId2 = await UploadWithNormalizeAsync();
+
+        // Cancel one of the two jobs
+        var cancelRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/jobs/{jobId1}/cancel");
+        cancelRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var cancelResponse = await _client.SendAsync(cancelRequest);
+        Assert.Equal(HttpStatusCode.OK, cancelResponse.StatusCode);
+
+        // Act — fetch active jobs (the endpoint the push page calls on refresh)
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/api/feeds/{TestFeedId}/jobs");
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var content = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain(jobId1, content);
+        Assert.Contains(jobId2, content);
+    }
+
+    [AzuriteFact]
+    public async Task CancelJob_DuringSSEStream_ShouldDeliverCancelledEvent()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+        var jobId = await UploadWithNormalizeAsync();
+
+        // Start SSE stream (push mode subscribes to IJobProgressChannel)
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var sseResponse = await _client.GetAsync(
+            $"/api/jobs/{jobId}/progress",
+            HttpCompletionOption.ResponseHeadersRead,
+            cts.Token);
+        Assert.Equal(HttpStatusCode.OK, sseResponse.StatusCode);
+
+        // Read initial progress event
+        var stream = await sseResponse.Content.ReadAsStreamAsync(cts.Token);
+        using var reader = new StreamReader(stream);
+        var initialEvents = new List<string>();
+        while (true)
+        {
+            var line = await reader.ReadLineAsync(cts.Token);
+            if (line == null || line == string.Empty) break;
+            initialEvents.Add(line);
+        }
+
+        // Act — cancel the job while SSE is streaming
+        var cancelRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/jobs/{jobId}/cancel");
+        cancelRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var cancelResponse = await _client.SendAsync(cancelRequest);
+        Assert.Equal(HttpStatusCode.OK, cancelResponse.StatusCode);
+
+        // Assert — SSE should deliver a progress event with Cancelled status, then done
+        var events = new List<(string eventType, string data)>();
+        string? currentEvent = null;
+        try
+        {
+            while (events.Count < 5 && !cts.IsCancellationRequested)
+            {
+                var line = await reader.ReadLineAsync(cts.Token);
+                if (line == null) break;
+                if (line.StartsWith("event: ")) currentEvent = line[7..];
+                else if (line.StartsWith("data: ") && currentEvent != null)
+                {
+                    events.Add((currentEvent, line[6..]));
+                    currentEvent = null;
+                    if (events.Last().eventType is "done" or "error") break;
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (IOException) { }
+
+        var cancelEvent = events.FirstOrDefault(e => e.eventType == "progress" && e.data.Contains("Cancelled"));
+        Assert.NotNull(cancelEvent.data);
+        Assert.Contains(events, e => e.eventType == "done");
     }
 
     [AzuriteFact]
