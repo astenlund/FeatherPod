@@ -308,6 +308,60 @@ app.MapGet("/{feedId}/push/sw.js", (string feedId, IWebHostEnvironment env, Http
     .Produces(200, contentType: "application/javascript")
     .Produces(400);
 
+app.MapGet("/{feedId}/push/app.js", (string feedId, IWebHostEnvironment env, HttpContext context) =>
+    {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
+        string js;
+        if (env.IsDevelopment())
+        {
+            var pushDir = Path.Combine(env.ContentRootPath, "Pages", "Push");
+            js = File.ReadAllText(Path.Combine(pushDir, "push.js"));
+        }
+        else
+        {
+            var assembly = typeof(Program).Assembly;
+            js = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.js");
+        }
+
+        context.Response.Headers.CacheControl = "no-cache";
+
+        return Results.Content(js, "application/javascript");
+    })
+    .WithName("GetPushAppJs")
+    .Produces(200, contentType: "application/javascript")
+    .Produces(400);
+
+app.MapGet("/{feedId}/push/app.css", (string feedId, IWebHostEnvironment env, HttpContext context) =>
+    {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
+        string css;
+        if (env.IsDevelopment())
+        {
+            var pushDir = Path.Combine(env.ContentRootPath, "Pages", "Push");
+            css = File.ReadAllText(Path.Combine(pushDir, "push.css"));
+        }
+        else
+        {
+            var assembly = typeof(Program).Assembly;
+            css = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.css");
+        }
+
+        context.Response.Headers.CacheControl = "no-cache";
+
+        return Results.Content(css, "text/css");
+    })
+    .WithName("GetPushAppCss")
+    .Produces(200, contentType: "text/css")
+    .Produces(400);
+
 // Audio file streaming with range support
 app.MapGet("/{feedId}/audio/{filename}", async (string feedId, string filename, IBlobStorageService service, HttpContext context) =>
     {
@@ -423,23 +477,19 @@ static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvi
 {
     var escapedTitle = System.Net.WebUtility.HtmlEncode(feedTitle);
 
-    string html, css, js;
+    string html;
 
     if (env.IsDevelopment())
     {
         // In development, read from disk for hot-reload
         var pushDir = Path.Combine(env.ContentRootPath, "Pages", "Push");
         html = File.ReadAllText(Path.Combine(pushDir, "push.html"));
-        css = File.ReadAllText(Path.Combine(pushDir, "push.css"));
-        js = File.ReadAllText(Path.Combine(pushDir, "push.js"));
     }
     else
     {
         // In production, use embedded resources
         var assembly = typeof(Program).Assembly;
         html = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.html");
-        css = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.css");
-        js = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.js");
     }
 
     var pwaHead = pwaEnabled
@@ -454,8 +504,6 @@ static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvi
         : "";
 
     return html
-        .Replace("/* {{CSS}} */", css)
-        .Replace("/* {{JS}} */", js)
         .Replace("{{PWA_HEAD}}", pwaHead)
         .Replace("{{FEED_ID}}", feedId)
         .Replace("{{FEED_TITLE}}", escapedTitle)

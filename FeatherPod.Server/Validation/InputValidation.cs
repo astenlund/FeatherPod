@@ -20,6 +20,10 @@ public static partial class InputValidation
     [GeneratedRegex(@"^[^/\\:\*\?""<>\|\x00]+$")]
     private static partial Regex SafeFilenamePattern();
 
+    // Duration strings: optional days, hours, minutes (e.g., "1h", "30m", "2h30m", "1d")
+    [GeneratedRegex(@"^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?$")]
+    private static partial Regex DurationPattern();
+
     /// <summary>
     /// Validates a feed ID for safe use in URLs and file paths.
     /// </summary>
@@ -86,5 +90,36 @@ public static partial class InputValidation
         return string.IsNullOrWhiteSpace(userId)
             ? "User ID is required"
             : "User ID must be 1-64 characters, alphanumeric with hyphens only (no underscores or dots)";
+    }
+
+    /// <summary>
+    /// Parse a simple duration string like "1h", "30m", "2h30m", "1d" into a TimeSpan.
+    /// </summary>
+    public static bool TryParseDuration(string? input, out TimeSpan result)
+    {
+        result = TimeSpan.Zero;
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return false;
+        }
+
+        var match = DurationPattern().Match(input.Trim());
+        if (!match.Success || match.Length == 0)
+        {
+            return false;
+        }
+
+        if (!int.TryParse(match.Groups[1].ValueSpan, out var days)) { days = 0; }
+        if (!int.TryParse(match.Groups[2].ValueSpan, out var hours)) { hours = 0; }
+        if (!int.TryParse(match.Groups[3].ValueSpan, out var minutes)) { minutes = 0; }
+
+        if (days == 0 && hours == 0 && minutes == 0)
+        {
+            return false;
+        }
+
+        result = new TimeSpan(days, hours, minutes, 0);
+
+        return true;
     }
 }

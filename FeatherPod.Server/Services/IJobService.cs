@@ -33,6 +33,11 @@ public interface IJobService
     Task<List<JobStatusEntity>> GetActiveJobsByFeedAsync(string feedId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Get all jobs (including terminal) for a feed within a time window.
+    /// </summary>
+    Task<List<JobStatusEntity>> GetRecentJobsByFeedAsync(string feedId, TimeSpan since, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Cancel a job. Returns updated entity, or null if the job is already in a terminal state.
     /// </summary>
     Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default);

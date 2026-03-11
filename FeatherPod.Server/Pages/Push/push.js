@@ -1,6 +1,4 @@
-const FEED_ID = '{{FEED_ID}}';
-const IS_DEV = '{{IS_DEV}}' === 'true';
-const PROGRESS_SMOOTHING = '{{PROGRESS_SMOOTHING}}' === 'true';
+// FEED_ID, IS_DEV, PROGRESS_SMOOTHING are set as globals by the HTML page
 const SHOW_GHOST = IS_DEV && window.location.search.includes('ghost');
 const DEBUG_TITLE_ANIMATION = IS_DEV && window.location.search.includes('alive');
 const VELOCITY_OVERRIDES = IS_DEV ? parseVelocityOverrides() : {};
@@ -54,18 +52,18 @@ function parseVelocityOverrides() {
  * @property {string} fileName - Original file name
  * @property {boolean} validationError - Whether failure is due to validation (no retry)
  * @property {boolean} backgroundMonitoring - Whether normalization is being monitored in the background
+ * @property {number} startedAt - Epoch ms when entry was created (for 1-hour localStorage filtering)
  * @property {Function|null} _resolveMonitor - Internal: resolve function for normalization promise
  */
 
 let apiKey = null;
-const states = ['no-key', 'ready', 'queue', 'batch-complete', 'error'];
+const states = ['no-key', 'ready', 'queue', 'error'];
 const QUEUE_STORAGE_KEY = 'featherpod_queue_' + FEED_ID;
 const HISTORY_STORAGE_KEY = 'featherpod_history_' + FEED_ID;
 const HISTORY_FILTER_KEY = 'featherpod_history_filter_' + FEED_ID;
 const API_KEY_SESSION_KEY = 'featherpod_api_key_' + FEED_ID;
 const API_KEY_LOCAL_KEY = 'featherpod_api_key_local_' + FEED_ID;
 const API_KEY_COOKIE_KEY = 'featherpod_key_' + FEED_ID;
-const QUEUE_COOKIE_KEY = 'featherpod_queue_' + FEED_ID;
 const MAX_LOCAL_HISTORY = 50;
 
 // No-key state UI strings
@@ -248,8 +246,6 @@ function showState(stateName) {
     let targetWord;
     if (stateName === 'queue') {
         targetWord = 'Pushing';
-    } else if (stateName === 'batch-complete') {
-        targetWord = 'Pushed';
     } else {
         targetWord = 'Push';
     }
@@ -259,7 +255,7 @@ function showState(stateName) {
         let startWord;
         if (stateName === 'queue') {
             startWord = 'Push';
-        } else if (stateName === 'batch-complete' || stateName === 'error') {
+        } else if (stateName === 'error') {
             startWord = 'Pushing';
         } else {
             startWord = 'Pushed';
@@ -314,6 +310,19 @@ function getCurrentState() {
     }) || null;
 }
 
+/**
+ * Update the queue title to "Pushing" or "Pushed" based on active work.
+ * No-op if not currently in queue state.
+ */
+function updateQueueTitle() {
+    if (getCurrentState() !== 'queue') {
+        return;
+    }
+    const hasActive = uploadQueue.some(e =>
+        e.status === 'queued' || e.status === 'uploading' || e.status === 'normalizing'
+    );
+    animateTitle(hasActive ? 'Pushing' : 'Pushed');
+}
 
 /** @type {number} - Cached container width for consistent animations */
 let cachedContainerWidth = 0;
@@ -1091,8 +1100,8 @@ async function init() {
         return;
     }
 
-    // Start fetching active jobs from server (fire-and-forget, merges when resolved)
-    const serverJobsPromise = fetchActiveJobsFromServer();
+    // Start fetching recent jobs from server (fire-and-forget, merges when resolved)
+    const serverJobsPromise = fetchRecentJobs();
 
     // Consume any files shared via PWA Share Target. If found, skip restoreQueueState
     // because it overwrites uploadQueue and would discard the shared files.
@@ -1475,18 +1484,6 @@ if (queueDropZone) {
     });
 }
 
-// Upload more button (batch-complete state)
-document.getElementById('upload-more')?.addEventListener('click', async () => {
-    uploadQueue = [];
-    activeUploadId = null;
-    isUploading = false;
-    clearQueueState();
-    document.getElementById('file-input').value = '';
-    showState('ready');
-    await initHistorySection();
-    document.getElementById('select-file').focus();
-});
-
 // ============================================================================
 // QUEUE MANAGEMENT (Steps 4-8)
 // ============================================================================
@@ -1599,6 +1596,8 @@ function addFilesToQueue(files) {
             fileSize: file.size,
             fileName: file.name,
             validationError: !valid,
+            backgroundMonitoring: false,
+            startedAt: Date.now(),
             _resolveMonitor: null
         });
     }
@@ -1648,7 +1647,7 @@ function removeFromQueue(entryId) {
 
 /**
  * Find the next queued entry and start processing it.
- * If no queued entries remain, transitions to batch-complete.
+ * If no queued entries remain, checks if all work is complete.
  */
 function processQueue() {
     const nextEntry = uploadQueue.find(e => e.status === 'queued');
@@ -1673,40 +1672,9 @@ function advanceQueue() {
 }
 
 /**
- * Transition to batch-complete state and show summary.
- */
-function onBatchComplete() {
-    isUploading = false;
-    activeUploadId = null;
-
-    // If nothing completed or failed, go back to ready (e.g. everything was cancelled)
-    const hasResults = uploadQueue.some(e => e.status === 'completed' || e.status === 'failed');
-    if (!hasResults) {
-        const queueDZHeight = document.getElementById('queue-drop-zone')?.getBoundingClientRect().height || 0;
-        if (queueDZHeight > 0) prepareReadyDropZoneMorph(queueDZHeight);
-        clearQueueState();
-        showState('ready');
-        if (queueDZHeight > 0) animateReadyDropZoneMorph();
-        void initHistorySection();
-
-        return;
-    }
-
-    saveQueueState();
-
-    // Invalidate caches for history
-    cachedBrowserUploads = null;
-    cachedAllUploads = null;
-
-    showState('batch-complete');
-    renderBatchList();
-    updateBatchSummary();
-    document.getElementById('upload-more')?.focus();
-}
-
-/**
- * Check if all entries have reached a terminal state and transition to batch-complete if so.
- * Called from multiple places where background work finishes (normalization, cancellation).
+ * Check if all entries have reached a terminal state.
+ * When all are terminal, stays in queue state and animates title to "Pushed".
+ * When queue is empty, transitions back to ready state.
  */
 function checkAllComplete() {
     if (uploadQueue.length === 0) {
@@ -1720,13 +1688,18 @@ function checkAllComplete() {
         return;
     }
 
-    if (getCurrentState() === 'batch-complete') return;
-
     const hasActiveWork = uploadQueue.some(e =>
         e.status === 'queued' || e.status === 'uploading' || e.status === 'normalizing'
     );
     if (!hasActiveWork) {
-        onBatchComplete();
+        isUploading = false;
+        activeUploadId = null;
+        updateQueueTitle();
+        saveQueueState();
+
+        // Invalidate caches for history
+        cachedBrowserUploads = null;
+        cachedAllUploads = null;
     }
 }
 
@@ -3458,14 +3431,8 @@ function retryEntry(entryId) {
         uploadQueue.push(entry);
     }
 
-    if (getCurrentState() === 'batch-complete') {
-        showState('queue');
-        renderQueueList();
-    
-    } else {
-        updateQueueItemInDOM(entry);
-    
-    }
+    updateQueueItemInDOM(entry);
+    updateQueueTitle();
 
     saveQueueState();
 
@@ -3499,46 +3466,6 @@ function renderQueueList(animateNew) {
         }
         container.appendChild(el);
     }
-}
-
-/**
- * Render the batch-complete list into #batch-list.
- */
-function renderBatchList() {
-    const container = document.getElementById('batch-list');
-    if (!container) {
-        return;
-    }
-    container.innerHTML = '';
-
-    for (const entry of uploadQueue) {
-        if (entry.status === 'cancelled') continue;
-        container.appendChild(createQueueItemElement(entry));
-    }
-}
-
-/**
- * Update the batch summary text.
- */
-function updateBatchSummary() {
-    const summary = document.getElementById('batch-summary');
-    if (!summary) {
-        return;
-    }
-
-    const completed = uploadQueue.filter(e => e.status === 'completed').length;
-    const failed = uploadQueue.filter(e => e.status === 'failed').length;
-
-    const parts = [];
-    if (completed > 0) {
-        parts.push(completed + ' uploaded');
-    }
-    if (failed > 0) {
-        parts.push(failed + ' failed');
-    }
-
-    summary.textContent = parts.join(', ') || 'No files processed';
-    summary.style.display = parts.length > 0 ? '' : 'none';
 }
 
 /**
@@ -3764,7 +3691,6 @@ function getEntryProgressBar(entryId) {
 
 /**
  * Save queue state to localStorage (omits File objects and XHR/EventSource refs).
- * Active jobs (normalizing with a jobId) are also saved to a cookie as fallback.
  */
 function saveQueueState() {
     try {
@@ -3779,30 +3705,17 @@ function saveQueueState() {
             episodeId: e.episodeId,
             episode: e.episode,
             error: e.error,
-            validationError: e.validationError
+            validationError: e.validationError,
+            startedAt: e.startedAt
         }));
         localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(serialized));
-    } catch (e) {
-        // Ignore
-    }
-
-    // Cookie fallback: store only active server-side jobs (compact, fits in ~4 kB)
-    const activeJobs = uploadQueue
-        .filter(e => e.status === 'normalizing' && e.jobId)
-        .map(e => ({ j: e.jobId, f: e.fileName, s: e.fileSize }));
-    try {
-        if (activeJobs.length > 0) {
-            setCookie(QUEUE_COOKIE_KEY, JSON.stringify(activeJobs), 1);
-        } else {
-            deleteCookie(QUEUE_COOKIE_KEY);
-        }
     } catch (e) {
         // Ignore
     }
 }
 
 /**
- * Clear in-memory queue and persisted queue state from localStorage and cookie.
+ * Clear in-memory queue and persisted queue state from localStorage.
  */
 function clearQueueState() {
     uploadQueue = [];
@@ -3811,7 +3724,6 @@ function clearQueueState() {
     } catch (e) {
         // Ignore
     }
-    try { deleteCookie(QUEUE_COOKIE_KEY); } catch (e) { /* ignore */ }
 }
 
 /**
@@ -3847,42 +3759,13 @@ async function consumeSharedFiles() {
 
 /**
  * Restore queue state from localStorage.
- * Falls back to cookie for active normalization jobs if localStorage is empty.
+ * Filters out entries older than 1 hour. Entries without startedAt (pre-migration) are treated as expired.
  * @returns {Promise<boolean>} True if state was restored
  */
 async function restoreQueueState() {
-    // Restore queue state (localStorage with cookie fallback for active jobs)
     const saved = localStorage.getItem(QUEUE_STORAGE_KEY);
     if (!saved) {
-        // Cookie fallback: restore active server-side jobs
-        const cookieState = getCookie(QUEUE_COOKIE_KEY);
-        if (!cookieState) {
-            return false;
-        }
-
-        const activeJobs = tryParseJson(cookieState);
-        if (!activeJobs || !Array.isArray(activeJobs) || activeJobs.length === 0) {
-            deleteCookie(QUEUE_COOKIE_KEY);
-
-            return false;
-        }
-
-        uploadQueue = activeJobs.map(j => ({
-            id: generateEntryId(), file: null,
-            status: 'normalizing', progress: 0, stage: 'Queued',
-            jobId: j.j, episodeId: null, episode: null,
-            error: null, xhr: null, eventSource: null,
-            fileSize: j.s || 0, fileName: j.f || 'Unknown',
-            validationError: false, backgroundMonitoring: false, _resolveMonitor: null
-        }));
-        showState('queue');
-        renderQueueList();
-        void initHistorySection();
-        for (const entry of uploadQueue) {
-            monitorEntryNormalizationInBackground(entry);
-        }
-
-        return true;
+        return false;
     }
 
     const entries = tryParseJson(saved);
@@ -3892,8 +3775,17 @@ async function restoreQueueState() {
         return false;
     }
 
+    // Filter out entries older than 1 hour (or missing startedAt — pre-migration)
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    const recentEntries = entries.filter(e => e.startedAt && e.startedAt >= oneHourAgo);
+    if (recentEntries.length === 0) {
+        clearQueueState();
+
+        return false;
+    }
+
     // Rebuild queue (File/XHR/EventSource are not serializable)
-    uploadQueue = entries.map(e => ({
+    uploadQueue = recentEntries.map(e => ({
         ...e,
         file: null,
         xhr: null,
@@ -3901,62 +3793,48 @@ async function restoreQueueState() {
         _resolveMonitor: null
     }));
 
-    // Mark uploading entries as failed (can't resume XHR)
+    // Mark uploading entries as failed (can't resume XHR), queued as cancelled (files lost on reload)
     for (const entry of uploadQueue) {
         if (entry.status === 'uploading') {
             entry.status = 'failed';
             entry.error = 'Upload interrupted';
+        } else if (entry.status === 'queued') {
+            entry.status = 'cancelled';
         }
     }
 
-    const hasNormalizing = uploadQueue.filter(e => e.status === 'normalizing' && e.jobId);
-    const hasQueued = uploadQueue.some(e => e.status === 'queued');
+    // Remove cancelled entries (nothing useful to show for lost files)
+    uploadQueue = uploadQueue.filter(e => e.status !== 'cancelled');
+    if (uploadQueue.length === 0) {
+        clearQueueState();
 
-    if (hasNormalizing.length > 0) {
-        // Reconnect to all normalizing entries; mark remaining queued entries as cancelled (files lost on reload)
-        for (const e of uploadQueue) {
-            if (e.status === 'queued') {
-                e.status = 'cancelled';
-            }
-        }
-        showState('queue');
-        renderQueueList();
-        void initHistorySection();
-        for (const entry of hasNormalizing) {
-            monitorEntryNormalizationInBackground(entry);
-        }
-
-        return true;
-    } else if (hasQueued) {
-        // Files lost on reload — mark queued entries as cancelled
-        for (const entry of uploadQueue) {
-            if (entry.status === 'queued') {
-                entry.status = 'cancelled';
-            }
-        }
-        showState('batch-complete');
-        renderBatchList();
-        updateBatchSummary();
-
-        return true;
-    } else {
-        // All terminal
-        showState('batch-complete');
-        renderBatchList();
-        updateBatchSummary();
-
-        return true;
+        return false;
     }
+
+    showState('queue');
+    renderQueueList();
+    void initHistorySection();
+
+    // Reconnect SSE for normalizing entries
+    for (const entry of uploadQueue.filter(e => e.status === 'normalizing' && e.jobId)) {
+        monitorEntryNormalizationInBackground(entry);
+    }
+
+    // Update title based on whether there's active work
+    updateQueueTitle();
+
+    return true;
 }
 
 /**
- * Fetch active normalization jobs for this feed from the server.
+ * Fetch recent normalization jobs (last hour) for this feed from the server.
+ * Returns all jobs including terminal ones within the time window.
  * Returns null on any error (silent fallback to local-only state).
  * @returns {Promise<Array<Object>|null>} Array of JobStatusResponse objects, or null on error
  */
-async function fetchActiveJobsFromServer() {
+async function fetchRecentJobs() {
     try {
-        const response = await fetch('/api/feeds/' + FEED_ID + '/jobs', {
+        const response = await fetch('/api/feeds/' + FEED_ID + '/jobs?since=1h', {
             headers: { 'X-API-Key': apiKey }
         });
         if (!response.ok) {
@@ -3970,12 +3848,12 @@ async function fetchActiveJobsFromServer() {
 }
 
 /**
- * Merge server-known active jobs into the local upload queue.
- * Reconciles local state with server's authoritative list of active jobs:
- * - Removes local entries whose jobs the server no longer considers active
- * - Updates existing entries with fresh server data
- * - Recovers failed entries that the server says are still active
- * - Adds new entries for jobs not in the local queue (e.g., from CLI or another tab)
+ * Merge server-known recent jobs into the local upload queue.
+ * The server response contains ALL recent jobs (active + terminal from last hour).
+ * Reconciles local state with server data:
+ * - Removes stale local entries (normalizing/failed with jobId not in server response)
+ * - Updates existing entries with server data (stage, progress, terminal status)
+ * - Adds new entries for unknown server jobs (e.g., from CLI or another tab), skipping cancelled jobs
  * If serverJobs is null (fetch failed), skips reconciliation entirely.
  * @param {Array<Object>|null} serverJobs - Array of JobStatusResponse objects, or null on error
  */
@@ -3984,19 +3862,18 @@ function mergeServerJobs(serverJobs) {
         return; // Server fetch failed — don't reconcile, let SSE handle it
     }
 
-    const serverJobIds = new Set(serverJobs.map(j => j.jobId));
+    const serverJobMap = new Map(serverJobs.map(j => [j.jobId, j]));
     const existingJobIds = new Set(uploadQueue.map(e => e.jobId).filter(Boolean));
     let changed = false;
 
-    // Remove local entries whose jobs the server no longer considers active
-    // (e.g., job was cancelled/failed from another tab, CLI, or a previous session)
-    const staleEntries = uploadQueue.filter(e => e.jobId && (e.status === 'normalizing' || e.status === 'failed') && !serverJobIds.has(e.jobId));
+    // Remove stale local entries (normalizing/failed with jobId not in server response —
+    // means job was cleaned up or is older than 1 hour)
+    const staleEntries = uploadQueue.filter(e => e.jobId && (e.status === 'normalizing' || e.status === 'failed') && !serverJobMap.has(e.jobId));
     for (const stale of staleEntries) {
         if (stale.eventSource) {
             stale.eventSource.close();
             stale.eventSource = null;
         }
-        stale.status = 'cancelled';
         removeQueueItemFromDOM(stale.id);
         uploadQueue.splice(uploadQueue.indexOf(stale), 1);
         if (stale._resolveMonitor) {
@@ -4009,13 +3886,49 @@ function mergeServerJobs(serverJobs) {
     // Update existing entries with fresh server data
     for (const serverJob of serverJobs) {
         const existing = uploadQueue.find(e => e.jobId === serverJob.jobId);
-        if (existing && existing.status === 'normalizing') {
+        if (!existing) {
+            continue;
+        }
+
+        const serverStatus = serverJob.status;
+        const isServerTerminal = serverStatus === 'Completed' || serverStatus === 'Failed' || serverStatus === 'Cancelled';
+
+        if (existing.status === 'normalizing' && serverStatus === 'Cancelled') {
+            // Server says cancelled — remove from queue (consistent with other cancel paths)
+            if (existing.eventSource) {
+                existing.eventSource.close();
+                existing.eventSource = null;
+            }
+            existing.status = 'cancelled';
+            removeQueueItemFromDOM(existing.id);
+            uploadQueue.splice(uploadQueue.indexOf(existing), 1);
+            if (existing._resolveMonitor) {
+                existing._resolveMonitor();
+                existing._resolveMonitor = null;
+            }
+            changed = true;
+        } else if (existing.status === 'normalizing' && isServerTerminal) {
+            // Server says terminal but local still normalizing — update to terminal
+            if (existing.eventSource) {
+                existing.eventSource.close();
+                existing.eventSource = null;
+            }
+            existing.status = serverStatus === 'Completed' ? 'completed' : 'failed';
+            existing.error = serverJob.error || null;
+            existing.episodeId = serverJob.episodeId || existing.episodeId;
+            existing.stage = serverJob.stage || existing.stage;
+            existing.progress = 100;
+            if (existing._resolveMonitor) {
+                existing._resolveMonitor();
+                existing._resolveMonitor = null;
+            }
+            changed = true;
+        } else if (existing.status === 'normalizing') {
             existing.stage = serverJob.stage || existing.stage;
             existing.progress = serverJob.progressPercent ?? existing.progress;
             changed = true;
-        } else if (existing && existing.status === 'failed') {
+        } else if (existing.status === 'failed' && !isServerTerminal) {
             // Recover failed entries that the server says are still active
-            // (e.g., SSE failed due to transient network error)
             existing.status = 'normalizing';
             existing.stage = serverJob.stage || 'Queued';
             existing.progress = serverJob.progressPercent ?? 0;
@@ -4029,22 +3942,28 @@ function mergeServerJobs(serverJobs) {
     const newEntries = [];
     for (const serverJob of serverJobs) {
         if (!existingJobIds.has(serverJob.jobId)) {
+            const serverStatus = serverJob.status;
+            const isServerTerminal = serverStatus === 'Completed' || serverStatus === 'Failed' || serverStatus === 'Cancelled';
+            if (serverStatus === 'Cancelled') {
+                continue;
+            }
             newEntries.push({
                 id: generateEntryId(),
                 file: null,
-                status: 'normalizing',
-                progress: serverJob.progressPercent ?? 0,
+                status: isServerTerminal ? (serverStatus === 'Completed' ? 'completed' : 'failed') : 'normalizing',
+                progress: serverJob.progressPercent ?? (isServerTerminal ? 100 : 0),
                 stage: serverJob.stage || 'Queued',
                 jobId: serverJob.jobId,
                 episodeId: serverJob.episodeId || null,
                 episode: null,
-                error: null,
+                error: serverJob.error || null,
                 xhr: null,
                 eventSource: null,
                 fileSize: 0,
                 fileName: serverJob.fileName || 'Unknown',
                 validationError: false,
                 backgroundMonitoring: false,
+                startedAt: serverJob.queuedAt ? new Date(serverJob.queuedAt).getTime() : Date.now(),
                 _resolveMonitor: null
             });
         }
@@ -4058,7 +3977,7 @@ function mergeServerJobs(serverJobs) {
 
     const currentState = getCurrentState();
 
-    if (newEntries.length > 0 && (currentState === 'ready' || currentState === 'batch-complete')) {
+    if (newEntries.length > 0 && currentState === 'ready') {
         // Switch to queue state to show server-discovered jobs
         showState('queue');
         renderQueueList();
@@ -4068,9 +3987,11 @@ function mergeServerJobs(serverJobs) {
         renderQueueList(true);
     }
 
-    // Start SSE monitoring for new entries
+    // Start SSE monitoring for new normalizing entries only
     for (const entry of newEntries) {
-        monitorEntryNormalizationInBackground(entry);
+        if (entry.status === 'normalizing') {
+            monitorEntryNormalizationInBackground(entry);
+        }
     }
 
     saveQueueState();

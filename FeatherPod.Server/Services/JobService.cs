@@ -113,6 +113,23 @@ public class JobService : IJobService
         return results;
     }
 
+    public async Task<List<JobStatusEntity>> GetRecentJobsByFeedAsync(string feedId, TimeSpan since, CancellationToken cancellationToken = default)
+    {
+        var cutoff = DateTimeOffset.UtcNow - since;
+        var filter = $"PartitionKey eq 'jobs' and FeedId eq '{feedId}'";
+        var results = new List<JobStatusEntity>();
+
+        await foreach (var entity in _tableClient.QueryAsync<JobStatusEntity>(filter, cancellationToken: cancellationToken))
+        {
+            if (entity.QueuedAt >= cutoff)
+            {
+                results.Add(entity);
+            }
+        }
+
+        return results;
+    }
+
     public async Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default)
     {
         const int maxRetries = 3;

@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Threading.Channels;
 using FeatherPod.Server.Services;
 using FeatherPod.Server.Validation;
 using FeatherPod.Shared.Models;
@@ -19,6 +18,7 @@ public class JobsController : ControllerBase
 
     private static readonly TimeSpan PushFallbackTimeout = TimeSpan.FromMilliseconds(1500);
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan MaxSinceDuration = TimeSpan.FromHours(24);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     public JobsController(IJobService jobService, IBlobStorageService blobService, IUserService userService, IJobProgressChannel progressChannel, IConfiguration configuration)
@@ -31,13 +31,17 @@ public class JobsController : ControllerBase
     }
 
     /// <summary>
-    /// Get active normalization jobs for a feed.
+    /// Get normalization jobs for a feed.
+    /// Without parameters, returns active (non-terminal) jobs only (CLI compatibility).
+    /// With <paramref name="since"/>, returns all jobs (including terminal) within the time window.
     /// </summary>
+    /// <param name="feedId">Feed ID</param>
+    /// <param name="since">Optional duration string (e.g. "1h", "30m", "2h30m", "1d"). Max 24h.</param>
     [HttpGet("/api/feeds/{feedId}/jobs")]
     [ProducesResponseType<List<JobStatusResponse>>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> GetActiveJobsByFeed(string feedId)
+    public async Task<IActionResult> GetActiveJobsByFeed(string feedId, [FromQuery] string? since = null)
     {
         if (!InputValidation.IsValidFeedId(feedId))
         {
@@ -50,7 +54,26 @@ public class JobsController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have permission to view jobs for this feed" });
         }
 
-        var entities = await _jobService.GetActiveJobsByFeedAsync(feedId, HttpContext.RequestAborted);
+        List<JobStatusEntity> entities;
+        if (since != null)
+        {
+            if (!InputValidation.TryParseDuration(since, out var duration))
+            {
+                return BadRequest(new { error = "Invalid duration format. Use combinations of d/h/m, e.g. '1h', '30m', '2h30m', '1d'" });
+            }
+
+            if (duration > MaxSinceDuration)
+            {
+                duration = MaxSinceDuration;
+            }
+
+            entities = await _jobService.GetRecentJobsByFeedAsync(feedId, duration, HttpContext.RequestAborted);
+        }
+        else
+        {
+            entities = await _jobService.GetActiveJobsByFeedAsync(feedId, HttpContext.RequestAborted);
+        }
+
         var response = entities
             .OrderBy(e => e.QueuedAt)
             .Select(JobStatusResponse.FromEntity)

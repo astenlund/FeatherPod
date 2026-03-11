@@ -692,50 +692,6 @@ h1 {
 }
 
 /* ============================================================================
-   BATCH COMPLETE STATE
-   ============================================================================ */
-
-/* Batch complete: use grid for h2 + CTA row */
-.container.state-batch-complete {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    grid-template-rows: auto auto auto;
-}
-
-.container.state-batch-complete h1 {
-    grid-column: 1 / -1;
-    margin-left: 0;
-}
-
-.container.state-batch-complete .feed-name {
-    display: none;
-}
-
-.container.state-batch-complete #batch-complete {
-    display: contents;
-}
-
-.batch-summary {
-    grid-column: 1;
-    grid-row: 2;
-    text-align: left;
-    margin: 0 0 1.5rem;
-    font-size: 0.95rem;
-    color: var(--text-secondary);
-    align-self: end;
-}
-
-#batch-complete .btn-secondary {
-    grid-column: 2;
-    grid-row: 2;
-    margin: 0 0 1.5rem;
-}
-
-#batch-complete .queue-list {
-    grid-column: 1 / -1;
-}
-
-/* ============================================================================
    ERROR STATE
    ============================================================================ */
 
@@ -1776,22 +1732,6 @@ h1 {
     }
 
     #error .btn-secondary {
-        width: 100%;
-        margin-bottom: 1.5rem;
-    }
-
-    /* Batch complete state on mobile: stack vertically */
-    .container.state-batch-complete {
-        display: block;
-        margin-bottom: 0;
-    }
-
-    .container.state-batch-complete h1 {
-        position: static;
-        margin: 0 0 0.5rem 0;
-    }
-
-    #batch-complete .btn-secondary {
         width: 100%;
         margin-bottom: 1.5rem;
     }

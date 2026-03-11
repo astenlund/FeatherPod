@@ -6,7 +6,7 @@
     <title>Push to {{FEED_TITLE}}</title>
     <link rel="icon" type="image/png" href="/{{FEED_ID}}/icon.png">
     {{PWA_HEAD}}
-    <style>/* {{CSS}} */</style>
+    <link rel="stylesheet" href="/{{FEED_ID}}/push/app.css">
 </head>
 <body>
     <div id="artwork-backdrop" class="artwork-backdrop"></div>
@@ -53,12 +53,6 @@
             <div id="queue-list" class="queue-list"></div>
         </div>
 
-        <div id="batch-complete" class="state" style="display: none;">
-            <p id="batch-summary" class="batch-summary"></p>
-            <button id="upload-more" class="btn-secondary">Upload more</button>
-            <div id="batch-list" class="queue-list"></div>
-        </div>
-
         <div id="error" class="state" style="display: none;">
             <button id="try-another" class="btn-secondary">Try another file</button>
             <div class="error-card">
@@ -100,6 +94,11 @@
     <!-- Frosted glass overlay for mobile history (hidden on desktop) -->
     <div id="frosted-overlay" class="frosted-overlay"></div>
 
-    <script>/* {{JS}} */</script>
+    <script>
+    const FEED_ID = '{{FEED_ID}}';
+    const IS_DEV = {{IS_DEV}};
+    const PROGRESS_SMOOTHING = {{PROGRESS_SMOOTHING}};
+    </script>
+    <script src="/{{FEED_ID}}/push/app.js"></script>
 </body>
 </html>
