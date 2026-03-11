@@ -15,12 +15,14 @@ public class InternalController : ControllerBase
 {
     private readonly EpisodeService _episodeService;
     private readonly IJobProgressChannel _progressChannel;
+    private readonly IFeedEventChannel _feedEventChannel;
     private readonly string? _internalKey;
 
-    public InternalController(EpisodeService episodeService, IJobProgressChannel progressChannel, IConfiguration configuration)
+    public InternalController(EpisodeService episodeService, IJobProgressChannel progressChannel, IFeedEventChannel feedEventChannel, IConfiguration configuration)
     {
         _episodeService = episodeService;
         _progressChannel = progressChannel;
+        _feedEventChannel = feedEventChannel;
         _internalKey = configuration["Internal:Key"];
     }
 
@@ -57,6 +59,8 @@ public class InternalController : ControllerBase
         }
 
         await _episodeService.SyncWithBlobStorageAsync(feedId);
+
+        _feedEventChannel.Publish(feedId, "episode-added");
 
         return Ok(new { message = $"Cache refreshed for feed '{feedId}'" });
     }

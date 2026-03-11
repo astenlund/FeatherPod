@@ -104,11 +104,13 @@ public class NormalizationProgressHelperTests
 
     [Theory]
     [InlineData(Queued)]
+    [InlineData(Preparing)]
     [InlineData(Analyzing)]
     [InlineData(Normalizing)]
     [InlineData(Finishing)]
     [InlineData(Completed)]
     [InlineData(Failed)]
+    [InlineData(Cancelled)]
     public void GetStageDescription_ShouldReturnPaddedStageName(NormalizationStage stage)
     {
         var update = new ProgressUpdate { Stage = stage, ProgressPercent = 0, Message = "" };
@@ -121,7 +123,7 @@ public class NormalizationProgressHelperTests
     [Fact]
     public void GetStageDescription_ShouldReturnConsistentWidth()
     {
-        var stages = new[] { Unknown, Queued, Analyzing, Normalizing, Finishing, Completed, Failed };
+        var stages = new[] { Unknown, Queued, Preparing, Analyzing, Normalizing, Finishing, Completed, Failed, Cancelled };
         var updates = stages.Select(s => new ProgressUpdate { Stage = s, ProgressPercent = 0, Message = "" });
         var lengths = updates.Select(u => NormalizationProgressHelper.GetStageDescription(u).Length).Distinct().ToList();
 

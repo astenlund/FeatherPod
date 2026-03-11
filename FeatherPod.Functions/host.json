@@ -1,6 +1,6 @@
 {
   "version": "2.0",
-  "functionTimeout": "00:10:00",
+  "functionTimeout": "01:00:00",
   "logging": {
     "logLevel": {
       "default": "Warning",
@@ -20,7 +20,7 @@
   "extensions": {
     "queues": {
       "maxPollingInterval": "00:00:05",
-      "visibilityTimeout": "00:15:00",
+      "visibilityTimeout": "01:00:00",
       "batchSize": 1,
       "maxDequeueCount": 3,
       "newBatchThreshold": 0,

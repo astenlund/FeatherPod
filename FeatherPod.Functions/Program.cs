@@ -1,7 +1,6 @@
 using Azure.Data.Tables;
 using Azure.Identity;
 using Azure.Storage.Blobs;
-using Azure.Storage.Queues;
 using FeatherPod.Functions;
 using FeatherPod.Shared.Services;
 using Microsoft.Azure.Functions.Worker.Builder;
@@ -67,22 +66,6 @@ builder.Services.AddSingleton(sp =>
     var tableUri = new Uri($"https://{settings.StorageAccountName}.table.core.windows.net");
 
     return new TableServiceClient(tableUri, credential);
-});
-
-builder.Services.AddSingleton(sp =>
-{
-    var settings = sp.GetRequiredService<IOptions<FunctionSettings>>().Value;
-    var connectionString = Environment.GetEnvironmentVariable("AzureWebJobsStorage");
-
-    if (!string.IsNullOrEmpty(connectionString))
-    {
-        return new QueueServiceClient(connectionString);
-    }
-
-    var credential = new DefaultAzureCredential();
-    var queueUri = new Uri($"https://{settings.StorageAccountName}.queue.core.windows.net");
-
-    return new QueueServiceClient(queueUri, credential);
 });
 
 // FFmpeg for audio normalization (with blob lease for distributed locking)

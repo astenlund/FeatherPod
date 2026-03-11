@@ -1942,6 +1942,12 @@ h1 {
         filter: none !important;
     }
 
+    /* Send "Add more files" behind the frosted overlay when history panel is open */
+    .container.state-queue:has(.history-section--expanded) .queue-drop-zone,
+    .container.state-queue:has(.history-section--collapsing) .queue-drop-zone {
+        z-index: 98;
+    }
+
     /* During collapse, hide h1/h2/CTA so they don't show through semi-transparent panel */
     .container.state-ready:has(.history-section--collapsing) h1,
     .container.state-ready:has(.history-section--collapsing) .feed-name,

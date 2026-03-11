@@ -1,26 +1,8 @@
 namespace FeatherPod.Shared.Models;
 
 /// <summary>
-/// Phase of the normalization process.
-/// </summary>
-public enum NormalizationPhase
-{
-    /// <summary>
-    /// Pass 1: Analyze loudness levels.
-    /// </summary>
-    Analyze,
-
-    /// <summary>
-    /// Pass 2: Apply normalization with measured values.
-    /// </summary>
-    Normalize
-}
-
-/// <summary>
 /// Represents a normalization job message sent to the Azure Queue.
 /// All metadata is extracted in the App Service before queueing.
-/// Jobs are split into two phases (Analyze and Normalize) to stay within
-/// Azure Functions Consumption plan timeout limits.
 /// </summary>
 public record NormalizationJob
 {
@@ -82,22 +64,6 @@ public record NormalizationJob
     public UploadSource Source { get; init; } = UploadSource.CLI;
 
     /// <summary>
-    /// Current phase of the normalization process.
-    /// Defaults to Analyze for new jobs.
-    /// </summary>
-    public NormalizationPhase Phase { get; init; } = NormalizationPhase.Analyze;
-
-    /// <summary>
-    /// Audio duration in milliseconds. Set after analysis phase.
-    /// </summary>
-    public long? TotalDurationMs { get; init; }
-
-    /// <summary>
-    /// Loudness analysis results from Pass 1. Set when Phase=Normalize.
-    /// </summary>
-    public LoudnessAnalysisData? Analysis { get; init; }
-
-    /// <summary>
     /// Progress delivery mode: "poll", "push", or "signalr" (null = poll).
     /// </summary>
     public string? ProgressMode { get; init; }
@@ -106,46 +72,4 @@ public record NormalizationJob
     /// Progress update throttle interval in milliseconds (null = 500).
     /// </summary>
     public int? ProgressIntervalMs { get; init; }
-}
-
-/// <summary>
-/// Loudness analysis data passed between Analyze and Normalize phases.
-/// </summary>
-public record LoudnessAnalysisData
-{
-    required public string InputI { get; init; }
-    required public string InputTp { get; init; }
-    required public string InputLra { get; init; }
-    required public string InputThresh { get; init; }
-    required public string TargetOffset { get; init; }
-
-    /// <summary>
-    /// Create from FFmpeg LoudnessAnalysis result.
-    /// </summary>
-    public static LoudnessAnalysisData FromAnalysis(LoudnessAnalysis analysis)
-    {
-        return new()
-        {
-            InputI = analysis.InputI,
-            InputTp = analysis.InputTp,
-            InputLra = analysis.InputLra,
-            InputThresh = analysis.InputThresh,
-            TargetOffset = analysis.TargetOffset
-        };
-    }
-
-    /// <summary>
-    /// Convert to LoudnessAnalysis for use with normalization service.
-    /// </summary>
-    public LoudnessAnalysis ToLoudnessAnalysis()
-    {
-        return new()
-        {
-            InputI = InputI,
-            InputTp = InputTp,
-            InputLra = InputLra,
-            InputThresh = InputThresh,
-            TargetOffset = TargetOffset
-        };
-    }
 }

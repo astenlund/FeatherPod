@@ -197,6 +197,8 @@ public class EpisodesController : ControllerBase
             var episode = await _episodeService.AddEpisodeAsync(feedId, tempPath, title, description, summary, publishedDate, episodeId, source, HttpContext.RequestAborted);
             var episodeWithUrl = episode with { Url = episode.GetAudioUrl(_baseUrl) };
 
+            _feedEventChannel.Publish(feedId, "episode-added");
+
             return CreatedAtAction(nameof(ListEpisodes), new { feedId }, episodeWithUrl);
         }
         finally

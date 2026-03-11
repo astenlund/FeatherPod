@@ -248,7 +248,10 @@ function showState(stateName) {
     // Update page title based on state (animate first word only)
     let targetWord;
     if (stateName === 'queue') {
-        targetWord = 'Pushing';
+        const hasActive = uploadQueue.some(e =>
+            e.status === 'queued' || e.status === 'uploading' || e.status === 'normalizing'
+        );
+        targetWord = hasActive ? 'Pushing' : 'Pushed';
     } else {
         targetWord = 'Push';
     }
@@ -1612,6 +1615,8 @@ function addFilesToQueue(files) {
 
     if (previousState !== 'queue') {
         showState('queue');
+    } else {
+        updateQueueTitle();
     }
 
     if (previousState === 'ready') {
@@ -1620,6 +1625,7 @@ function addFilesToQueue(files) {
 
     const animateItems = previousState === 'queue';
     renderQueueList(animateItems);
+    rebindProgressAnimator();
 
     saveQueueState();
 
@@ -1702,10 +1708,6 @@ function checkAllComplete() {
         activeUploadId = null;
         updateQueueTitle();
         saveQueueState();
-
-        // Invalidate caches for history
-        cachedBrowserUploads = null;
-        cachedAllUploads = null;
     }
 }
 
@@ -1788,8 +1790,7 @@ async function processEntry(entry) {
             entry.episode = episode;
             entry.progress = 100;
             saveToLocalHistory(episode);
-            cachedBrowserUploads = null;
-            cachedAllUploads = null;
+            refreshHistoryList();
         } else if (response.status === 202) {
             const jobResponse = JSON.parse(response.body);
             entry.jobId = jobResponse.jobId;
@@ -2004,6 +2005,21 @@ function saveToLocalHistory(episode) {
     } catch (e) {
         console.warn('Failed to save to localStorage:', e);
     }
+}
+
+/**
+ * Invalidates caches and re-renders the history panel if it's currently visible.
+ * Call after any upload completion (sync or async) to keep the history list up to date.
+ */
+async function refreshHistoryList() {
+    cachedBrowserUploads = null;
+    cachedAllUploads = null;
+    const section = document.getElementById('history-section');
+    if (!section || section.style.display === 'none') {
+        return;
+    }
+    const uploads = await fetchHistoryByFilter();
+    renderHistoryList(uploads);
 }
 
 /**
@@ -2288,7 +2304,7 @@ function toggleHistorySection(expand) {
 
 /**
  * Fetch and cache browser uploads from server.
- * Cache is invalidated in processEntry() after each upload completes.
+ * Cache is invalidated in refreshHistoryList() after each upload completes.
  * @returns {Promise<Array<Episode>>} Array of browser uploads
  */
 async function fetchBrowserUploads() {
@@ -2317,7 +2333,7 @@ async function fetchBrowserUploads() {
 
 /**
  * Fetch and cache all uploads from server.
- * Cache is invalidated in processEntry() after each upload completes.
+ * Cache is invalidated in refreshHistoryList() after each upload completes.
  * @returns {Promise<Array<Episode>>} Array of all uploads
  */
 async function fetchAllUploads() {
@@ -3221,7 +3237,7 @@ function monitorEntryNormalization(entry) {
                 if (episode) {
                     saveToLocalHistory(episode);
                 }
-                cachedAllUploads = null;
+                refreshHistoryList();
             } else {
                 entry.status = 'failed';
                 entry.error = lastStatus?.error || 'Normalization failed';
@@ -3301,8 +3317,8 @@ async function pollEntryNormalization(entry) {
                 if (episode) {
                     saveToLocalHistory(episode);
                 }
-                cachedAllUploads = null;
                 updateQueueItemInDOM(entry);
+                refreshHistoryList();
 
                 return;
             } else if (job.status === 'Failed') {
@@ -3452,9 +3468,7 @@ function retryEntry(entryId) {
 // ============================================================================
 
 /**
- * Render the full queue list into #queue-list.
- */
-/**
+ * Render the full queue list into #queue-list. Newest items appear at the top.
  * @param {boolean} [animateNew=false] - Whether to animate newly added items with blur-fade-in.
  */
 function renderQueueList(animateNew) {
@@ -3470,7 +3484,7 @@ function renderQueueList(animateNew) {
         if (animateNew && !existingIds.has('queue-item-' + entry.id)) {
             el.style.animation = 'blur-fade-in 0.3s ease both';
         }
-        container.appendChild(el);
+        container.prepend(el);
     }
 }
 
@@ -3581,12 +3595,9 @@ function getIconText(entry) {
 function getStatusText(entry) {
     switch (entry.status) {
         case 'uploading':
-            return 'Uploading...';
-        case 'normalizing': {
-            const stage = entry.stage || 'Queued';
-            const ellipsis = stage.endsWith('ing') ? '...' : '';
-            return stage + ellipsis;
-        }
+            return 'Uploading';
+        case 'normalizing':
+            return entry.stage || 'Queued';
         case 'completed':
             return 'Done';
         case 'failed':
@@ -3689,6 +3700,16 @@ function removeQueueItemFromDOM(entryId) {
  */
 function getEntryProgressBar(entryId) {
     return document.getElementById('queue-progress-' + entryId);
+}
+
+/**
+ * Re-bind progressAnimator's progress bar reference after a full DOM rebuild
+ * (e.g. renderQueueList). Without this, the animator updates a detached element.
+ */
+function rebindProgressAnimator() {
+    if (activeUploadId && progressAnimator.progressBar) {
+        progressAnimator.progressBar = getEntryProgressBar(activeUploadId);
+    }
 }
 
 // ============================================================================
@@ -3833,8 +3854,9 @@ async function restoreQueueState() {
 }
 
 /**
- * Open (or reconnect) the feed-level SSE connection for cross-tab/cross-device queue sync.
- * On receiving a "job-added" event, fetches recent jobs and merges them into the local queue.
+ * Open (or reconnect) the feed-level SSE connection for cross-tab/cross-device sync.
+ * Listens for "job-added" (merges new jobs into the local queue) and "episode-added"
+ * (refreshes the history panel so new uploads appear without a page reload).
  * If the connection is permanently closed (e.g., server error), sets feedEventsSource to null
  * so it can be reconnected on the next tab reactivation.
  */
@@ -3845,6 +3867,9 @@ function connectFeedEvents() {
     feedEventsSource = new EventSource('/api/feeds/' + FEED_ID + '/events');
     feedEventsSource.addEventListener('job-added', () => {
         fetchRecentJobs().then(mergeServerJobs).catch(() => {});
+    });
+    feedEventsSource.addEventListener('episode-added', () => {
+        refreshHistoryList();
     });
     feedEventsSource.onerror = () => {
         // readyState CLOSED (2) means the browser won't auto-reconnect (e.g., server returned error).
@@ -4016,9 +4041,18 @@ function mergeServerJobs(serverJobs) {
         showState('queue');
         renderQueueList();
         void initHistorySection();
-    } else if (currentState === 'queue') {
-        // Already in queue state — render new items and refresh existing
+    } else if (newEntries.length > 0 && currentState === 'queue') {
+        // New entries to add — must rebuild the full list
         renderQueueList(true);
+        rebindProgressAnimator();
+    } else if (changed && currentState === 'queue') {
+        // Only existing entries changed — update individually to avoid destroying
+        // the actively-uploading entry's progress bar reference in progressAnimator
+        for (const entry of uploadQueue) {
+            if (entry.id !== activeUploadId) {
+                updateQueueItemInDOM(entry);
+            }
+        }
     }
 
     // Start SSE monitoring for new normalizing entries only
@@ -4028,6 +4062,7 @@ function mergeServerJobs(serverJobs) {
         }
     }
 
+    updateQueueTitle();
     saveQueueState();
     checkAllComplete();
 }

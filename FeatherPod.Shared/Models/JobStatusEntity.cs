@@ -50,7 +50,7 @@ public class JobStatusEntity : ITableEntity
     public DateTimeOffset? CompletedAt { get; set; }
 
     /// <summary>
-    /// Current processing stage (Queued, Analyzing, Normalizing, Finishing, Completed, Failed, Cancelled).
+    /// Current processing stage (Queued, Preparing, Analyzing, Normalizing, Finishing, Completed, Failed, Cancelled).
     /// </summary>
     public string? Stage { get; set; }
 

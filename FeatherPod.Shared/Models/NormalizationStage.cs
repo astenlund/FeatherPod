@@ -7,6 +7,7 @@ public enum NormalizationStage
 {
     Unknown = 0,
     Queued,
+    Preparing,
     Analyzing,
     Normalizing,
     Finishing,
