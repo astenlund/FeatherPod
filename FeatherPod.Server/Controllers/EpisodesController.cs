@@ -14,16 +14,18 @@ public class EpisodesController : ControllerBase
     private readonly IBlobStorageService _blobStorageService;
     private readonly IJobService _jobService;
     private readonly IUserService _userService;
+    private readonly IFeedEventChannel _feedEventChannel;
     private readonly string _baseUrl;
     private readonly string? _progressMode;
     private readonly int _progressIntervalMs;
 
-    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IConfiguration configuration)
+    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IConfiguration configuration)
     {
         _episodeService = episodeService;
         _blobStorageService = blobStorageService;
         _jobService = jobService;
         _userService = userService;
+        _feedEventChannel = feedEventChannel;
         _baseUrl = configuration.GetSection("Podcast")["BaseUrl"]
             ?? throw new InvalidOperationException("Podcast.BaseUrl must be configured in appsettings.json");
 
@@ -185,6 +187,8 @@ public class EpisodesController : ControllerBase
                     FileName = file.FileName,
                     QueuedAt = job.QueuedAt
                 };
+
+                _feedEventChannel.Publish(feedId, "job-added");
 
                 return Accepted($"/api/jobs/{jobId}", response);
             }

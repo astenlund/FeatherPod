@@ -14,6 +14,7 @@ public class JobsController : ControllerBase
     private readonly IBlobStorageService _blobService;
     private readonly IUserService _userService;
     private readonly IJobProgressChannel _progressChannel;
+    private readonly IFeedEventChannel _feedEventChannel;
     private readonly int _pollIntervalMs;
 
     private static readonly TimeSpan PushFallbackTimeout = TimeSpan.FromMilliseconds(1500);
@@ -21,12 +22,13 @@ public class JobsController : ControllerBase
     private static readonly TimeSpan MaxSinceDuration = TimeSpan.FromHours(24);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public JobsController(IJobService jobService, IBlobStorageService blobService, IUserService userService, IJobProgressChannel progressChannel, IConfiguration configuration)
+    public JobsController(IJobService jobService, IBlobStorageService blobService, IUserService userService, IJobProgressChannel progressChannel, IFeedEventChannel feedEventChannel, IConfiguration configuration)
     {
         _jobService = jobService;
         _blobService = blobService;
         _userService = userService;
         _progressChannel = progressChannel;
+        _feedEventChannel = feedEventChannel;
         _pollIntervalMs = configuration.GetValue("PushPage:PollIntervalMs", 500);
     }
 
@@ -80,6 +82,60 @@ public class JobsController : ControllerBase
             .ToList();
 
         return Ok(response);
+    }
+
+    /// <summary>
+    /// Stream feed-level events (e.g., new job created) via Server-Sent Events.
+    /// Used by push page clients for cross-tab/cross-device queue sync.
+    /// No auth required — events contain no sensitive data, just notification triggers.
+    /// </summary>
+    [HttpGet("/api/feeds/{feedId}/events")]
+    public async Task StreamFeedEvents(string feedId, CancellationToken cancellationToken)
+    {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+
+            return;
+        }
+
+        Response.Headers.Append("Content-Type", "text/event-stream");
+        Response.Headers.Append("Cache-Control", "no-cache");
+        Response.Headers.Append("Connection", "keep-alive");
+        Response.Headers.Append("X-Accel-Buffering", "no");
+
+        var reader = _feedEventChannel.Subscribe(feedId);
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeoutCts.CancelAfter(HeartbeatInterval);
+
+                try
+                {
+                    if (await reader.WaitToReadAsync(timeoutCts.Token))
+                    {
+                        while (reader.TryRead(out var eventType))
+                        {
+                            await WriteEventAsync(eventType, "{}", cancellationToken);
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    await WriteCommentAsync("keepalive", cancellationToken);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Client disconnected — normal
+        }
+        finally
+        {
+            _feedEventChannel.Unsubscribe(feedId, reader);
+        }
     }
 
     /// <summary>

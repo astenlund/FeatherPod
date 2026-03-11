@@ -75,6 +75,9 @@ const STR_INVALID_KEY = 'Invalid key';
 const STR_NO_ACCESS = 'No access';
 const STR_NO_FEED_ACCESS = 'This key does not have access to this feed';
 
+/** @type {EventSource|null} - SSE connection for feed-level events (cross-tab sync) */
+let feedEventsSource = null;
+
 /** @type {Array<QueueEntry>} - Upload queue entries */
 let uploadQueue = [];
 /** @type {string|null} - ID of the entry currently uploading */
@@ -1099,6 +1102,9 @@ async function init() {
 
         return;
     }
+
+    // Open feed-level SSE for cross-tab/cross-device queue sync
+    connectFeedEvents();
 
     // Start fetching recent jobs from server (fire-and-forget, merges when resolved)
     const serverJobsPromise = fetchRecentJobs();
@@ -3827,6 +3833,30 @@ async function restoreQueueState() {
 }
 
 /**
+ * Open (or reconnect) the feed-level SSE connection for cross-tab/cross-device queue sync.
+ * On receiving a "job-added" event, fetches recent jobs and merges them into the local queue.
+ * If the connection is permanently closed (e.g., server error), sets feedEventsSource to null
+ * so it can be reconnected on the next tab reactivation.
+ */
+function connectFeedEvents() {
+    if (feedEventsSource) {
+        feedEventsSource.close();
+    }
+    feedEventsSource = new EventSource('/api/feeds/' + FEED_ID + '/events');
+    feedEventsSource.addEventListener('job-added', () => {
+        fetchRecentJobs().then(mergeServerJobs).catch(() => {});
+    });
+    feedEventsSource.onerror = () => {
+        // readyState CLOSED (2) means the browser won't auto-reconnect (e.g., server returned error).
+        // Reconnect on the next tab reactivation via the visibilitychange handler.
+        if (feedEventsSource && feedEventsSource.readyState === 2) {
+            feedEventsSource.close();
+            feedEventsSource = null;
+        }
+    };
+}
+
+/**
  * Fetch recent normalization jobs (last hour) for this feed from the server.
  * Returns all jobs including terminal ones within the time window.
  * Returns null on any error (silent fallback to local-only state).
@@ -3854,6 +3884,7 @@ async function fetchRecentJobs() {
  * - Removes stale local entries (normalizing/failed with jobId not in server response)
  * - Updates existing entries with server data (stage, progress, terminal status)
  * - Adds new entries for unknown server jobs (e.g., from CLI or another tab), skipping cancelled jobs
+ *   and jobs whose fileName matches a currently-uploading entry (dedup for in-flight uploads)
  * If serverJobs is null (fetch failed), skips reconciliation entirely.
  * @param {Array<Object>|null} serverJobs - Array of JobStatusResponse objects, or null on error
  */
@@ -3939,9 +3970,12 @@ function mergeServerJobs(serverJobs) {
     }
 
     // Add new entries for server jobs not in local queue
+    // Also skip jobs whose fileName matches a currently-uploading entry (dedup for in-flight uploads
+    // where the SSE event arrives before the XHR 202 response sets the jobId)
+    const uploadingFileNames = new Set(uploadQueue.filter(e => e.status === 'uploading').map(e => e.fileName));
     const newEntries = [];
     for (const serverJob of serverJobs) {
-        if (!existingJobIds.has(serverJob.jobId)) {
+        if (!existingJobIds.has(serverJob.jobId) && !uploadingFileNames.has(serverJob.fileName)) {
             const serverStatus = serverJob.status;
             const isServerTerminal = serverStatus === 'Completed' || serverStatus === 'Failed' || serverStatus === 'Cancelled';
             if (serverStatus === 'Cancelled') {
@@ -4000,11 +4034,27 @@ function mergeServerJobs(serverJobs) {
 
 window.addEventListener('DOMContentLoaded', init);
 window.addEventListener('hashchange', init);
+window.addEventListener('beforeunload', () => {
+    if (feedEventsSource) {
+        feedEventsSource.close();
+        feedEventsSource = null;
+    }
+});
 
 document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && progressAnimator.currentStage) {
-        progressAnimator.awaitingFirstUpdate = true;
-        progressAnimator.isRestoring = true;
+    if (document.visibilityState === 'visible') {
+        if (progressAnimator.currentStage) {
+            progressAnimator.awaitingFirstUpdate = true;
+            progressAnimator.isRestoring = true;
+        }
+        // Reconnect feed events SSE if it was permanently closed while tab was inactive
+        if (apiKey && !feedEventsSource) {
+            connectFeedEvents();
+        }
+        // Catch any events missed while tab was inactive (browsers may throttle/disconnect SSE)
+        if (apiKey) {
+            fetchRecentJobs().then(mergeServerJobs).catch(() => {});
+        }
     }
 });
 

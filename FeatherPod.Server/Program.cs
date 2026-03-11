@@ -36,6 +36,7 @@ builder.Services.AddSingleton<EpisodeService>();
 builder.Services.AddSingleton<IUserService, UserService>();
 builder.Services.AddSingleton<IJobService, JobService>();
 builder.Services.AddSingleton<IJobProgressChannel, JobProgressChannel>();
+builder.Services.AddSingleton<IFeedEventChannel, FeedEventChannel>();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IconResizeService>();
 
