@@ -42,7 +42,7 @@ internal sealed class ListCommand : Command<CommandSettings>
 
         Out.Write(table);
         Out.BlankLine();
-        Out.MarkupLine($"[grey]{entries.Count} {(entries.Count == 1 ? "entry" : "entries")} registered across {ContextMenuRegistry.AudioExtensions.Length} audio extensions each[/]");
+        Out.MarkupLine($"[grey]{entries.Count} {(entries.Count == 1 ? "entry" : "entries")} registered across {AudioExtensions.All.Length} audio extensions each[/]");
         Out.BlankLine().Flush();
 
         return 0;

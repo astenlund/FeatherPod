@@ -8,8 +8,6 @@ internal record ContextMenuEntry(string FeedId, string FeedTitle, string Environ
 [SupportedOSPlatform("windows")]
 internal static class ContextMenuRegistry
 {
-    internal static readonly string[] AudioExtensions = [".mp3", ".m4a", ".m4b", ".wav", ".ogg", ".flac", ".aac", ".opus", ".wma"];
-
     private const string DefaultRegistryKeyPrefix = @"Software\Classes\SystemFileAssociations";
     private const string KeyPrefix = "FeatherPod.";
 
@@ -19,7 +17,7 @@ internal static class ContextMenuRegistry
         var displayName = $"Push to {feedTitle}";
         var command = $"\"{launcherPath}\" push --headless --feed {feedId} --environment {environment} \"%1\"";
 
-        foreach (var ext in AudioExtensions)
+        foreach (var ext in AudioExtensions.All)
         {
             var shellKeyPath = $@"{registryKeyPrefix}\{ext}\shell\{shellKeyName}";
 
@@ -36,7 +34,7 @@ internal static class ContextMenuRegistry
     {
         var entries = new Dictionary<string, ContextMenuEntry>();
 
-        foreach (var ext in AudioExtensions)
+        foreach (var ext in AudioExtensions.All)
         {
             var shellPath = $@"{registryKeyPrefix}\{ext}\shell";
 
@@ -91,7 +89,7 @@ internal static class ContextMenuRegistry
     {
         var shellKeyName = $"{KeyPrefix}{feedId}";
 
-        foreach (var ext in AudioExtensions)
+        foreach (var ext in AudioExtensions.All)
         {
             var shellPath = $@"{registryKeyPrefix}\{ext}\shell";
 
@@ -107,7 +105,7 @@ internal static class ContextMenuRegistry
 
     internal static void RemoveAll(string registryKeyPrefix = DefaultRegistryKeyPrefix)
     {
-        foreach (var ext in AudioExtensions)
+        foreach (var ext in AudioExtensions.All)
         {
             var shellPath = $@"{registryKeyPrefix}\{ext}\shell";
 
