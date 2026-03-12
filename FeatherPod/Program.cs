@@ -5,6 +5,7 @@ using FeatherPod.Infrastructure;
 using Spectre.Console.Cli;
 
 using ConfigCommands = FeatherPod.Commands.Config;
+using ContextMenuCommands = FeatherPod.Commands.Config.ContextMenu;
 using FeedCommands = FeatherPod.Commands.Feed;
 using PreferencesCommands = FeatherPod.Commands.Preferences;
 using UserCommands = FeatherPod.Commands.User;
@@ -162,6 +163,26 @@ internal class Program
                     .WithDescription("Generate configuration files from defaults")
                     .WithExample("config", "generate")
                     .WithExample("config", "generate", "--select");
+
+                if (OperatingSystem.IsWindows())
+                {
+                    cfg.AddBranch("context-menu", cm =>
+                    {
+                        cm.SetDescription("Windows Explorer context menu integration");
+
+                        cm.AddCommand<ContextMenuCommands.InstallCommand>("install")
+                            .WithDescription("Register context menu entry for a feed")
+                            .WithExample("config", "context-menu", "install");
+
+                        cm.AddCommand<ContextMenuCommands.ListCommand>("list")
+                            .WithDescription("Show installed context menu entries")
+                            .WithExample("config", "context-menu", "list");
+
+                        cm.AddCommand<ContextMenuCommands.RemoveCommand>("remove")
+                            .WithDescription("Remove context menu entries")
+                            .WithExample("config", "context-menu", "remove", "--all");
+                    });
+                }
             });
 
             config.AddBranch("preferences", prefs =>
