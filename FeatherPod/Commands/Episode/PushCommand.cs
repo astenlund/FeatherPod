@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Runtime.Versioning;
 using FeatherPod.Infrastructure;
 using FeatherPod.Shared.Models;
 using FeatherPod.Settings.Episode;
@@ -12,6 +14,18 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
 {
     public override async Task<int> ExecuteAsync(CommandContext context, PushSettings settings, CancellationToken cancellationToken)
     {
+        if (settings.Headless)
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                Out.Error("Headless mode is only supported on Windows.");
+
+                return 1;
+            }
+
+            return await ExecuteHeadlessAsync(settings);
+        }
+
         Out.BlankLine();
         Out.MarkupLine("[bold]FeatherPod Episode Upload[/]");
         Out.BlankLine();
@@ -237,5 +251,100 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         Out.BlankLine().Flush();
 
         return failureCount == 0 ? 0 : 1;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static async Task<int> ExecuteHeadlessAsync(PushSettings settings)
+    {
+        // Headless mode: no console output — all errors shown via MessageBox.
+        // Launched by featherpod-launcher.exe with CREATE_NO_WINDOW.
+
+        var filePath = settings.Files;
+        if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+        {
+            HeadlessErrorHandler.ShowError($"File not found: {filePath}");
+
+            return 1;
+        }
+
+        if (string.IsNullOrEmpty(settings.FeedId))
+        {
+            HeadlessErrorHandler.ShowError("Feed not specified. Run 'featherpod config context-menu install' to set up.");
+
+            return 1;
+        }
+
+        var environment = settings.Environment ?? "Prod";
+        var apiKey = PreferencesHelpers.GetApiKey(environment);
+        if (string.IsNullOrEmpty(apiKey))
+        {
+            HeadlessErrorHandler.ShowError($"No API key configured for {environment}. Run 'featherpod config context-menu install' to set up.");
+
+            return 1;
+        }
+
+        var configuration = EnvironmentHelpers.BuildConfiguration(environment);
+        var serverBaseUrl = configuration["Api:BaseUrl"]
+            ?? throw new InvalidOperationException("Api:BaseUrl not configured in appsettings.json");
+
+        using var coordinator = new SingleInstanceCoordinator(settings.FeedId);
+
+        if (coordinator.TryBecomeHost(out var existingHost))
+        {
+            return await RunAsHostAsync(settings.FeedId, filePath, apiKey, serverBaseUrl, coordinator);
+        }
+
+        if (existingHost is not null)
+        {
+            await PostFileToExistingServerAsync(existingHost, filePath);
+        }
+
+        return 0;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static async Task<int> RunAsHostAsync(string feedId, string filePath, string apiKey, string serverBaseUrl, SingleInstanceCoordinator coordinator)
+    {
+        var server = new LocalFileServer(serverBaseUrl);
+        var idleCompletionSource = new TaskCompletionSource();
+
+        server.OnIdleTimeout += () => idleCompletionSource.TrySetResult();
+
+        try
+        {
+            server.Start();
+            coordinator.WriteLockFile(server.Port, server.Token);
+            server.AddFile(filePath);
+
+            if (!server.HasActiveClients)
+            {
+                var pushUrl = $"{serverBaseUrl}/{feedId}/push#{apiKey}&source=localhost:{server.Port}&token={server.Token}";
+                Process.Start(new ProcessStartInfo(pushUrl) { UseShellExecute = true });
+            }
+
+            await idleCompletionSource.Task;
+        }
+        finally
+        {
+            coordinator.DeleteLockFile();
+            server.Dispose();
+        }
+
+        return 0;
+    }
+
+    private static async Task PostFileToExistingServerAsync(LockFileInfo host, string filePath)
+    {
+        try
+        {
+            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            var json = System.Text.Json.JsonSerializer.Serialize(new { path = filePath });
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+            await client.PostAsync($"http://127.0.0.1:{host.Port}/api/files?token={host.Token}", content);
+        }
+        catch
+        {
+            // Existing server may have shut down between validation and POST — silently ignore.
+        }
     }
 }
