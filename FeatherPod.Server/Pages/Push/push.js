@@ -2,8 +2,6 @@
 const SHOW_GHOST = IS_DEV && window.location.search.includes('ghost');
 const DEBUG_TITLE_ANIMATION = IS_DEV && window.location.search.includes('alive');
 const VELOCITY_OVERRIDES = IS_DEV ? parseVelocityOverrides() : {};
-const ALLOWED_EXTENSIONS = ['.mp3', '.m4a', '.wav', '.ogg', '.flac', '.aac'];
-
 /**
  * @typedef {Object} Episode
  * @property {string} id - Episode ID
@@ -74,6 +72,11 @@ const STR_API_KEY_REQUIRED = 'API key required';
 const STR_INVALID_KEY = 'Invalid key';
 const STR_NO_ACCESS = 'No access';
 const STR_NO_FEED_ACCESS = 'This key does not have access to this feed';
+
+/** @type {{host: string, token: string}|null} - Local file server connection info (from URL fragment) */
+let localSourceConfig = null;
+/** @type {EventSource|null} - SSE connection to local file server for new-file events */
+let localSourceEvents = null;
 
 /** @type {EventSource|null} - SSE connection for feed-level events (cross-tab sync) */
 let feedEventsSource = null;
@@ -289,11 +292,19 @@ function showState(stateName) {
     isFirstStateChange = false;
 }
 
-/** @param {File} file */
+/**
+ * Check if a file is a valid audio file by MIME type.
+ * Accepts any file with an audio/* MIME type, or files with no type set
+ * (some browsers don't report MIME types for less common audio formats).
+ * @param {File} file
+ * @returns {boolean}
+ */
 function isValidAudioFile(file) {
-    const extension = '.' + file.name.split('.').pop().toLowerCase();
+    if (!file.type) {
+        return true;
+    }
 
-    return ALLOWED_EXTENSIONS.includes(extension);
+    return file.type.startsWith('audio/');
 }
 
 /**
@@ -1044,22 +1055,40 @@ async function init() {
     }
 
     // Storage precedence: fragment > sessionStorage > localStorage > cookie
+    // Fragment format: API_KEY or API_KEY&source=localhost:PORT&token=TOKEN (local source mode)
     const fragment = window.location.hash.slice(1);
-    const storedKey = getStoredApiKey();
+    let extractedKey = null;
 
     if (fragment) {
+        const ampIndex = fragment.indexOf('&');
+        if (ampIndex === -1) {
+            extractedKey = fragment;
+        } else {
+            extractedKey = fragment.substring(0, ampIndex);
+            const params = new URLSearchParams(fragment.substring(ampIndex + 1));
+            const source = params.get('source');
+            const token = params.get('token');
+            if (source && token) {
+                localSourceConfig = { host: source, token };
+            }
+        }
+    }
+
+    const storedKey = getStoredApiKey();
+
+    if (extractedKey) {
         // Clear fragment from URL immediately for cleaner UX
         history.replaceState(null, '', window.location.pathname + window.location.search);
 
-        const validation = await validateApiKeyWithRetry(fragment);
+        const validation = await validateApiKeyWithRetry(extractedKey);
 
         if (validation.valid && validation.feedAccess) {
             // Fragment key is valid with feed access
-            saveApiKey(fragment);
+            saveApiKey(extractedKey);
         } else if (validation.networkError) {
             // Server unreachable - use fragment key optimistically and persist it
             showWarningBanner('Server unreachable \u2014 using URL key');
-            saveApiKey(fragment);
+            saveApiKey(extractedKey);
         } else if (validation.valid && !validation.feedAccess) {
             // Fragment key is valid but no feed access - try fallback
             if (!await tryFallbackKey(storedKey, 'URL key does not have access to this feed. Using saved key.', 'no-access')) {
@@ -1111,6 +1140,20 @@ async function init() {
 
     // Start fetching recent jobs from server (fire-and-forget, merges when resolved)
     const serverJobsPromise = fetchRecentJobs();
+
+    // Local source mode: fetch files from local file server. Skip restoreQueueState
+    // because it overwrites uploadQueue and would discard the locally-fetched files.
+    // (same pattern as consumeSharedFiles)
+    if (localSourceConfig) {
+        await connectLocalSource();
+        if (uploadQueue.length === 0) {
+            showState('ready');
+        }
+        await initHistorySection();
+        serverJobsPromise.then(mergeServerJobs).catch(() => {});
+
+        return;
+    }
 
     // Consume any files shared via PWA Share Target. If found, skip restoreQueueState
     // because it overwrites uploadQueue and would discard the shared files.
@@ -1239,6 +1282,15 @@ function initNoKeyState() {
      */
     async function transitionToReadyState() {
         resetNoKeyState();
+        if (localSourceConfig) {
+            await connectLocalSource();
+            if (uploadQueue.length === 0) {
+                showState('ready');
+            }
+            await initHistorySection();
+
+            return;
+        }
         if (await consumeSharedFiles()) {
             await initHistorySection();
 
@@ -3754,6 +3806,76 @@ function clearQueueState() {
 }
 
 /**
+ * Connect to a local file server SSE and fetch initial files.
+ * Called after API key validation succeeds when local source params are present in the URL fragment.
+ * Idempotent: if already connected (localSourceEvents is set), returns immediately.
+ * This matters because init() can be re-invoked via the hashchange listener.
+ */
+async function connectLocalSource() {
+    if (!localSourceConfig || localSourceEvents) {
+        return;
+    }
+
+    const { host, token } = localSourceConfig;
+    const baseUrl = `http://${host}`;
+
+    // Fetch initial file list
+    try {
+        const resp = await fetch(`${baseUrl}/api/files?token=${token}`);
+        if (!resp.ok) {
+            throw new Error(`HTTP ${resp.status}`);
+        }
+        const files = await resp.json();
+
+        for (let i = 0; i < files.length; i++) {
+            await fetchAndQueueLocalFile(baseUrl, token, i, files[i].name);
+        }
+    } catch (e) {
+        console.error('Failed to fetch local files:', e);
+    }
+
+    // Connect SSE for new files added after initial fetch
+    localSourceEvents = new EventSource(`${baseUrl}/api/events?token=${token}`);
+    localSourceEvents.addEventListener('new-file', async (event) => {
+        try {
+            const data = JSON.parse(event.data);
+            await fetchAndQueueLocalFile(baseUrl, token, data.index, data.name);
+        } catch (e) {
+            console.error('Failed to process local source SSE event:', e);
+        }
+    });
+
+    localSourceEvents.onerror = () => {
+        // Local server shut down — just disconnect, page continues working normally
+        if (localSourceEvents) {
+            localSourceEvents.close();
+            localSourceEvents = null;
+        }
+    };
+}
+
+/**
+ * Fetch a file from the local file server and add it to the upload queue.
+ * @param {string} baseUrl - Local server base URL (e.g. "http://localhost:12345")
+ * @param {string} token - Session token for authentication
+ * @param {number} index - File index on local server
+ * @param {string} name - File name
+ */
+async function fetchAndQueueLocalFile(baseUrl, token, index, name) {
+    try {
+        const resp = await fetch(`${baseUrl}/api/files/${index}?token=${token}`);
+        if (!resp.ok) {
+            return;
+        }
+        const blob = await resp.blob();
+        const file = new File([blob], name, { type: blob.type });
+        addFilesToQueue([file]);
+    } catch (e) {
+        console.error(`Failed to fetch local file ${name}:`, e);
+    }
+}
+
+/**
  * Check for files shared via the PWA Share Target API.
  * The service worker stores shared files in the 'share-target' cache.
  * Consumes all pending files and adds them to the upload queue.
@@ -4070,6 +4192,10 @@ function mergeServerJobs(serverJobs) {
 window.addEventListener('DOMContentLoaded', init);
 window.addEventListener('hashchange', init);
 window.addEventListener('beforeunload', () => {
+    if (localSourceEvents) {
+        localSourceEvents.close();
+        localSourceEvents = null;
+    }
     if (feedEventsSource) {
         feedEventsSource.close();
         feedEventsSource = null;

@@ -266,7 +266,7 @@ app.MapGet("/{feedId}/push/manifest.json", async (string feedId, EpisodeService 
                         new
                         {
                             name = "audio",
-                            accept = new[] { "audio/*", ".mp3", ".m4a", ".wav", ".ogg", ".flac", ".aac" }
+                            accept = new[] { "audio/*" }
                         }
                     }
                 }
