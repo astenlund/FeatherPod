@@ -1,4 +1,5 @@
 using FeatherPod.Infrastructure;
+using FeatherPod.Settings.Config;
 using Spectre.Console;
 using Spectre.Console.Cli;
 
@@ -7,9 +8,9 @@ using static FeatherPod.Infrastructure.ConsoleWriter;
 namespace FeatherPod.Commands.Config.ContextMenu;
 
 #pragma warning disable CA1416 // Platform compatibility - these commands are only registered on Windows (see Program.cs)
-internal sealed class ListCommand : Command<CommandSettings>
+internal sealed class ListCommand : Command<ContextMenuListSettings>
 {
-    public override int Execute(CommandContext context, CommandSettings settings, CancellationToken cancellationToken)
+    public override int Execute(CommandContext context, ContextMenuListSettings settings, CancellationToken cancellationToken)
     {
         Out.BlankLine();
         Out.MarkupLine("[bold]FeatherPod Context Menu Entries[/]");

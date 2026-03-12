@@ -45,7 +45,6 @@ Write-Host "`nPublishing FeatherPod.Launcher (NativeAOT)..." -ForegroundColor Cy
 $launcherPublishArgs = @(
     "publish", "FeatherPod.Launcher",
     "-c", "Release",
-    "-r", $Runtime,
     "-p:DebugType=None"
 )
 
@@ -57,7 +56,7 @@ if ($launcherExitCode -ne 0) {
     exit $launcherExitCode
 }
 
-$launcherOutputPath = Join-Path "FeatherPod.Launcher" "bin" "Release" "net10.0-windows" $Runtime "publish"
+$launcherOutputPath = Join-Path "FeatherPod.Launcher" "bin" "Release" "net10.0-windows" "win-x64" "publish"
 $launcherExe = Join-Path $launcherOutputPath "featherpod-launcher.exe"
 
 if (Test-Path $launcherExe) {

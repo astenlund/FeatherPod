@@ -90,6 +90,7 @@ internal sealed class InstallCommand : AsyncCommand<ContextMenuInstallSettings>
 
             Out.BlankLine();
             Out.Success($"Registered context menu for [cyan]{Markup.Escape(feed.Title)}[/] ({AudioExtensions.All.Length} audio extensions)");
+            Out.BlankLine();
             Out.MarkupLine($"[grey]Feed: {Markup.Escape(feed.Id)}, Environment: {Markup.Escape(env)}[/]");
             Out.BlankLine().Flush();
 

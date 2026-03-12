@@ -7,6 +7,16 @@
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
 
+  <Target Name="CopyLauncher" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <PropertyGroup>
+      <LauncherPublishDir>..\FeatherPod.Launcher\bin\$(Configuration)\net10.0-windows\win-x64\publish\</LauncherPublishDir>
+    </PropertyGroup>
+    <Copy SourceFiles="$(LauncherPublishDir)featherpod-launcher.exe"
+          DestinationFolder="$(OutputPath)"
+          SkipUnchangedFiles="true"
+          Condition="Exists('$(LauncherPublishDir)featherpod-launcher.exe')" />
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.0" />

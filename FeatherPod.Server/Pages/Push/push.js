@@ -73,10 +73,14 @@ const STR_INVALID_KEY = 'Invalid key';
 const STR_NO_ACCESS = 'No access';
 const STR_NO_FEED_ACCESS = 'This key does not have access to this feed';
 
-/** @type {{host: string, token: string}|null} - Local file server connection info (from URL fragment) */
+/** @type {{host: string, token: string}|null} - Local file server connection info (from URL fragment or sessionStorage on reload) */
 let localSourceConfig = null;
 /** @type {EventSource|null} - SSE connection to local file server for new-file events */
 let localSourceEvents = null;
+/** @type {Set<number>} - Local file server indices already fetched (persisted in sessionStorage to survive reloads) */
+let localSourceSeen = new Set();
+/** @type {Set<string>} - Job IDs dismissed by the user (guards against mergeServerJobs re-adding before server cancel completes) */
+let dismissedJobIds = new Set();
 
 /** @type {EventSource|null} - SSE connection for feed-level events (cross-tab sync) */
 let feedEventsSource = null;
@@ -1070,8 +1074,18 @@ async function init() {
             const token = params.get('token');
             if (source && token) {
                 localSourceConfig = { host: source, token };
+                sessionStorage.setItem('localSource', JSON.stringify(localSourceConfig));
             }
         }
+    }
+
+    if (!localSourceConfig) {
+        try {
+            const stored = sessionStorage.getItem('localSource');
+            if (stored) {
+                localSourceConfig = JSON.parse(stored);
+            }
+        } catch { /* ignore corrupt data */ }
     }
 
     const storedKey = getStoredApiKey();
@@ -1141,10 +1155,10 @@ async function init() {
     // Start fetching recent jobs from server (fire-and-forget, merges when resolved)
     const serverJobsPromise = fetchRecentJobs();
 
-    // Local source mode: fetch files from local file server. Skip restoreQueueState
-    // because it overwrites uploadQueue and would discard the locally-fetched files.
-    // (same pattern as consumeSharedFiles)
+    // Local source mode: restore saved queue first (so completed/in-progress entries
+    // are present for dedup), then fetch files from local server on top.
     if (localSourceConfig) {
+        await restoreQueueState();
         await connectLocalSource();
         if (uploadQueue.length === 0) {
             showState('ready');
@@ -1626,12 +1640,16 @@ function animateReadyDropZoneMorph() {
  * Add files to the upload queue. Duplicates (same name + size) of active or completed
  * entries are silently skipped. Invalid files are marked as failed immediately.
  * Transitions to queue state and starts processing if idle.
+ * When already in queue state, appends new items incrementally to avoid full DOM rebuild
+ * (which would interrupt in-progress fade-in animations on recently added items).
  * @param {Array<File>} files
  */
 function addFilesToQueue(files) {
     if (files.length === 0) {
         return;
     }
+
+    const newEntries = [];
 
     for (const file of files) {
         const isDuplicate = uploadQueue.some(e =>
@@ -1642,7 +1660,7 @@ function addFilesToQueue(files) {
         if (isDuplicate) continue;
 
         const valid = isValidAudioFile(file);
-        uploadQueue.push({
+        const entry = {
             id: generateEntryId(),
             file: file,
             status: valid ? 'queued' : 'failed',
@@ -1660,7 +1678,13 @@ function addFilesToQueue(files) {
             backgroundMonitoring: false,
             startedAt: Date.now(),
             _resolveMonitor: null
-        });
+        };
+        uploadQueue.push(entry);
+        newEntries.push(entry);
+    }
+
+    if (newEntries.length === 0) {
+        return;
     }
 
     const previousState = getCurrentState();
@@ -1675,10 +1699,22 @@ function addFilesToQueue(files) {
         animateQueueDropZoneMorph();
     }
 
-    const animateItems = previousState === 'queue';
-    renderQueueList(animateItems);
-    rebindProgressAnimator();
+    if (previousState === 'queue') {
+        // Append new items incrementally to avoid full rebuild flicker
+        // (full rebuild destroys in-progress fade-in animations on existing items)
+        const container = document.getElementById('queue-list');
+        if (container) {
+            for (const entry of newEntries) {
+                const el = createQueueItemElement(entry);
+                el.style.animation = 'blur-fade-in 0.3s ease both';
+                container.prepend(el);
+            }
+        }
+    } else {
+        renderQueueList(false);
+    }
 
+    rebindProgressAnimator();
     saveQueueState();
 
     if (!isUploading) {
@@ -1707,6 +1743,46 @@ function removeFromQueue(entryId) {
 
     saveQueueState();
     checkAllComplete();
+}
+
+/**
+ * Dismiss a failed or cancelled entry from the queue.
+ * Returns to ready state if queue becomes empty.
+ * @param {string} entryId
+ */
+async function dismissEntry(entryId) {
+    const index = uploadQueue.findIndex(e => e.id === entryId);
+    if (index === -1) {
+        return;
+    }
+
+    const entry = uploadQueue[index];
+    if (entry.status !== 'failed' && entry.status !== 'cancelled') {
+        return;
+    }
+
+    const jobId = entry.jobId;
+    if (jobId) {
+        dismissedJobIds.add(jobId);
+    }
+
+    uploadQueue.splice(index, 1);
+    removeQueueItemFromDOM(entryId);
+
+    saveQueueState();
+    checkAllComplete();
+
+    // Mark as cancelled server-side so mergeServerJobs won't re-add it
+    if (jobId) {
+        try {
+            await fetch('/api/jobs/' + jobId + '/cancel', {
+                method: 'POST',
+                headers: { 'X-API-Key': apiKey }
+            });
+        } catch {
+            // Best-effort
+        }
+    }
 }
 
 /**
@@ -3669,7 +3745,7 @@ function getStatusText(entry) {
 function createActionButton(entry) {
     if (entry.status === 'queued') {
         const btn = document.createElement('button');
-        btn.className = 'queue-item-action queue-item-action--remove';
+        btn.className = 'queue-item-action queue-item-action--cancel';
         btn.type = 'button';
         btn.title = 'Remove from queue';
         btn.textContent = '\u00D7'; // ×
@@ -3695,17 +3771,36 @@ function createActionButton(entry) {
         return btn;
     }
 
-    if (entry.status === 'failed' && !entry.validationError && entry.file) {
-        const btn = document.createElement('button');
-        btn.className = 'queue-item-action queue-item-action--retry';
-        btn.type = 'button';
-        btn.textContent = 'Retry';
-        btn.addEventListener('click', (e) => {
+    if (entry.status === 'failed') {
+        const dismissBtn = document.createElement('button');
+        dismissBtn.className = 'queue-item-action queue-item-action--cancel';
+        dismissBtn.type = 'button';
+        dismissBtn.title = 'Dismiss';
+        dismissBtn.textContent = '\u00D7'; // ×
+        dismissBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            retryEntry(entry.id);
+            dismissEntry(entry.id);
         });
 
-        return btn;
+        if (!entry.validationError && entry.file) {
+            const wrapper = document.createElement('span');
+            wrapper.className = 'queue-item-actions';
+
+            const retryBtn = document.createElement('button');
+            retryBtn.className = 'queue-item-action queue-item-action--retry';
+            retryBtn.type = 'button';
+            retryBtn.textContent = 'Retry';
+            retryBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                retryEntry(entry.id);
+            });
+            wrapper.appendChild(retryBtn);
+            wrapper.appendChild(dismissBtn);
+
+            return wrapper;
+        }
+
+        return dismissBtn;
     }
 
     return null;
@@ -3805,6 +3900,7 @@ function clearQueueState() {
     }
 }
 
+
 /**
  * Connect to a local file server SSE and fetch initial files.
  * Called after API key validation succeeds when local source params are present in the URL fragment.
@@ -3819,60 +3915,109 @@ async function connectLocalSource() {
     const { host, token } = localSourceConfig;
     const baseUrl = `http://${host}`;
 
-    // Fetch initial file list
+    // Restore seen indices from sessionStorage (survives reloads)
+    try {
+        const stored = sessionStorage.getItem('localSourceSeen');
+        if (stored) {
+            localSourceSeen = new Set(JSON.parse(stored));
+        }
+    } catch { /* ignore corrupt data */ }
+
+    // Fetch initial file list in parallel, skipping files already seen (fetched, cancelled, or completed).
+    // Parallel fetch + single addFilesToQueue call avoids staggered additions that interleave
+    // with upload status changes and cause visual jumpiness.
     try {
         const resp = await fetch(`${baseUrl}/api/files?token=${token}`);
         if (!resp.ok) {
             throw new Error(`HTTP ${resp.status}`);
         }
         const files = await resp.json();
+        const unseen = files.map((f, i) => ({ index: i, name: f.name })).filter(f => !localSourceSeen.has(f.index));
 
-        for (let i = 0; i < files.length; i++) {
-            await fetchAndQueueLocalFile(baseUrl, token, i, files[i].name);
+        if (unseen.length > 0) {
+            const fetched = await Promise.all(unseen.map(({ index, name }) =>
+                fetch(`${baseUrl}/api/files/${index}?token=${token}`)
+                    .then(r => r.ok ? r.blob() : null)
+                    .then(blob => {
+                        if (!blob) return null;
+                        localSourceSeen.add(index);
+
+                        return new File([blob], name, { type: blob.type });
+                    })
+                    .catch(() => null)
+            ));
+            const validFiles = fetched.filter(f => f !== null);
+            if (validFiles.length > 0) {
+                addFilesToQueue(validFiles);
+            }
+            sessionStorage.setItem('localSourceSeen', JSON.stringify([...localSourceSeen]));
         }
     } catch (e) {
         console.error('Failed to fetch local files:', e);
     }
 
-    // Connect SSE for new files added after initial fetch
+    // Batch handler for SSE events — collects rapid-fire events (e.g., multiple context menu
+    // files arriving within milliseconds) and processes them together in a single addFilesToQueue
+    // call, avoiding per-file DOM mutations and animation interruptions.
+    let pendingFiles = [];
+    let batchTimeout = null;
+
+    async function processPendingLocalFiles() {
+        batchTimeout = null;
+        const batch = pendingFiles.splice(0);
+        if (batch.length === 0) {
+            return;
+        }
+
+        try {
+            const fetched = await Promise.all(batch.map(({ index, name }) =>
+                fetch(`${baseUrl}/api/files/${index}?token=${token}`)
+                    .then(r => r.ok ? r.blob() : null)
+                    .then(blob => {
+                        if (!blob) return null;
+                        localSourceSeen.add(index);
+
+                        return new File([blob], name, { type: blob.type });
+                    })
+                    .catch(() => null)
+            ));
+            const validFiles = fetched.filter(f => f !== null);
+            if (validFiles.length > 0) {
+                addFilesToQueue(validFiles);
+            }
+            sessionStorage.setItem('localSourceSeen', JSON.stringify([...localSourceSeen]));
+        } catch (e) {
+            console.error('Failed to fetch local files:', e);
+        }
+    }
+
+    // Connect SSE for new files (server replays existing files on connect, so skip seen indices)
     localSourceEvents = new EventSource(`${baseUrl}/api/events?token=${token}`);
-    localSourceEvents.addEventListener('new-file', async (event) => {
+    localSourceEvents.addEventListener('new-file', (event) => {
         try {
             const data = JSON.parse(event.data);
-            await fetchAndQueueLocalFile(baseUrl, token, data.index, data.name);
+            if (!localSourceSeen.has(data.index)) {
+                pendingFiles.push(data);
+                if (!batchTimeout) {
+                    batchTimeout = setTimeout(processPendingLocalFiles, 50);
+                }
+            }
         } catch (e) {
             console.error('Failed to process local source SSE event:', e);
         }
     });
 
     localSourceEvents.onerror = () => {
-        // Local server shut down — just disconnect, page continues working normally
-        if (localSourceEvents) {
+        // EventSource fires onerror on temporary disconnects and auto-reconnects.
+        // Only close permanently when the connection is truly dead (CLOSED state).
+        if (localSourceEvents && localSourceEvents.readyState === EventSource.CLOSED) {
             localSourceEvents.close();
             localSourceEvents = null;
+            sessionStorage.removeItem('localSource');
+            sessionStorage.removeItem('localSourceSeen');
+            localSourceSeen.clear();
         }
     };
-}
-
-/**
- * Fetch a file from the local file server and add it to the upload queue.
- * @param {string} baseUrl - Local server base URL (e.g. "http://localhost:12345")
- * @param {string} token - Session token for authentication
- * @param {number} index - File index on local server
- * @param {string} name - File name
- */
-async function fetchAndQueueLocalFile(baseUrl, token, index, name) {
-    try {
-        const resp = await fetch(`${baseUrl}/api/files/${index}?token=${token}`);
-        if (!resp.ok) {
-            return;
-        }
-        const blob = await resp.blob();
-        const file = new File([blob], name, { type: blob.type });
-        addFilesToQueue([file]);
-    } catch (e) {
-        console.error(`Failed to fetch local file ${name}:`, e);
-    }
 }
 
 /**
@@ -4030,8 +4175,8 @@ async function fetchRecentJobs() {
  * Reconciles local state with server data:
  * - Removes stale local entries (normalizing/failed with jobId not in server response)
  * - Updates existing entries with server data (stage, progress, terminal status)
- * - Adds new entries for unknown server jobs (e.g., from CLI or another tab), skipping cancelled jobs
- *   and jobs whose fileName matches a currently-uploading entry (dedup for in-flight uploads)
+ * - Adds new entries for unknown server jobs (e.g., from CLI or another tab), skipping cancelled jobs,
+ *   user-dismissed jobs, and jobs whose fileName matches a currently-uploading entry (dedup for in-flight uploads)
  * If serverJobs is null (fetch failed), skips reconciliation entirely.
  * @param {Array<Object>|null} serverJobs - Array of JobStatusResponse objects, or null on error
  */
@@ -4042,7 +4187,8 @@ function mergeServerJobs(serverJobs) {
 
     const serverJobMap = new Map(serverJobs.map(j => [j.jobId, j]));
     const existingJobIds = new Set(uploadQueue.map(e => e.jobId).filter(Boolean));
-    let changed = false;
+    const changedEntryIds = new Set();
+    let removedEntries = false;
 
     // Remove stale local entries (normalizing/failed with jobId not in server response —
     // means job was cleaned up or is older than 1 hour)
@@ -4058,10 +4204,11 @@ function mergeServerJobs(serverJobs) {
             stale._resolveMonitor();
             stale._resolveMonitor = null;
         }
-        changed = true;
+        removedEntries = true;
     }
 
-    // Update existing entries with fresh server data
+    // Update existing entries with fresh server data (track which entries actually changed
+    // to avoid unnecessary DOM replacements that interrupt blur-fade-in animations)
     for (const serverJob of serverJobs) {
         const existing = uploadQueue.find(e => e.jobId === serverJob.jobId);
         if (!existing) {
@@ -4084,7 +4231,7 @@ function mergeServerJobs(serverJobs) {
                 existing._resolveMonitor();
                 existing._resolveMonitor = null;
             }
-            changed = true;
+            removedEntries = true;
         } else if (existing.status === 'normalizing' && isServerTerminal) {
             // Server says terminal but local still normalizing — update to terminal
             if (existing.eventSource) {
@@ -4100,29 +4247,34 @@ function mergeServerJobs(serverJobs) {
                 existing._resolveMonitor();
                 existing._resolveMonitor = null;
             }
-            changed = true;
+            changedEntryIds.add(existing.id);
         } else if (existing.status === 'normalizing') {
-            existing.stage = serverJob.stage || existing.stage;
-            existing.progress = serverJob.progressPercent ?? existing.progress;
-            changed = true;
+            const newStage = serverJob.stage || existing.stage;
+            const newProgress = serverJob.progressPercent ?? existing.progress;
+            if (existing.stage !== newStage || existing.progress !== newProgress) {
+                existing.stage = newStage;
+                existing.progress = newProgress;
+                changedEntryIds.add(existing.id);
+            }
         } else if (existing.status === 'failed' && !isServerTerminal) {
             // Recover failed entries that the server says are still active
             existing.status = 'normalizing';
             existing.stage = serverJob.stage || 'Queued';
             existing.progress = serverJob.progressPercent ?? 0;
             existing.error = null;
-            changed = true;
+            changedEntryIds.add(existing.id);
             monitorEntryNormalizationInBackground(existing);
         }
     }
 
     // Add new entries for server jobs not in local queue
-    // Also skip jobs whose fileName matches a currently-uploading entry (dedup for in-flight uploads
-    // where the SSE event arrives before the XHR 202 response sets the jobId)
+    // Also skip: jobs whose fileName matches a currently-uploading entry (dedup for in-flight uploads
+    // where the SSE event arrives before the XHR 202 response sets the jobId), and jobs the user
+    // dismissed (cancel POST may still be in flight)
     const uploadingFileNames = new Set(uploadQueue.filter(e => e.status === 'uploading').map(e => e.fileName));
     const newEntries = [];
     for (const serverJob of serverJobs) {
-        if (!existingJobIds.has(serverJob.jobId) && !uploadingFileNames.has(serverJob.fileName)) {
+        if (!existingJobIds.has(serverJob.jobId) && !uploadingFileNames.has(serverJob.fileName) && !dismissedJobIds.has(serverJob.jobId)) {
             const serverStatus = serverJob.status;
             const isServerTerminal = serverStatus === 'Completed' || serverStatus === 'Failed' || serverStatus === 'Cancelled';
             if (serverStatus === 'Cancelled') {
@@ -4150,7 +4302,7 @@ function mergeServerJobs(serverJobs) {
         }
     }
 
-    if (newEntries.length === 0 && !changed) {
+    if (newEntries.length === 0 && changedEntryIds.size === 0 && !removedEntries) {
         return;
     }
 
@@ -4167,12 +4319,15 @@ function mergeServerJobs(serverJobs) {
         // New entries to add — must rebuild the full list
         renderQueueList(true);
         rebindProgressAnimator();
-    } else if (changed && currentState === 'queue') {
-        // Only existing entries changed — update individually to avoid destroying
-        // the actively-uploading entry's progress bar reference in progressAnimator
-        for (const entry of uploadQueue) {
-            if (entry.id !== activeUploadId) {
-                updateQueueItemInDOM(entry);
+    } else if (changedEntryIds.size > 0 && currentState === 'queue') {
+        // Only update entries that actually changed — avoids replacing all DOM elements
+        // which would interrupt blur-fade-in animations on recently-added items
+        for (const entryId of changedEntryIds) {
+            if (entryId !== activeUploadId) {
+                const entry = uploadQueue.find(e => e.id === entryId);
+                if (entry) {
+                    updateQueueItemInDOM(entry);
+                }
             }
         }
     }

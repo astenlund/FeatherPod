@@ -144,6 +144,14 @@ function Deploy-Environment {
             throw "dotnet build failed with exit code $LASTEXITCODE"
         }
 
+        # 2b. Publish NativeAOT launcher (side effect for local CLI use)
+        $launcherProjectPath = Join-Path $PSScriptRoot "FeatherPod.Launcher\FeatherPod.Launcher.csproj"
+        Write-Host "`nPublishing FeatherPod.Launcher (NativeAOT)..." -ForegroundColor Cyan
+        dotnet publish $launcherProjectPath -c Release -p:DebugType=None --no-restore
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Launcher publish failed (non-fatal) - context menu may not work" -ForegroundColor Yellow
+        }
+
         # 3. Deploy App Service
         Write-Host "`nPublishing App Service...`n" -ForegroundColor Cyan
         dotnet publish $serverProjectPath -c Release -o $publishPath --no-build

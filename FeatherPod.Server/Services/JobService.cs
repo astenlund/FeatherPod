@@ -140,8 +140,9 @@ public class JobService : IJobService
                 var response = await _tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
                 var entity = response.Value;
 
-                // Already in terminal state — not cancellable
-                if (entity.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+                // Already completed or cancelled — not cancellable
+                // Failed jobs CAN be cancelled (dismiss from push page UI)
+                if (entity.GetJobStatus() is JobStatus.Completed or JobStatus.Cancelled)
                 {
                     return null;
                 }

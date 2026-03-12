@@ -40,7 +40,7 @@ internal sealed class RemoveCommand : Command<ContextMenuRemoveSettings>
                 return 1;
             }
 
-            Out.Success($"Removed all context menu entries ({entries.Count} feed(s))");
+            Out.Success($"Removed all context menu entries ({entries.Count} {(entries.Count == 1 ? "feed" : "feeds")})");
             Out.BlankLine().Flush();
 
             return 0;

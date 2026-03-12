@@ -1030,7 +1030,15 @@ h1 {
     text-overflow: ellipsis;
 }
 
-/* Action button — grid column 4, symmetric with icon */
+/* Action buttons — grid column 4, symmetric with icon */
+.queue-item-actions {
+    grid-column: 4;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
 .queue-item-action {
     grid-column: 4;
     grid-row: 1;
@@ -1046,12 +1054,10 @@ h1 {
     transition: color var(--transition-fast), background-color var(--transition-fast);
 }
 
-.queue-item-action--remove,
 .queue-item-action--cancel {
     color: var(--text-muted);
 }
 
-.queue-item-action--remove:hover,
 .queue-item-action--cancel:hover {
     color: var(--text-secondary);
 }

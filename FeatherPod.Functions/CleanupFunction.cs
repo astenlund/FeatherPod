@@ -55,7 +55,13 @@ public class CleanupFunction
     /// </summary>
     internal async Task<int> CleanupOldJobsAsync(TableClient tableClient, CancellationToken cancellationToken)
     {
+        // Floor: never delete jobs less than 1 hour old (push page shows recent completions)
+        var minimumAge = DateTimeOffset.UtcNow.AddHours(-1);
         var cutoff = DateTimeOffset.UtcNow.AddDays(-_settings.JobRetentionDays);
+        if (cutoff > minimumAge)
+        {
+            cutoff = minimumAge;
+        }
         var deletedCount = 0;
 
         // Query for completed/failed jobs older than cutoff

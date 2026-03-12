@@ -116,6 +116,37 @@ public class CleanupFunctionTests : IAsyncLifetime
     }
 
     [AzuriteFact]
+    public async Task CleanupOldJobs_PreservesJobsLessThanOneHourOld_EvenWithZeroRetention()
+    {
+        // Arrange - create a job completed 30 minutes ago with 0-day retention
+        var recentJob = new JobStatusEntity
+        {
+            PartitionKey = "jobs",
+            RowKey = Guid.NewGuid().ToString(),
+            Status = nameof(JobStatus.Completed),
+            FeedId = "test-feed",
+            QueuedAt = DateTimeOffset.UtcNow.AddMinutes(-45),
+            CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-30)
+        };
+        await _tableClientInstance.AddEntityAsync(recentJob);
+
+        var settings = Options.Create(new FunctionSettings
+        {
+            ContainerName = _containerName,
+            JobRetentionDays = 0,
+            OrphanedBlobRetentionDays = 1
+        });
+        var logger = LoggerFactory.Create(b => b.AddConsole()).CreateLogger<CleanupFunction>();
+        var function = new CleanupFunction(_blobClient, _tableClient, settings, logger);
+
+        // Act
+        var deleted = await function.CleanupOldJobsAsync(_tableClientInstance, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(0, deleted);
+    }
+
+    [AzuriteFact]
     public async Task CleanupOrphanedBlobs_DeletesBlobsWithNoJob()
     {
         // Arrange - create a pending blob with no corresponding job

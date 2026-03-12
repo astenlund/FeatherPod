@@ -316,11 +316,8 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
             coordinator.WriteLockFile(server.Port, server.Token);
             server.AddFile(filePath);
 
-            if (!server.HasActiveClients)
-            {
-                var pushUrl = $"{serverBaseUrl}/{feedId}/push#{apiKey}&source=localhost:{server.Port}&token={server.Token}";
-                Process.Start(new ProcessStartInfo(pushUrl) { UseShellExecute = true });
-            }
+            var pushUrl = $"{serverBaseUrl}/{feedId}/push#{apiKey}&source=localhost:{server.Port}&token={server.Token}";
+            Process.Start(new ProcessStartInfo(pushUrl) { UseShellExecute = true });
 
             await idleCompletionSource.Task;
         }

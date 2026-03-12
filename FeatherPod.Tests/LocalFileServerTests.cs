@@ -82,7 +82,7 @@ public class LocalFileServerTests : IDisposable
 
         // Assert
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("application/octet-stream", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("audio/mpeg", response.Content.Headers.ContentType?.MediaType);
 
         var disposition = response.Content.Headers.ContentDisposition;
         Assert.NotNull(disposition);

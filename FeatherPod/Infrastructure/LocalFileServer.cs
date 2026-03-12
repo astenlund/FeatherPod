@@ -9,9 +9,22 @@ namespace FeatherPod.Infrastructure;
 internal sealed class LocalFileServer : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-    private static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(15);
-    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan IdleTimeout = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(5);
     private const int MaxStartAttempts = 3;
+
+    private static readonly Dictionary<string, string> MimeTypes = new(StringComparer.OrdinalIgnoreCase)
+    {
+        [".mp3"] = "audio/mpeg",
+        [".m4a"] = "audio/mp4",
+        [".m4b"] = "audio/mp4",
+        [".wav"] = "audio/wav",
+        [".ogg"] = "audio/ogg",
+        [".flac"] = "audio/flac",
+        [".aac"] = "audio/aac",
+        [".opus"] = "audio/opus",
+        [".wma"] = "audio/x-ms-wma",
+    };
 
     private readonly string _allowedOrigin;
     private readonly List<(string Path, string Name, long Size)> _files = [];
@@ -25,17 +38,6 @@ internal sealed class LocalFileServer : IDisposable
 
     public int Port { get; private set; }
     public string Token { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-
-    public bool HasActiveClients
-    {
-        get
-        {
-            lock (_lock)
-            {
-                return _sseClients.Count > 0;
-            }
-        }
-    }
 
     public event Action? OnIdleTimeout;
 
@@ -267,14 +269,17 @@ internal sealed class LocalFileServer : IDisposable
             size = _files[index].Size;
         }
 
+        var extension = Path.GetExtension(name);
         response.StatusCode = 200;
-        response.ContentType = "application/octet-stream";
+        response.ContentType = MimeTypes.GetValueOrDefault(extension, "application/octet-stream");
         response.ContentLength64 = size;
         response.AddHeader("Content-Disposition", $"attachment; filename=\"{name}\"");
 
         using var fileStream = File.OpenRead(path);
         fileStream.CopyTo(response.OutputStream);
         response.Close();
+
+        ResetIdleTimer();
     }
 
     private void HandlePostFile(HttpListenerRequest request, HttpListenerResponse response)
@@ -370,6 +375,8 @@ internal sealed class LocalFileServer : IDisposable
 
             _sseClients.Add(response);
         }
+
+        ResetIdleTimer();
     }
 
     private void BroadcastSseEvent(string eventType, object data)
