@@ -48,4 +48,8 @@ internal sealed class PushSettings : CommandSettings
     [CommandOption("--dry-run")]
     [Description("Preview what would be uploaded and deleted without actually doing it")]
     public bool DryRun { get; init; }
+
+    [CommandOption("--headless")]
+    [Description("Run in headless mode (no console, opens browser push page)")]
+    public bool Headless { get; init; }
 }
