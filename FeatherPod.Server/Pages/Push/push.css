@@ -502,12 +502,6 @@ h1 {
     margin-top: 1.2rem;
 }
 
-@keyframes text-shimmer {
-    0% { background-position: 100% 0; }
-    100% { background-position: -100% 0; }
-}
-
-
 .hint code {
     background: var(--bg-code);
     padding: 2px 6px;
@@ -590,29 +584,6 @@ h1 {
 .no-key-title {
     text-align: center;
     margin-bottom: 2rem;
-}
-
-.no-key-validating {
-    text-align: center;
-    padding: 2rem 0;
-}
-
-.validating-text {
-    color: var(--text-secondary);
-    font-size: 1rem;
-    background: linear-gradient(
-        90deg,
-        var(--text-secondary) 0%,
-        var(--text-secondary) 40%,
-        var(--text-primary) 50%,
-        var(--text-secondary) 60%,
-        var(--text-secondary) 100%
-    );
-    background-size: 200% 100%;
-    background-clip: text;
-    -webkit-background-clip: text;
-    color: transparent;
-    animation: text-shimmer 2s ease-in-out infinite;
 }
 
 #no-key-content {

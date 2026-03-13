@@ -1014,10 +1014,6 @@ async function init() {
     // Recalculate on resize
     window.addEventListener('resize', cacheLayoutDimensions);
 
-    // Show validating state while we check the key
-    showState('no-key');
-    setNoKeyValidating(true);
-
     /**
      * Show the no-key UI with an optional error state.
      * @param {'invalid'|'no-access'|null} [errorType=null] - Type of error to display
@@ -1026,8 +1022,8 @@ async function init() {
         if (errorType) {
             clearApiKey();
         }
-        setNoKeyValidating(false);
         setNoKeyError(errorType);
+        showState('no-key');
         initNoKeyState();
     }
 
@@ -1035,13 +1031,10 @@ async function init() {
      * Try to validate and use a fallback key when the primary key fails.
      * @param {string|null} fallbackKey - The fallback key to try
      * @param {string} warningMessage - Message to show if fallback succeeds
-     * @param {'invalid'|'no-access'} errorType - Error type if both keys fail
-     * @returns {Promise<boolean>} True if fallback succeeded, false if should show no-key UI
+     * @returns {Promise<boolean>} True if fallback succeeded
      */
-    async function tryFallbackKey(fallbackKey, warningMessage, errorType) {
+    async function tryFallbackKey(fallbackKey, warningMessage) {
         if (!fallbackKey) {
-            showNoKeyUI(errorType);
-
             return false;
         }
 
@@ -1052,8 +1045,6 @@ async function init() {
 
             return true;
         }
-
-        showNoKeyUI(errorType);
 
         return false;
     }
@@ -1089,52 +1080,50 @@ async function init() {
     }
 
     const storedKey = getStoredApiKey();
+    const primaryKey = extractedKey || storedKey;
 
     if (extractedKey) {
         // Clear fragment from URL immediately for cleaner UX
         history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
 
-        const validation = await validateApiKeyWithRetry(extractedKey);
+    if (primaryKey) {
+        // Optimistic: set key and proceed to ready state immediately
+        apiKey = primaryKey;
 
-        if (validation.valid && validation.feedAccess) {
-            // Fragment key is valid with feed access
-            saveApiKey(extractedKey);
-        } else if (validation.networkError) {
-            // Server unreachable - use fragment key optimistically and persist it
-            showWarningBanner('Server unreachable \u2014 using URL key');
-            saveApiKey(extractedKey);
-        } else if (validation.valid && !validation.feedAccess) {
-            // Fragment key is valid but no feed access - try fallback
-            if (!await tryFallbackKey(storedKey, 'URL key does not have access to this feed. Using saved key.', 'no-access')) {
-                return;
+        // Background validation (fire-and-forget)
+        validateApiKeyWithRetry(primaryKey).then(async (validation) => {
+            if (validation.valid && validation.feedAccess) {
+                // Key is good — ensure it's persisted in all storage layers
+                saveApiKey(primaryKey);
+            } else if (validation.networkError) {
+                showWarningBanner(extractedKey ? 'Server unreachable \u2014 using URL key' : 'Server unreachable \u2014 using saved key');
+                saveApiKey(primaryKey);
+            } else if (extractedKey) {
+                // Fragment key failed — try stored key as fallback
+                if (validation.valid && !validation.feedAccess) {
+                    if (await tryFallbackKey(storedKey, 'URL key does not have access to this feed. Using saved key.')) {
+                        return;
+                    }
+                } else {
+                    if (await tryFallbackKey(storedKey, 'Invalid URL key. Using saved key.')) {
+                        return;
+                    }
+                }
+
+                // Both keys failed — only disrupt UI if user is still on the ready screen
+                if (document.getElementById('ready').style.display !== 'none') {
+                    const errorType = (validation.valid && !validation.feedAccess) ? 'no-access' : (validation.valid ? null : 'invalid');
+                    showNoKeyUI(errorType);
+                }
+            } else {
+                // Stored key failed — only disrupt UI if user is still on the ready screen
+                if (document.getElementById('ready').style.display !== 'none') {
+                    const errorType = (validation.valid && !validation.feedAccess) ? 'no-access' : null;
+                    showNoKeyUI(errorType);
+                }
             }
-        } else {
-            // Fragment key is invalid - try fallback
-            if (!await tryFallbackKey(storedKey, 'Invalid URL key. Using saved key.', 'invalid')) {
-                return;
-            }
-        }
-    } else if (storedKey) {
-        // No fragment, try stored key
-        const validation = await validateApiKeyWithRetry(storedKey);
-
-        if (validation.valid && validation.feedAccess) {
-            // Stored key is valid - ensure it's in all storage layers
-            saveApiKey(storedKey);
-        } else if (validation.valid && !validation.feedAccess) {
-            showNoKeyUI('no-access');
-
-            return;
-        } else if (validation.networkError) {
-            // Server unreachable - use stored key optimistically
-            showWarningBanner('Server unreachable \u2014 using saved key');
-            apiKey = storedKey;
-        } else {
-            // Stored key is genuinely invalid - show paste UI without error
-            showNoKeyUI(null);
-
-            return;
-        }
+        }).catch(() => {});
     } else {
         // No key available
         showNoKeyUI(null);
@@ -1193,30 +1182,6 @@ async function init() {
 
 /** @type {boolean} - Whether initNoKeyState has already been called (prevents duplicate listeners) */
 let noKeyStateInitialized = false;
-
-/**
- * Set the no-key state to validating mode (shows loading spinner, hides other elements).
- * @param {boolean} validating - Whether currently validating
- */
-function setNoKeyValidating(validating) {
-    const validatingEl = document.getElementById('no-key-validating');
-    const contentEl = document.getElementById('no-key-content');
-    const noKeyTitleEl = document.getElementById('no-key-title');
-
-    if (validating) {
-        validatingEl.style.display = 'block';
-        contentEl.style.display = 'none';
-        if (noKeyTitleEl) {
-            noKeyTitleEl.textContent = 'Validating...';
-        }
-    } else {
-        validatingEl.style.display = 'none';
-        contentEl.style.display = 'block';
-        if (noKeyTitleEl) {
-            noKeyTitleEl.textContent = STR_API_KEY_REQUIRED;
-        }
-    }
-}
 
 /**
  * Set the no-key state error display.
