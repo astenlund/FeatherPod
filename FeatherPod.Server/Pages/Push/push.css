@@ -352,17 +352,6 @@ h2 {
     box-shadow: 0 0 16px var(--primary-a25);
 }
 
-.btn-secondary:focus {
-    outline: none;
-    border-color: var(--primary-300);
-    box-shadow: 0 0 16px var(--glow-300-50);
-}
-
-.btn-secondary:focus:hover {
-    border-color: var(--primary-200);
-    box-shadow: 0 0 20px var(--glow-200-60);
-}
-
 .btn-secondary:active {
     border-color: var(--primary-400);
     background: var(--primary-a15);
@@ -894,6 +883,8 @@ h1 {
     font-weight: 500;
     color: var(--text-tertiary);
     cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
     transition: color var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast);
     white-space: nowrap;
 }
@@ -901,6 +892,11 @@ h1 {
 .btn-queue-add:hover {
     color: var(--text-secondary);
     background: var(--primary-a15);
+    border-color: var(--primary-500);
+}
+
+.btn-queue-add:active {
+    background: var(--primary-a25);
     border-color: var(--primary-500);
 }
 
@@ -1329,6 +1325,8 @@ h1 {
     color: var(--text-tertiary);
     cursor: pointer;
     overflow: hidden;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
     transition:
         color var(--transition-fast),
         background-color var(--transition-fast),
@@ -1352,17 +1350,8 @@ h1 {
 
 .history-toggle:hover {
     color: var(--text-secondary);
-    background: var(--primary-a10);
-    border-color: var(--border-subtle);
-}
-
-.history-toggle:focus {
-    outline: none;
-}
-
-.history-toggle:focus-visible {
-    border-color: var(--primary-400);
-    box-shadow: 0 0 0 3px var(--primary-a20);
+    background: var(--primary-a15);
+    border-color: var(--primary-500);
 }
 
 .history-toggle:active {
@@ -1919,7 +1908,7 @@ h1 {
         filter: none !important;
     }
 
-    /* Send "Add more files" behind the frosted overlay when history panel is open */
+    /* Send "#queu-add-files" behind the frosted overlay when history panel is open */
     .container.state-queue:has(.history-section--expanded) .queue-drop-zone,
     .container.state-queue:has(.history-section--collapsing) .queue-drop-zone {
         z-index: 98;

@@ -1487,7 +1487,7 @@ dropZone.addEventListener('drop', (e) => {
     addFilesToQueue(files);
 });
 
-// Queue state: add more files button and drop zone
+// Queue state: add files button and drop zone
 document.getElementById('queue-add-files')?.addEventListener('click', () => {
     document.getElementById('queue-file-input').click();
 });
