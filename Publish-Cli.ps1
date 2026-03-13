@@ -7,6 +7,38 @@ param(
     [switch]$ShowR2RWarnings
 )
 
+# 1. Publish the NativeAOT bridge first (it gets embedded as a resource)
+Write-Host "Publishing FeatherPod.Bridge (NativeAOT)..." -ForegroundColor Cyan
+$bridgePublishArgs = @(
+    "publish", "FeatherPod.Bridge",
+    "-c", "Release",
+    "-p:DebugType=None"
+)
+
+dotnet @bridgePublishArgs
+$bridgeExitCode = $LASTEXITCODE
+
+if ($bridgeExitCode -ne 0) {
+    Write-Host "Bridge publish failed with exit code $bridgeExitCode" -ForegroundColor Red
+    exit $bridgeExitCode
+}
+
+$bridgeOutputPath = Join-Path "FeatherPod.Bridge" "bin" "Release" "net10.0-windows" "win-x64" "publish"
+$bridgeExe = Join-Path $bridgeOutputPath "featherpod-bridge.exe"
+
+if (Test-Path $bridgeExe) {
+    $resourceDir = Join-Path "FeatherPod" "Resources"
+    if (-not (Test-Path $resourceDir)) {
+        New-Item -ItemType Directory -Path $resourceDir -Force | Out-Null
+    }
+    Copy-Item $bridgeExe -Destination $resourceDir -Force
+    Write-Host "Copied featherpod-bridge.exe to FeatherPod/Resources/ (will be embedded)" -ForegroundColor Green
+} else {
+    Write-Host "Warning: featherpod-bridge.exe not found at $bridgeExe" -ForegroundColor Yellow
+}
+
+# 2. Publish the CLI (bridge is embedded as a resource)
+Write-Host "`nPublishing FeatherPod CLI..." -ForegroundColor Cyan
 $publishArgs = @(
     "publish", "FeatherPod",
     "-c", "Release",
@@ -38,32 +70,6 @@ $exitCode = $LASTEXITCODE
 if ($exitCode -ne 0) {
     Write-Host "Publish failed with exit code $exitCode" -ForegroundColor Red
     exit $exitCode
-}
-
-# Publish the NativeAOT launcher alongside the CLI
-Write-Host "`nPublishing FeatherPod.Launcher (NativeAOT)..." -ForegroundColor Cyan
-$launcherPublishArgs = @(
-    "publish", "FeatherPod.Launcher",
-    "-c", "Release",
-    "-p:DebugType=None"
-)
-
-dotnet @launcherPublishArgs
-$launcherExitCode = $LASTEXITCODE
-
-if ($launcherExitCode -ne 0) {
-    Write-Host "Launcher publish failed with exit code $launcherExitCode" -ForegroundColor Red
-    exit $launcherExitCode
-}
-
-$launcherOutputPath = Join-Path "FeatherPod.Launcher" "bin" "Release" "net10.0-windows" "win-x64" "publish"
-$launcherExe = Join-Path $launcherOutputPath "featherpod-launcher.exe"
-
-if (Test-Path $launcherExe) {
-    Copy-Item $launcherExe -Destination $finalOutputPath -Force
-    Write-Host "Copied featherpod-launcher.exe to publish output" -ForegroundColor Green
-} else {
-    Write-Host "Warning: featherpod-launcher.exe not found at $launcherExe" -ForegroundColor Yellow
 }
 
 Write-Host "`nPublished to: $finalOutputPath" -ForegroundColor Green

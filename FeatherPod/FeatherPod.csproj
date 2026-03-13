@@ -7,14 +7,14 @@
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
 
-  <Target Name="CopyLauncher" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+  <Target Name="CopyBridge" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <PropertyGroup>
-      <LauncherPublishDir>..\FeatherPod.Launcher\bin\$(Configuration)\net10.0-windows\win-x64\publish\</LauncherPublishDir>
+      <BridgePublishDir>..\FeatherPod.Bridge\bin\$(Configuration)\net10.0-windows\win-x64\publish\</BridgePublishDir>
     </PropertyGroup>
-    <Copy SourceFiles="$(LauncherPublishDir)featherpod-launcher.exe"
+    <Copy SourceFiles="$(BridgePublishDir)featherpod-bridge.exe"
           DestinationFolder="$(OutputPath)"
           SkipUnchangedFiles="true"
-          Condition="Exists('$(LauncherPublishDir)featherpod-launcher.exe')" />
+          Condition="Exists('$(BridgePublishDir)featherpod-bridge.exe')" />
   </Target>
 
   <ItemGroup>
@@ -42,6 +42,12 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="FeatherPod.Tests" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('Resources\featherpod-bridge.exe')">
+    <EmbeddedResource Include="Resources\featherpod-bridge.exe">
+      <LogicalName>featherpod-bridge.exe</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
   <PropertyGroup>

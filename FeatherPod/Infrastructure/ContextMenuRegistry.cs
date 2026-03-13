@@ -3,7 +3,7 @@ using Microsoft.Win32;
 
 namespace FeatherPod.Infrastructure;
 
-internal record ContextMenuEntry(string FeedId, string FeedTitle, string Environment, string LauncherPath);
+internal record ContextMenuEntry(string FeedId, string FeedTitle, string Environment, string BridgePath);
 
 [SupportedOSPlatform("windows")]
 internal static class ContextMenuRegistry
@@ -11,11 +11,11 @@ internal static class ContextMenuRegistry
     private const string DefaultRegistryKeyPrefix = @"Software\Classes\SystemFileAssociations";
     private const string KeyPrefix = "FeatherPod.";
 
-    internal static void Install(string feedId, string feedTitle, string launcherPath, string cliPath, string environment, string registryKeyPrefix = DefaultRegistryKeyPrefix)
+    internal static void Install(string feedId, string feedTitle, string bridgePath, string cliPath, string environment, string registryKeyPrefix = DefaultRegistryKeyPrefix)
     {
         var shellKeyName = $"{KeyPrefix}{feedId}";
         var displayName = $"Push to {feedTitle}";
-        var command = $"\"{launcherPath}\" push --headless --feed {feedId} --environment {environment} \"%1\"";
+        var command = $"\"{bridgePath}\" push --headless --feed {feedId} --environment {environment} \"%1\"";
 
         foreach (var ext in AudioExtensions.All)
         {
@@ -68,17 +68,17 @@ internal static class ContextMenuRegistry
                     ? displayName["Push to ".Length..]
                     : displayName;
 
-                var launcherPath = "";
+                var bridgePath = "";
                 var environment = "Prod";
 
                 using var commandKey = entryKey.OpenSubKey("command");
                 if (commandKey?.GetValue(null) is string commandValue)
                 {
-                    launcherPath = ParseLauncherPath(commandValue);
+                    bridgePath = ParseBridgePath(commandValue);
                     environment = ParseEnvironment(commandValue);
                 }
 
-                entries[feedId] = new ContextMenuEntry(feedId, feedTitle, environment, launcherPath);
+                entries[feedId] = new ContextMenuEntry(feedId, feedTitle, environment, bridgePath);
             }
         }
 
@@ -125,7 +125,7 @@ internal static class ContextMenuRegistry
         }
     }
 
-    private static string ParseLauncherPath(string commandValue)
+    private static string ParseBridgePath(string commandValue)
     {
         if (commandValue.StartsWith('"'))
         {

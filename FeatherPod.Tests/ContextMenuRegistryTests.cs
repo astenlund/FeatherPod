@@ -21,12 +21,12 @@ public class ContextMenuRegistryTests : IDisposable
         // Arrange
         var feedId = "test-podcast";
         var feedTitle = "Test Podcast";
-        var launcherPath = @"C:\tools\featherpod-launcher.exe";
+        var bridgePath = @"C:\tools\featherpod-bridge.exe";
         var cliPath = @"C:\tools\featherpod.exe";
         var environment = "Prod";
 
         // Act
-        ContextMenuRegistry.Install(feedId, feedTitle, launcherPath, cliPath, environment, _registryPrefix);
+        ContextMenuRegistry.Install(feedId, feedTitle, bridgePath, cliPath, environment, _registryPrefix);
 
         // Assert
         using var shellKey = Registry.CurrentUser.OpenSubKey($@"{_registryPrefix}\.mp3\shell\FeatherPod.{feedId}");
@@ -38,7 +38,7 @@ public class ContextMenuRegistryTests : IDisposable
         Assert.NotNull(commandKey);
         var commandValue = commandKey.GetValue(null) as string;
         Assert.NotNull(commandValue);
-        Assert.Contains(launcherPath, commandValue);
+        Assert.Contains(bridgePath, commandValue);
         Assert.Contains("--feed test-podcast", commandValue);
         Assert.Contains("--environment Prod", commandValue);
         Assert.Contains("--headless", commandValue);
@@ -55,8 +55,8 @@ public class ContextMenuRegistryTests : IDisposable
     public void GetInstalled_ReturnsInstalledEntries()
     {
         // Arrange
-        ContextMenuRegistry.Install("podcast-a", "Podcast A", @"C:\launcher.exe", @"C:\cli.exe", "Prod", _registryPrefix);
-        ContextMenuRegistry.Install("podcast-b", "Podcast B", @"C:\launcher.exe", @"C:\cli.exe", "Test", _registryPrefix);
+        ContextMenuRegistry.Install("podcast-a", "Podcast A", @"C:\bridge.exe", @"C:\cli.exe", "Prod", _registryPrefix);
+        ContextMenuRegistry.Install("podcast-b", "Podcast B", @"C:\bridge.exe", @"C:\cli.exe", "Test", _registryPrefix);
 
         // Act
         var entries = ContextMenuRegistry.GetInstalled(_registryPrefix);
@@ -83,7 +83,7 @@ public class ContextMenuRegistryTests : IDisposable
     public void GetInstalled_DeduplicatesAcrossExtensions()
     {
         // Arrange
-        ContextMenuRegistry.Install("my-feed", "My Feed", @"C:\launcher.exe", @"C:\cli.exe", "Prod", _registryPrefix);
+        ContextMenuRegistry.Install("my-feed", "My Feed", @"C:\bridge.exe", @"C:\cli.exe", "Prod", _registryPrefix);
 
         // Act
         var entries = ContextMenuRegistry.GetInstalled(_registryPrefix);
@@ -97,8 +97,8 @@ public class ContextMenuRegistryTests : IDisposable
     public void Remove_RemovesSpecificFeed()
     {
         // Arrange
-        ContextMenuRegistry.Install("keep-this", "Keep This", @"C:\launcher.exe", @"C:\cli.exe", "Prod", _registryPrefix);
-        ContextMenuRegistry.Install("remove-this", "Remove This", @"C:\launcher.exe", @"C:\cli.exe", "Prod", _registryPrefix);
+        ContextMenuRegistry.Install("keep-this", "Keep This", @"C:\bridge.exe", @"C:\cli.exe", "Prod", _registryPrefix);
+        ContextMenuRegistry.Install("remove-this", "Remove This", @"C:\bridge.exe", @"C:\cli.exe", "Prod", _registryPrefix);
 
         // Act
         ContextMenuRegistry.Remove("remove-this", _registryPrefix);
@@ -113,8 +113,8 @@ public class ContextMenuRegistryTests : IDisposable
     public void RemoveAll_RemovesAllEntries()
     {
         // Arrange
-        ContextMenuRegistry.Install("feed-1", "Feed 1", @"C:\launcher.exe", @"C:\cli.exe", "Prod", _registryPrefix);
-        ContextMenuRegistry.Install("feed-2", "Feed 2", @"C:\launcher.exe", @"C:\cli.exe", "Test", _registryPrefix);
+        ContextMenuRegistry.Install("feed-1", "Feed 1", @"C:\bridge.exe", @"C:\cli.exe", "Prod", _registryPrefix);
+        ContextMenuRegistry.Install("feed-2", "Feed 2", @"C:\bridge.exe", @"C:\cli.exe", "Test", _registryPrefix);
 
         // Act
         ContextMenuRegistry.RemoveAll(_registryPrefix);
@@ -128,7 +128,7 @@ public class ContextMenuRegistryTests : IDisposable
     public void Remove_NoOpWhenFeedNotInstalled()
     {
         // Arrange
-        ContextMenuRegistry.Install("existing", "Existing", @"C:\launcher.exe", @"C:\cli.exe", "Prod", _registryPrefix);
+        ContextMenuRegistry.Install("existing", "Existing", @"C:\bridge.exe", @"C:\cli.exe", "Prod", _registryPrefix);
 
         // Act - should not throw
         ContextMenuRegistry.Remove("nonexistent", _registryPrefix);
@@ -140,18 +140,18 @@ public class ContextMenuRegistryTests : IDisposable
     }
 
     [Fact]
-    public void Install_ParsesLauncherPathFromCommand()
+    public void Install_ParsesBridgePathFromCommand()
     {
         // Arrange
-        var launcherPath = @"C:\Program Files\FeatherPod\featherpod-launcher.exe";
-        ContextMenuRegistry.Install("path-test", "Path Test", launcherPath, @"C:\cli.exe", "Prod", _registryPrefix);
+        var bridgePath = @"C:\Program Files\FeatherPod\featherpod-bridge.exe";
+        ContextMenuRegistry.Install("path-test", "Path Test", bridgePath, @"C:\cli.exe", "Prod", _registryPrefix);
 
         // Act
         var entries = ContextMenuRegistry.GetInstalled(_registryPrefix);
 
         // Assert
         Assert.Single(entries);
-        Assert.Equal(launcherPath, entries[0].LauncherPath);
+        Assert.Equal(bridgePath, entries[0].BridgePath);
     }
 
     public void Dispose()

@@ -38,7 +38,7 @@ catch (Exception ex)
 }
 
 // Fire and forget — the CLI process runs independently (local server stays alive until idle timeout).
-// The launcher exits immediately so Explorer doesn't show a "waiting" state.
+// The bridge exits immediately so Explorer doesn't show a "waiting" state.
 return 0;
 
 internal static partial class NativeInterop

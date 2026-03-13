@@ -31,7 +31,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "infrastructure", "infrastru
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FeatherPod.Analyzers", "FeatherPod.Analyzers\FeatherPod.Analyzers.csproj", "{4008D026-7E87-494F-9D4F-2875EF9C654F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FeatherPod.Launcher", "FeatherPod.Launcher\FeatherPod.Launcher.csproj", "{94490374-9179-4877-A4A5-86EBC51BD135}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FeatherPod.Bridge", "FeatherPod.Bridge\FeatherPod.Bridge.csproj", "{94490374-9179-4877-A4A5-86EBC51BD135}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

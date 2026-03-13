@@ -4,8 +4,8 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <AssemblyName>featherpod-launcher</AssemblyName>
-    <RootNamespace>FeatherPod.Launcher</RootNamespace>
+    <AssemblyName>featherpod-bridge</AssemblyName>
+    <RootNamespace>FeatherPod.Bridge</RootNamespace>
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
     <ImplicitUsings>enable</ImplicitUsings>

@@ -28,15 +28,12 @@ internal sealed class InstallCommand : AsyncCommand<ContextMenuInstallSettings>
             return 1;
         }
 
-        var cliDir = Path.GetDirectoryName(cliPath)!;
-        var launcherPath = Path.Combine(cliDir, "featherpod-launcher.exe");
-
-        if (!File.Exists(launcherPath))
+        var bridgePath = BridgeResource.ExtractBridge();
+        if (bridgePath is null)
         {
-            Out.Error("featherpod-launcher.exe not found alongside featherpod.exe.");
+            Out.Error("featherpod-bridge.exe could not be extracted or found alongside featherpod.exe.");
             Out.BlankLine();
-            Out.MarkupLine($"[grey]Expected at: [cyan]{Markup.Escape(launcherPath)}[/][/]");
-            Out.MarkupLine("[grey]Publish the FeatherPod.Launcher project to the same directory as featherpod.exe.[/]");
+            Out.MarkupLine("[grey]Publish the CLI using Publish-Cli.ps1 to embed the bridge binary.[/]");
             Out.BlankLine().Flush();
 
             return 1;
@@ -78,7 +75,7 @@ internal sealed class InstallCommand : AsyncCommand<ContextMenuInstallSettings>
 
             try
             {
-                ContextMenuRegistry.Install(feed.Id, feed.Title, launcherPath, cliPath, env);
+                ContextMenuRegistry.Install(feed.Id, feed.Title, bridgePath, cliPath, env);
             }
             catch (Exception ex) when (ex is UnauthorizedAccessException or SecurityException)
             {

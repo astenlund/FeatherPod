@@ -257,7 +257,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
     private static async Task<int> ExecuteHeadlessAsync(PushSettings settings)
     {
         // Headless mode: no console output — all errors shown via MessageBox.
-        // Launched by featherpod-launcher.exe with CREATE_NO_WINDOW.
+        // Launched by featherpod-bridge.exe with CREATE_NO_WINDOW.
 
         var filePath = settings.Files;
         if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
