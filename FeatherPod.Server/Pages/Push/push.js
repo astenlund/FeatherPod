@@ -216,7 +216,7 @@ function collapseHistoryImmediate() {
         toggle.setAttribute('aria-expanded', 'false');
         const textSpan = toggle.querySelector('.history-toggle-text');
         if (textSpan) {
-            textSpan.textContent = 'Recent uploads';
+            textSpan.textContent = 'History';
         }
         toggle.classList.remove('text-fading');
         toggle.style.width = '';
@@ -2184,7 +2184,7 @@ function toggleHistorySection(expand) {
     }
 
     // Animate text change: 1) delay, 2) fade out, 3) resize, 4) fade in, 5) end
-    const newText = newState ? '← Back' : 'Recent uploads';
+    const newText = newState ? '← Back' : 'History';
     const textSpan = toggle.querySelector('.history-toggle-text');
     const TEXT_FADE = 150;
     const WIDTH_ANIM = 150;
@@ -2209,7 +2209,7 @@ function toggleHistorySection(expand) {
         textSpan.textContent = newText;
         toggle.style.width = 'auto';
         const newWidth = toggle.offsetWidth;
-        textSpan.textContent = newState ? 'Recent uploads' : '← Back'; // restore old text
+        textSpan.textContent = newState ? 'History' : '← Back'; // restore old text
         textSpan.style.visibility = '';
         toggle.style.width = currentWidth + 'px';
 
