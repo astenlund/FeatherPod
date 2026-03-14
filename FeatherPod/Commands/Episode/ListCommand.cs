@@ -102,7 +102,7 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
         // Select feed
         var feed = !string.IsNullOrEmpty(settings.FeedId)
             ? await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FeedId)
-            : await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+            : await FeedHelpers.SelectFeedAsync(httpClient);
 
         if (feed == null)
         {

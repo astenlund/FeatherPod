@@ -14,6 +14,6 @@ internal sealed class SetIconSettings : CommandSettings
     public string? Environment { get; init; }
 
     [CommandArgument(1, "[feed-id]")]
-    [Description("Feed ID to set icon for (optional, will prompt if omitted)")]
+    [Description("Feed ID")]
     public string? FeedId { get; init; }
 }

@@ -9,9 +9,9 @@ internal sealed class RevokeSettings : CommandSettings
     [Description("User ID to revoke feed ownership from")]
     public string UserId { get; init; } = string.Empty;
 
-    [CommandArgument(1, "<feed-id>")]
+    [CommandArgument(1, "[feed-id]")]
     [Description("Feed ID to revoke ownership of")]
-    public string FeedId { get; init; } = string.Empty;
+    public string? FeedId { get; init; }
 
     [CommandOption("--environment")]
     [Description("Target environment (Dev, Test, Prod)")]

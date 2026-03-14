@@ -10,6 +10,6 @@ internal sealed class ContextMenuRemoveSettings : CommandSettings
     public bool All { get; init; }
 
     [CommandOption("-f|--feed")]
-    [Description("Feed ID to remove (optional, will prompt if not specified)")]
+    [Description("Feed ID to remove")]
     public string? FeedId { get; init; }
 }

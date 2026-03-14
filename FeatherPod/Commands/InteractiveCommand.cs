@@ -37,7 +37,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         FeedConfig? currentFeed = null;
         if (isConnected && httpClient != null)
         {
-            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, currentUser: currentUser, showNoFeedsMessage: false);
+            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser, showNoFeedsMessage: false);
         }
 
         var adminFeaturesEnabled = PreferencesHelpers.GetEnableAdminFeatures() ?? false;
@@ -78,7 +78,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     }
 
                     // Select feed if none selected
-                    var pushFeed = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
+                    var pushFeed = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
                     if (pushFeed == null)
                     {
                         WaitForKeyPress();
@@ -301,7 +301,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     var actionPast = isMove ? "Moved" : "Copied";
 
                     // Select source feed
-                    var sourceFeed = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, contextMessage: "Select source feed:", currentUser: currentUser);
+                    var sourceFeed = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, contextMessage: "Select source feed:", currentUser: currentUser);
                     if (sourceFeed == null)
                     {
                         WaitForKeyPress();
@@ -903,7 +903,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     }
                     else
                     {
-                        var newFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
+                        var newFeed = await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
                         if (newFeed != null)
                         {
                             currentFeed = newFeed;
@@ -974,7 +974,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             break;
 
                         case "update":
-                            var feedToUpdate = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
+                            var feedToUpdate = await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
                             if (feedToUpdate != null)
                             {
                                 await FeedUpdateCommand.UpdateFeedInteractiveAsync(httpClient, feedToUpdate, cancellationToken);
@@ -988,7 +988,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             break;
 
                         case "config":
-                            var feedToConfig = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
+                            var feedToConfig = await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
                             if (feedToConfig != null)
                             {
                                 await ConfigureFeedInteractiveAsync(httpClient, feedToConfig, cancellationToken);
@@ -1002,7 +1002,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             break;
 
                         case "rename":
-                            var feedToRename = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
+                            var feedToRename = await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
                             if (feedToRename != null)
                             {
                                 var newId = AnsiConsole.Ask<string>("New feed [bold]ID[/]:");
@@ -1018,21 +1018,21 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             break;
 
                         case "delete":
-                            var feedToDelete = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
+                            var feedToDelete = await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
                             if (feedToDelete != null)
                             {
                                 var deleteResult = await FeedDeleteCommand.DeleteFeedAsync(httpClient, feedToDelete.Id, cancellationToken: cancellationToken);
                                 if (deleteResult.Success && currentFeed?.Id == deleteResult.FeedId)
                                 {
                                     // Current feed was deleted, select a new one
-                                    currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, contextMessage: "Previous feed was deleted.", currentUser: currentUser);
+                                    currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, contextMessage: "Previous feed was deleted.", currentUser: currentUser);
                                 }
                                 WaitForKeyPress();
                             }
                             break;
 
                         case "icon-set":
-                            var feedForIcon = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
+                            var feedForIcon = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
                             if (feedForIcon == null)
                             {
                                 WaitForKeyPress();
@@ -1078,7 +1078,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             break;
 
                         case "icon-remove":
-                            var feedToRemoveIcon = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
+                            var feedToRemoveIcon = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
                             if (feedToRemoveIcon == null)
                             {
                                 WaitForKeyPress();
@@ -1110,7 +1110,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                             break;
 
                         case "push-url":
-                            var feedForPushUrl = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
+                            var feedForPushUrl = currentFeed ?? await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
                             if (feedForPushUrl == null)
                             {
                                 WaitForKeyPress();
@@ -1138,7 +1138,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                         if (isConnected && httpClient != null)
                         {
-                            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, currentUser: currentUser);
+                            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
                         }
                         else if (!autoConnect)
                         {
@@ -1192,7 +1192,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                                         if (isConnected && httpClient != null)
                                         {
-                                            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, currentUser: currentUser);
+                                            currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
                                         }
                                     }
                                 }
@@ -1212,7 +1212,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                                 if (isConnected && httpClient != null)
                                 {
-                                    currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, currentUser: currentUser);
+                                    currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
                                 }
                             }
                             break;
@@ -1278,7 +1278,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                                     if (isConnected && httpClient != null)
                                     {
-                                        currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, currentUser: currentUser);
+                                        currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
                                     }
                                     else
                                     {
@@ -1362,7 +1362,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                                             if (isConnected && httpClient != null)
                                             {
-                                                currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: false, currentUser: currentUser);
+                                                currentFeed = await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
                                             }
                                             else
                                             {

@@ -10,6 +10,6 @@ internal sealed class UnsetIconSettings : CommandSettings
     public string? Environment { get; init; }
 
     [CommandArgument(0, "[feed-id]")]
-    [Description("Feed ID to remove icon from (optional, will prompt if omitted)")]
+    [Description("Feed ID")]
     public string? FeedId { get; init; }
 }

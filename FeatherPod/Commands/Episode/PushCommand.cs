@@ -51,7 +51,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         }
         else
         {
-            feed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
+            feed = await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
             if (feed == null)
             {
                 Out.Error("No feeds available. Create a feed first.");

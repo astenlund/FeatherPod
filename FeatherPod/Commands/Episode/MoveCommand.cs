@@ -37,7 +37,7 @@ internal sealed class MoveCommand : AsyncCommand<MoveSettings>
         }
         else
         {
-            sourceFeed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, contextMessage: "Select source feed:");
+            sourceFeed = await FeedHelpers.SelectFeedAsync(httpClient, contextMessage: "Select source feed:");
             if (sourceFeed == null)
             {
                 Out.Error("No feeds available.");

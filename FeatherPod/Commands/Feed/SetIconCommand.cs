@@ -48,7 +48,7 @@ internal sealed class SetIconCommand : AsyncCommand<SetIconSettings>
         // Select feed (use argument if provided, otherwise prompt user to select)
         var feed = !string.IsNullOrEmpty(settings.FeedId)
             ? await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FeedId)
-            : await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+            : await FeedHelpers.SelectFeedAsync(httpClient);
 
         if (feed == null)
         {

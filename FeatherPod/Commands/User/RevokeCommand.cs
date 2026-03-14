@@ -22,8 +22,6 @@ internal sealed class RevokeCommand : AsyncCommand<RevokeSettings>
         if (httpClient == null) return 1;
 
         var userId = settings.UserId.Trim();
-        var feedId = settings.FeedId.Trim();
-
         if (string.IsNullOrWhiteSpace(userId))
         {
             Out.Error("User ID cannot be empty");
@@ -31,11 +29,17 @@ internal sealed class RevokeCommand : AsyncCommand<RevokeSettings>
             return 1;
         }
 
+        var feedId = settings.FeedId?.Trim();
         if (string.IsNullOrWhiteSpace(feedId))
         {
-            Out.Error("Feed ID cannot be empty");
+            var feed = await FeedHelpers.SelectFeedAsync(httpClient);
+            if (feed == null)
+            {
+                Out.Error("No feeds available.");
 
-            return 1;
+                return 1;
+            }
+            feedId = feed.Id;
         }
 
         try

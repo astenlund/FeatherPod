@@ -76,7 +76,7 @@ internal sealed class PushUrlCommand : AsyncCommand<PushUrlSettings>
             var (httpClient, _) = await EnvironmentHelpers.SetupHttpClientAsync(env);
             if (httpClient == null) return 1;
 
-            var feed = await FeedHelpers.SelectFeedAsync(httpClient, env);
+            var feed = await FeedHelpers.SelectFeedAsync(httpClient);
             if (feed == null)
             {
                 Out.Error("No feeds available.");

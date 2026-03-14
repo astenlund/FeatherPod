@@ -33,7 +33,7 @@ internal static class FeedHelpers
         var resolvedFeedId = feedId?.Trim();
         if (string.IsNullOrWhiteSpace(resolvedFeedId))
         {
-            var selectedFeed = await SelectFeedAsync(httpClient, env, forcePrompt: true);
+            var selectedFeed = await SelectFeedAsync(httpClient);
             if (selectedFeed == null)
             {
                 Out.Error("No feeds available.");
@@ -90,11 +90,10 @@ internal static class FeedHelpers
         }
     }
 
-    internal static async Task<FeedConfig?> SelectFeedAsync(HttpClient httpClient, string environment, bool forcePrompt = false, string? contextMessage = null, CurrentUserInfo? currentUser = null, bool showNoFeedsMessage = true)
+    internal static async Task<FeedConfig?> SelectFeedAsync(HttpClient httpClient, string? contextMessage = null, CurrentUserInfo? currentUser = null, bool showNoFeedsMessage = true)
     {
         var feeds = await GetFeedsAsync(httpClient);
 
-        // Filter feeds by ownership for FeedOwner users
         if (currentUser?.Role == "FeedOwner")
         {
             feeds = feeds.Where(f => currentUser.OwnedFeeds.Contains(f.Id)).ToList();
@@ -114,29 +113,11 @@ internal static class FeedHelpers
             return null;
         }
 
-        // Check last-used first (before single-feed shortcut)
-        var lastUsed = PreferencesHelpers.GetLastSelectedFeed(environment);
-        var lastUsedFeed = string.IsNullOrEmpty(lastUsed) ? null : feeds.FirstOrDefault(f => string.Equals(f.Id, lastUsed, StringComparison.OrdinalIgnoreCase));
-
-        // Auto-select if not forcing prompt
-        if (!forcePrompt)
+        if (feeds.Count == 1)
         {
-            // Return last-used if valid
-            if (lastUsedFeed != null)
-            {
-                return lastUsedFeed;
-            }
-
-            // Return single feed if only one exists
-            if (feeds.Count == 1)
-            {
-                PreferencesHelpers.SetLastSelectedFeed(environment, feeds[0].Id);
-
-                return feeds[0];
-            }
+            return feeds[0];
         }
 
-        // Show feed selector with optional context message
         var menu = new MenuBuilder<FeedConfig?>()
             .WithTitle($"{contextMessage} Select feed:".Trim())
             .WithHint("(arrow keys, Enter to select)")
@@ -151,13 +132,7 @@ internal static class FeedHelpers
             );
         }
 
-        var selected = menu.Show();
-        if (selected != null)
-        {
-            PreferencesHelpers.SetLastSelectedFeed(environment, selected.Id);
-        }
-
-        return selected;
+        return menu.Show();
     }
 
     internal static async Task<bool> UploadIconAsync(HttpClient httpClient, string feedId, string iconPath)

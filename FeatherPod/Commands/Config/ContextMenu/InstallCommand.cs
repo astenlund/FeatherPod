@@ -55,7 +55,7 @@ internal sealed class InstallCommand : AsyncCommand<ContextMenuInstallSettings>
         {
             var feed = !string.IsNullOrEmpty(settings.FeedId)
                 ? await FeedHelpers.GetFeedByIdAsync(httpClient, settings.FeedId)
-                : await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true, currentUser: currentUser);
+                : await FeedHelpers.SelectFeedAsync(httpClient, currentUser: currentUser);
 
             if (feed is null)
             {

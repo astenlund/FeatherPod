@@ -10,6 +10,6 @@ internal sealed class ContextMenuInstallSettings : CommandSettings
     public string Environment { get; init; } = "Prod";
 
     [CommandOption("-f|--feed")]
-    [Description("Feed ID to register (optional, will prompt if not specified)")]
+    [Description("Feed ID to register")]
     public string? FeedId { get; init; }
 }

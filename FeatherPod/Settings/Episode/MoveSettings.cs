@@ -10,11 +10,11 @@ internal sealed class MoveSettings : CommandSettings
     public string? Environment { get; init; }
 
     [CommandOption("-f|--from-feed")]
-    [Description("Source feed ID to move episode(s) from (optional, prompts if not provided)")]
+    [Description("Source feed ID")]
     public string? FromFeed { get; init; }
 
     [CommandOption("-t|--to-feed")]
-    [Description("Target feed ID to move episode(s) to (optional, prompts if not provided)")]
+    [Description("Target feed ID")]
     public string? ToFeed { get; init; }
 
     [CommandOption("--episode")]

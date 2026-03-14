@@ -14,7 +14,7 @@ internal sealed class PushSettings : CommandSettings
     public string? Environment { get; init; }
 
     [CommandOption("-f|--feed")]
-    [Description("Feed ID to upload to (optional, defaults to last-used feed)")]
+    [Description("Feed ID to upload to")]
     public string? FeedId { get; init; }
 
     [CommandOption("-t|--title")]

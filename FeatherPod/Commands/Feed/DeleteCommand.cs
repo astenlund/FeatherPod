@@ -83,7 +83,7 @@ internal sealed class DeleteCommand : AsyncCommand<DeleteSettings>
         var feedId = settings.FeedId?.Trim();
         if (string.IsNullOrWhiteSpace(feedId))
         {
-            var feed = await FeedHelpers.SelectFeedAsync(httpClient, env, forcePrompt: true);
+            var feed = await FeedHelpers.SelectFeedAsync(httpClient);
             if (feed == null)
             {
                 Out.Error("No feeds available.");
