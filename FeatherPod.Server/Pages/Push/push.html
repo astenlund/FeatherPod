@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Push to {{FEED_TITLE}}</title>
-    <link rel="icon" type="image/png" href="/{{FEED_ID}}/icon.png">
+    <link rel="icon" type="image/png" href="/{{FEED_ID}}/icon.png{{ICON_CACHE_BUSTER}}">
     {{PWA_HEAD}}
     <link rel="stylesheet" href="/{{FEED_ID}}/push/app.css">
 </head>
@@ -12,7 +12,7 @@
     <div id="artwork-backdrop" class="artwork-backdrop"></div>
     <div class="container">
         <h1 id="page-title">Push to Feed</h1>
-        <img id="feed-artwork" src="/{{FEED_ID}}/icon.png" alt="" hidden>
+        <img id="feed-artwork" src="/{{FEED_ID}}/icon.png{{ICON_CACHE_BUSTER}}" alt="" hidden>
         <h2 id="feed-name" class="feed-name">{{FEED_TITLE}}</h2>
 
         <div id="no-key" class="state" style="display: none;">

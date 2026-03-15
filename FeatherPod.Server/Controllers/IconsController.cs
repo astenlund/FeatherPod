@@ -9,17 +9,20 @@ public class IconsController : ControllerBase
 {
     private readonly EpisodeService _episodeService;
     private readonly IBlobStorageService _blobService;
+    private readonly IconResizeService _iconResizeService;
     private readonly ILogger<IconsController> _logger;
     private readonly string _baseUrl;
 
     public IconsController(
         EpisodeService episodeService,
         IBlobStorageService blobService,
+        IconResizeService iconResizeService,
         ILogger<IconsController> logger,
         IConfiguration configuration)
     {
         _episodeService = episodeService;
         _blobService = blobService;
+        _iconResizeService = iconResizeService;
         _logger = logger;
         _baseUrl = configuration.GetSection("Podcast")["BaseUrl"]
             ?? throw new InvalidOperationException("Podcast.BaseUrl must be configured in appsettings.json");
@@ -52,6 +55,13 @@ public class IconsController : ControllerBase
                 return BadRequest(new { error = "No file uploaded" });
             }
 
+            const long maxIconSize = 10 * 1024 * 1024; // 10 MB
+            if (file.Length > maxIconSize)
+            {
+                _logger.LogWarning("Icon too large for feed '{FeedId}': {Size} bytes", feedId, file.Length);
+                return BadRequest(new { error = "Icon must be smaller than 10 MB" });
+            }
+
             _logger.LogInformation("Uploading icon for feed '{FeedId}', size: {Size} bytes, type: {ContentType}",
                 feedId, file.Length, file.ContentType);
 
@@ -78,6 +88,7 @@ public class IconsController : ControllerBase
             try
             {
                 await _blobService.UploadIconAsync(feedId, tempPath);
+                _iconResizeService.InvalidateCache(feedId);
                 _logger.LogInformation("Successfully uploaded icon for feed '{FeedId}'", feedId);
                 return Ok(new { message = $"Icon uploaded for feed '{feedId}'", iconUrl = $"{_baseUrl}/{feedId}/icon.png" });
             }
@@ -85,9 +96,13 @@ public class IconsController : ControllerBase
             {
                 // Clean up temp file
                 if (System.IO.File.Exists(tempPath))
+                {
                     System.IO.File.Delete(tempPath);
+                }
                 if (Directory.Exists(tempDir))
+                {
                     Directory.Delete(tempDir);
+                }
             }
         }
         catch (Exception ex)
@@ -110,6 +125,7 @@ public class IconsController : ControllerBase
         }
 
         await _blobService.DeleteIconAsync(feedId);
+        _iconResizeService.InvalidateCache(feedId);
         _logger.LogInformation("Deleted icon for feed '{FeedId}'", feedId);
 
         return NoContent();

@@ -180,10 +180,16 @@ public class TestBlobStorageService : IBlobStorageService
         await Task.CompletedTask;
     }
 
-    public async Task<bool> IconExistsAsync(string feedId)
+    public async Task<string?> GetIconETagAsync(string feedId)
     {
         var feedIconPath = Path.Combine(_rootPath, feedId, "icon.png");
-        return await Task.FromResult(File.Exists(feedIconPath));
+        if (!File.Exists(feedIconPath))
+        {
+            return await Task.FromResult<string?>(null);
+        }
+
+        var lastWrite = File.GetLastWriteTimeUtc(feedIconPath);
+        return await Task.FromResult<string?>(lastWrite.Ticks.ToString("x"));
     }
 
     public async Task<Stream> DownloadIconAsync(string feedId)

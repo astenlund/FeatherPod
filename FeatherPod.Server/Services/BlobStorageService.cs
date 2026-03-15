@@ -212,13 +212,21 @@ public class BlobStorageService : IBlobStorageService
         _logger.LogInformation("Uploaded icon for feed: {FeedId}", feedId);
     }
 
-    public async Task<bool> IconExistsAsync(string feedId)
+    public async Task<string?> GetIconETagAsync(string feedId)
     {
         var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
         var blobPath = $"{feedId}/icon.png";
         var blobClient = containerClient.GetBlobClient(blobPath);
 
-        return await blobClient.ExistsAsync();
+        try
+        {
+            var properties = await blobClient.GetPropertiesAsync();
+            return properties.Value.ETag.ToString().Trim('"');
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
     }
 
     public async Task<Stream> DownloadIconAsync(string feedId)

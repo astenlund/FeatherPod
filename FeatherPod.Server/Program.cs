@@ -144,14 +144,18 @@ app.MapGet("/{feedId}/icon.png", async (string feedId, IBlobStorageService servi
             return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
         }
 
-        var exists = await service.IconExistsAsync(feedId);
-        if (!exists)
+        Stream stream;
+        try
+        {
+            stream = await service.DownloadIconAsync(feedId);
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {
             return Results.NotFound($"Icon for feed '{feedId}' not found");
         }
 
-        var stream = await service.DownloadIconAsync(feedId);
         context.Response.ContentType = "image/png";
+        context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
 
         await using (stream)
         {
@@ -165,7 +169,7 @@ app.MapGet("/{feedId}/icon.png", async (string feedId, IBlobStorageService servi
     .Produces(404);
 
 // Resized icon for PWA manifest (192x192 or 512x512)
-app.MapGet("/{feedId}/icon-{size:int}.png", async (string feedId, int size, IconResizeService iconResizeService) =>
+app.MapGet("/{feedId}/icon-{size:int}.png", async (string feedId, int size, IconResizeService iconResizeService, HttpContext context) =>
     {
         if (!InputValidation.IsValidFeedId(feedId))
         {
@@ -183,7 +187,8 @@ app.MapGet("/{feedId}/icon-{size:int}.png", async (string feedId, int size, Icon
             return Results.NotFound($"Icon for feed '{feedId}' not found");
         }
 
-        return Results.File(bytes, "image/png");
+        context.Response.Headers.CacheControl = "public, max-age=31536000, immutable";
+        return Results.Bytes(bytes, "image/png");
     })
     .WithName("GetResizedIcon")
     .Produces(200, contentType: "image/png")
@@ -208,10 +213,10 @@ app.MapGet("/{feedId}/push",
             var progressSmoothing = config.GetValue("PushPage:ProgressSmoothing", true);
             var userAgent = context.Request.Headers.UserAgent.ToString();
             var isAndroid = userAgent.Contains("Android", StringComparison.OrdinalIgnoreCase);
-            var hasIcon = await blobStorageService.IconExistsAsync(feedId);
-            var pwaEnabled = isAndroid && hasIcon;
+            var iconETag = await blobStorageService.GetIconETagAsync(feedId);
+            var pwaEnabled = isAndroid && iconETag != null;
 
-            return Results.Content(GeneratePushPageHtml(feedId, feed.Title, env, progressSmoothing, pwaEnabled, hasIcon), "text/html");
+            return Results.Content(GeneratePushPageHtml(feedId, feed.Title, env, progressSmoothing, pwaEnabled, iconETag), "text/html");
         })
     .WithName("GetPushPage")
     .Produces(200, contentType: "text/html")
@@ -224,7 +229,7 @@ app.MapPost("/{feedId}/push", (string feedId) => Results.Redirect($"/{feedId}/pu
     .Produces(302);
 
 // PWA Web App Manifest for share target support (Android)
-app.MapGet("/{feedId}/push/manifest.json", async (string feedId, EpisodeService episodeService) =>
+app.MapGet("/{feedId}/push/manifest.json", async (string feedId, EpisodeService episodeService, IBlobStorageService blobStorageService) =>
     {
         if (!InputValidation.IsValidFeedId(feedId))
         {
@@ -237,6 +242,8 @@ app.MapGet("/{feedId}/push/manifest.json", async (string feedId, EpisodeService 
             return Results.NotFound($"Feed '{feedId}' not found");
         }
 
+        var iconETag = await blobStorageService.GetIconETagAsync(feedId);
+        var iconCacheBuster = IconCacheBuster(iconETag);
         var shortName = feed.Title.Length <= 12 ? feed.Title : feed.Title[..12];
         var manifest = new
         {
@@ -249,10 +256,10 @@ app.MapGet("/{feedId}/push/manifest.json", async (string feedId, EpisodeService 
             theme_color = "#1a1a2e",
             icons = new[]
             {
-                new { src = $"/{feedId}/icon-192.png", sizes = "192x192", type = "image/png", purpose = "any" },
-                new { src = $"/{feedId}/icon-512.png", sizes = "512x512", type = "image/png", purpose = "any" },
-                new { src = $"/{feedId}/icon-192.png", sizes = "192x192", type = "image/png", purpose = "maskable" },
-                new { src = $"/{feedId}/icon-512.png", sizes = "512x512", type = "image/png", purpose = "maskable" }
+                new { src = $"/{feedId}/icon-192.png{iconCacheBuster}", sizes = "192x192", type = "image/png", purpose = "any" },
+                new { src = $"/{feedId}/icon-512.png{iconCacheBuster}", sizes = "512x512", type = "image/png", purpose = "any" },
+                new { src = $"/{feedId}/icon-192.png{iconCacheBuster}", sizes = "192x192", type = "image/png", purpose = "maskable" },
+                new { src = $"/{feedId}/icon-512.png{iconCacheBuster}", sizes = "512x512", type = "image/png", purpose = "maskable" }
             },
             share_target = new
             {
@@ -474,9 +481,11 @@ app.Run();
 // PUSH PAGE HTML GENERATION
 // ============================================================================
 
-static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvironment env, bool progressSmoothing, bool pwaEnabled, bool hasArtwork)
+static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvironment env, bool progressSmoothing, bool pwaEnabled, string? iconETag)
 {
     var escapedTitle = System.Net.WebUtility.HtmlEncode(feedTitle);
+    var hasArtwork = iconETag != null;
+    var iconCacheBuster = IconCacheBuster(iconETag);
 
     string html;
 
@@ -508,11 +517,14 @@ static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvi
         .Replace("{{PWA_HEAD}}", pwaHead)
         .Replace("{{FEED_ID}}", feedId)
         .Replace("{{FEED_TITLE}}", escapedTitle)
+        .Replace("{{ICON_CACHE_BUSTER}}", iconCacheBuster)
         .Replace("{{DROP_ZONE_CLASS}}", hasArtwork ? " drop-zone--has-artwork" : "")
-        .Replace("{{BACKDROP_SRC}}", hasArtwork ? $" src=\"/{feedId}/icon.png\"" : "")
+        .Replace("{{BACKDROP_SRC}}", hasArtwork ? $" src=\"/{feedId}/icon.png{iconCacheBuster}\"" : "")
         .Replace("{{IS_DEV}}", env.IsDevelopment().ToString().ToLowerInvariant())
         .Replace("{{PROGRESS_SMOOTHING}}", progressSmoothing.ToString().ToLowerInvariant());
 }
+
+static string IconCacheBuster(string? iconETag) => iconETag != null ? $"?v={Uri.EscapeDataString(iconETag)}" : "";
 
 static string ReadResource(System.Reflection.Assembly assembly, string name)
 {

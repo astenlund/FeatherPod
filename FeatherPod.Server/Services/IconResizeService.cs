@@ -9,6 +9,14 @@ public class IconResizeService(IBlobStorageService blobStorageService, IMemoryCa
 
     public static bool IsValidSize(int size) => AllowedSizes.Contains(size);
 
+    public void InvalidateCache(string feedId)
+    {
+        foreach (var size in AllowedSizes)
+        {
+            memoryCache.Remove($"icon-{feedId}-{size}");
+        }
+    }
+
     public async Task<byte[]?> GetResizedIconAsync(string feedId, int size)
     {
         var cacheKey = $"icon-{feedId}-{size}";
@@ -16,12 +24,6 @@ public class IconResizeService(IBlobStorageService blobStorageService, IMemoryCa
         if (memoryCache.TryGetValue(cacheKey, out byte[]? cached))
         {
             return cached;
-        }
-
-        var iconExists = await blobStorageService.IconExistsAsync(feedId);
-        if (!iconExists)
-        {
-            return null;
         }
 
         try
@@ -59,6 +61,10 @@ public class IconResizeService(IBlobStorageService blobStorageService, IMemoryCa
             memoryCache.Set(cacheKey, bytes, cacheOptions);
 
             return bytes;
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
         }
         catch (Exception ex)
         {

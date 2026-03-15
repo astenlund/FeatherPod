@@ -1,4 +1,16 @@
-self.addEventListener('install', () => self.skipWaiting());
+self.addEventListener('install', (event) => {
+    event.waitUntil((async () => {
+        const scope = new URL(self.registration.scope).pathname;
+        const cache = await caches.open('push-page');
+        try {
+            await cache.addAll([scope, `${scope}/app.js`, `${scope}/app.css`]);
+        } catch (e) {
+            // Best-effort — don't prevent installation if pre-caching fails
+        }
+        self.skipWaiting();
+    })());
+});
+
 self.addEventListener('activate', (event) => event.waitUntil(clients.claim()));
 
 self.addEventListener('fetch', (event) => {
@@ -26,29 +38,33 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // Stale-while-revalidate for push page navigation
-    if (event.request.method === 'GET' && url.pathname.endsWith('/push')
-        && event.request.mode === 'navigate') {
-        event.respondWith((async () => {
-            const cache = await caches.open('push-page');
-            const cached = await cache.match(event.request);
+    // Stale-while-revalidate for push page navigation and assets (JS, CSS)
+    if (event.request.method === 'GET') {
+        const isNavigation = url.pathname.endsWith('/push') && event.request.mode === 'navigate';
+        const isAsset = url.pathname.endsWith('/push/app.js') || url.pathname.endsWith('/push/app.css');
 
-            const networkFetch = fetch(event.request).then(response => {
-                if (response.ok) {
-                    cache.put(event.request, response.clone());
+        if (isNavigation || isAsset) {
+            event.respondWith((async () => {
+                const cache = await caches.open('push-page');
+                const cached = await cache.match(event.request);
+
+                const networkFetch = fetch(event.request).then(response => {
+                    if (response.ok) {
+                        cache.put(event.request, response.clone());
+                    }
+                    return response;
+                }).catch(() => null);
+
+                if (cached) {
+                    event.waitUntil(networkFetch);
+                    return cached;
                 }
-                return response;
-            }).catch(() => null);
 
-            if (cached) {
-                event.waitUntil(networkFetch);
-                return cached;
-            }
-
-            return (await networkFetch) || new Response('Offline', {
-                status: 503,
-                headers: { 'Content-Type': 'text/plain' }
-            });
-        })());
+                return (await networkFetch) || new Response('Offline', {
+                    status: 503,
+                    headers: { 'Content-Type': 'text/plain' }
+                });
+            })());
+        }
     }
 });

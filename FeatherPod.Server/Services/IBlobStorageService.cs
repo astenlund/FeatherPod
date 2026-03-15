@@ -25,7 +25,7 @@ public interface IBlobStorageService
 
     // Icon operations
     Task UploadIconAsync(string feedId, string filePath);
-    Task<bool> IconExistsAsync(string feedId);
+    Task<string?> GetIconETagAsync(string feedId);
     Task<Stream> DownloadIconAsync(string feedId);
     Task DeleteIconAsync(string feedId);
 
