@@ -3806,6 +3806,43 @@ function removeQueueItemFromDOM(entryId) {
 }
 
 /**
+ * Remove completed and cancelled entries older than 1 hour from the upload queue.
+ * Called when the tab regains focus or the PWA resumes, so stale terminal entries
+ * don't linger until a full page refresh. Recent entries are kept so the user can
+ * see completions that happened while the tab was inactive.
+ * Adds cleared jobIds to dismissedJobIds to prevent mergeServerJobs from re-adding them.
+ */
+function clearTerminalEntries() {
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    const terminalEntries = uploadQueue.filter(e =>
+        (e.status === 'completed' || e.status === 'cancelled') && e.startedAt < oneHourAgo
+    );
+    if (terminalEntries.length === 0) {
+        return;
+    }
+    for (const entry of terminalEntries) {
+        if (entry.jobId) {
+            dismissedJobIds.add(entry.jobId);
+        }
+        if (entry.eventSource) {
+            entry.eventSource.close();
+            entry.eventSource = null;
+        }
+        if (entry._resolveMonitor) {
+            entry._resolveMonitor();
+            entry._resolveMonitor = null;
+        }
+        removeQueueItemFromDOM(entry.id);
+        const idx = uploadQueue.indexOf(entry);
+        if (idx !== -1) {
+            uploadQueue.splice(idx, 1);
+        }
+    }
+    saveQueueState();
+    checkAllComplete();
+}
+
+/**
  * Get the progress bar element for a queue entry.
  * @param {string} entryId
  * @returns {HTMLElement|null}
@@ -4332,9 +4369,16 @@ document.addEventListener('visibilitychange', () => {
         if (apiKey && !feedEventsSource) {
             connectFeedEvents();
         }
+        // Clear completed/cancelled entries on tab focus
+        clearTerminalEntries();
         // Catch any events missed while tab was inactive (browsers may throttle/disconnect SSE)
         if (apiKey) {
             fetchRecentJobs().then(mergeServerJobs).catch(() => {});
+            // Only refresh history here if the queue is still showing — when clearTerminalEntries
+            // empties the queue, checkAllComplete already calls initHistorySection
+            if (uploadQueue.length > 0) {
+                refreshHistoryList().catch(() => {});
+            }
         }
     }
 });
