@@ -807,6 +807,21 @@ h1 {
     font-weight: 500;
 }
 
+#history-info-title,
+#history-info-filename {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+#history-info-title.expanded,
+#history-info-filename.expanded {
+    white-space: normal;
+    overflow: visible;
+}
+
 /* ============================================================================
    QUEUE UI
    ============================================================================ */

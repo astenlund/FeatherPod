@@ -2512,6 +2512,8 @@ function getHistoryEmptyMessage() {
 /**
  * Update the history info card with episode data.
  * Populates the info card fields if an episode is provided, otherwise hides the card.
+ * Title and filename are truncated with ellipsis; clicking them toggles expanded view.
+ * Expanded state resets when switching episodes.
  * @param {Episode|null} episode - Episode to display, or null to hide the card
  */
 function updateHistoryInfoCard(episode) {
@@ -2527,8 +2529,12 @@ function updateHistoryInfoCard(episode) {
     }
 
     infoCard.style.display = 'grid';
-    document.getElementById('history-info-title').textContent = episode.title || episode.fileName;
-    document.getElementById('history-info-filename').textContent = episode.fileName || '';
+    const titleEl = document.getElementById('history-info-title');
+    titleEl.textContent = episode.title || episode.fileName;
+    titleEl.classList.remove('expanded');
+    const filenameEl = document.getElementById('history-info-filename');
+    filenameEl.textContent = episode.fileName || '';
+    filenameEl.classList.remove('expanded');
     document.getElementById('history-info-published').textContent = formatDate(episode.publishedDate);
 
     // Combine duration and size: "16m 40s (31 MB)"
@@ -4406,6 +4412,14 @@ document.querySelectorAll('#history-section .filter-tab').forEach(tab => {
 
 // Scroll event for fade mask
 document.getElementById('history-list')?.addEventListener('scroll', updateHistoryListScrollState);
+
+// Click-to-expand for truncated title/filename in history info card
+document.getElementById('history-info-title')?.addEventListener('click', function() {
+    this.classList.toggle('expanded');
+});
+document.getElementById('history-info-filename')?.addEventListener('click', function() {
+    this.classList.toggle('expanded');
+});
 
 // Global keyboard shortcuts for history panel
 document.addEventListener('keydown', (e) => {
