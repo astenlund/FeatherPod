@@ -1711,7 +1711,7 @@ function removeFromQueue(entryId) {
 }
 
 /**
- * Dismiss a failed or cancelled entry from the queue.
+ * Dismiss a completed, failed, or cancelled entry from the queue.
  * Returns to ready state if queue becomes empty.
  * @param {string} entryId
  */
@@ -1722,7 +1722,7 @@ async function dismissEntry(entryId) {
     }
 
     const entry = uploadQueue[index];
-    if (entry.status !== 'failed' && entry.status !== 'cancelled') {
+    if (entry.status !== 'completed' && entry.status !== 'failed' && entry.status !== 'cancelled') {
         return;
     }
 
@@ -1738,7 +1738,7 @@ async function dismissEntry(entryId) {
     checkAllComplete();
 
     // Mark as cancelled server-side so mergeServerJobs won't re-add it
-    if (jobId) {
+    if (jobId && entry.status !== 'completed') {
         try {
             await fetch('/api/jobs/' + jobId + '/cancel', {
                 method: 'POST',
@@ -3772,6 +3772,20 @@ function createActionButton(entry) {
         }
 
         return dismissBtn;
+    }
+
+    if (entry.status === 'completed') {
+        const btn = document.createElement('button');
+        btn.className = 'queue-item-action queue-item-action--cancel';
+        btn.type = 'button';
+        btn.title = 'Dismiss';
+        btn.textContent = '\u00D7'; // ×
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            dismissEntry(entry.id);
+        });
+
+        return btn;
     }
 
     return null;
