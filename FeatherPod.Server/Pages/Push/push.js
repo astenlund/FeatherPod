@@ -3379,11 +3379,17 @@ function monitorEntryNormalization(entry) {
 
 /**
  * Poll normalization job status for a queue entry (fallback when SSE unavailable).
+ * Retries transient errors (network failures, 5xx responses) up to maxAttempts times
+ * with exponential backoff before marking as failed. This handles mobile browsers where
+ * the network may not be immediately available after resuming from background.
  * @param {QueueEntry} entry
  * @returns {Promise<void>}
  */
 async function pollEntryNormalization(entry) {
     const pollInterval = 2000;
+    const maxAttempts = 5;
+    const baseRetryDelay = 2000;
+    let consecutiveErrors = 0;
 
     while (true) {
         // Check if entry was cancelled externally
@@ -3397,6 +3403,14 @@ async function pollEntryNormalization(entry) {
             });
 
             if (!response.ok) {
+                // Transient server errors (5xx) - retry with backoff
+                if (response.status >= 500) {
+                    consecutiveErrors++;
+                    if (consecutiveErrors < maxAttempts) {
+                        await new Promise(r => setTimeout(r, baseRetryDelay * Math.pow(2, consecutiveErrors - 1)));
+                        continue;
+                    }
+                }
                 entry.status = 'failed';
                 entry.error = 'Failed to check job status';
                 updateQueueItemInDOM(entry);
@@ -3404,6 +3418,7 @@ async function pollEntryNormalization(entry) {
                 return;
             }
 
+            consecutiveErrors = 0;
             const job = await response.json();
 
             if (job.status === 'Completed') {
@@ -3430,7 +3445,7 @@ async function pollEntryNormalization(entry) {
                 entry.status = 'cancelled';
                 removeQueueItemFromDOM(entry.id);
                 uploadQueue.splice(uploadQueue.indexOf(entry), 1);
-            
+
                 saveQueueState();
 
                 return;
@@ -3441,6 +3456,13 @@ async function pollEntryNormalization(entry) {
 
             await new Promise(r => setTimeout(r, pollInterval));
         } catch (err) {
+            // Network errors - retry with backoff (handles mobile resume where
+            // network isn't immediately available after returning from background)
+            consecutiveErrors++;
+            if (consecutiveErrors < maxAttempts) {
+                await new Promise(r => setTimeout(r, baseRetryDelay * Math.pow(2, consecutiveErrors - 1)));
+                continue;
+            }
             entry.status = 'failed';
             entry.error = 'Failed to check job status';
             updateQueueItemInDOM(entry);
@@ -4197,6 +4219,7 @@ async function fetchRecentJobs() {
  * Reconciles local state with server data:
  * - Removes stale local entries (normalizing/failed with jobId not in server response)
  * - Updates existing entries with server data (stage, progress, terminal status)
+ * - Recovers locally-failed entries when server reports a different status (completed, active, cancelled)
  * - Adds new entries for unknown server jobs (e.g., from CLI or another tab), skipping cancelled jobs,
  *   user-dismissed jobs, and jobs whose fileName matches a currently-uploading entry (dedup for in-flight uploads)
  * If serverJobs is null (fetch failed), skips reconciliation entirely.
@@ -4286,6 +4309,21 @@ function mergeServerJobs(serverJobs) {
             existing.error = null;
             changedEntryIds.add(existing.id);
             monitorEntryNormalizationInBackground(existing);
+        } else if (existing.status === 'failed' && serverStatus === 'Completed') {
+            // Recover locally-failed entries that actually completed on server
+            // (e.g., poll failed due to transient network error during mobile resume)
+            existing.status = 'completed';
+            existing.error = null;
+            existing.episodeId = serverJob.episodeId || existing.episodeId;
+            existing.stage = serverJob.stage || existing.stage;
+            existing.progress = 100;
+            changedEntryIds.add(existing.id);
+        } else if (existing.status === 'failed' && serverStatus === 'Cancelled') {
+            // Server says cancelled - remove from queue
+            existing.status = 'cancelled';
+            removeQueueItemFromDOM(existing.id);
+            uploadQueue.splice(uploadQueue.indexOf(existing), 1);
+            removedEntries = true;
         }
     }
 
