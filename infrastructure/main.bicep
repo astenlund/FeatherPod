@@ -261,7 +261,7 @@ resource functionAppPlan 'Microsoft.Web/serverfarms@2023-12-01' = {
 @description('Maximum number of Function App instances for scale-out')
 @minValue(1)
 @maxValue(1000)
-param functionAppScaleLimit int = 1
+param functionAppScaleLimit int = 3
 
 @description('Instance memory size in MB (512, 2048, or 4096)')
 @allowed([
