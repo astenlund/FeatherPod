@@ -4,14 +4,23 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, closed]
 
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-deploy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 env:
   DOTNET_VERSION: '10.0.x'
   TEST_RESOURCE_GROUP: 'featherpod-test-rg'
   TEST_APP_NAME: 'featherpod-test'
+  TEST_FUNC_APP_NAME: 'featherpod-test-func'
   TEST_APP_URL: 'https://featherpod-test.azurewebsites.net'
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     if: github.event.action != 'closed'
 
@@ -24,14 +33,41 @@ jobs:
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
 
-    - name: Build and publish
-      run: |
-        dotnet publish FeatherPod.Server/FeatherPod.Server.csproj -c Release -o publish
+    - name: Publish Server
+      run: dotnet publish FeatherPod.Server/FeatherPod.Server.csproj -c Release -o publish-server
 
-    - name: Create deployment package
+    - name: Publish Functions
+      run: dotnet publish FeatherPod.Functions/FeatherPod.Functions.csproj -c Release -o publish-functions
+
+    - name: Create server deployment package
       run: |
-        cd publish
-        zip -r ../deploy.zip .
+        cd publish-server
+        zip -r ../server-deploy.zip .
+
+    - name: Upload server artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: server-publish
+        path: server-deploy.zip
+        retention-days: 1
+
+    - name: Upload functions artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: functions-publish
+        path: publish-functions/
+        retention-days: 1
+
+  deploy-app:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event.action != 'closed'
+
+    steps:
+    - name: Download server artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: server-publish
 
     - name: Azure Login
       uses: azure/login@v2
@@ -42,43 +78,145 @@ jobs:
       uses: azure/webapps-deploy@v3
       with:
         app-name: ${{ env.TEST_APP_NAME }}
-        package: deploy.zip
-
-    - name: Comment PR with deployment URL
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const comment = `## 🚀 PR Deployed Successfully!
-
-          **Test Environment:** ${{ env.TEST_APP_URL }}
-
-          ### Multi-Feed Management:
-          - 📋 List Feeds: \`GET ${{ env.TEST_APP_URL }}/feeds\`
-          - ➕ Create Feed: \`POST ${{ env.TEST_APP_URL }}/feeds\` (requires X-API-Key)
-
-          ### Per-Feed Endpoints:
-          Replace \`{feedId}\` with your feed ID:
-          - 📡 RSS Feed: \`GET ${{ env.TEST_APP_URL }}/{feedId}/feed.xml\`
-          - 📋 Episodes: \`GET ${{ env.TEST_APP_URL }}/api/{feedId}/episodes\`
-          - 🎵 Upload: \`POST ${{ env.TEST_APP_URL }}/api/{feedId}/episodes\` (requires X-API-Key)
-          - 🔊 Audio: \`GET ${{ env.TEST_APP_URL }}/audio/{feedId}/{filename}\`
-
-          **Commit:** ${context.sha.substring(0, 7)}
-          **Branch:** ${context.payload.pull_request.head.ref}
-
-          ---
-          *Deployment powered by GitHub Actions*`;
-
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: comment
-          });
+        package: server-deploy.zip
 
     - name: Azure logout
       run: az logout
       if: always()
+
+  deploy-func:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event.action != 'closed'
+
+    steps:
+    - name: Download functions artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: functions-publish
+        path: functions-publish
+
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Deploy to Azure Function App
+      uses: azure/functions-action@v2
+      with:
+        app-name: ${{ env.TEST_FUNC_APP_NAME }}
+        package: functions-publish
+        sku: flexconsumption
+        remote-build: false
+
+    - name: Azure logout
+      run: az logout
+      if: always()
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [build, deploy-app, deploy-func]
+    if: always() && github.event.action != 'closed'
+
+    steps:
+    - name: Comment PR with deployment status
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const buildResult = '${{ needs.build.result }}';
+          const appResult = '${{ needs.deploy-app.result }}';
+          const funcResult = '${{ needs.deploy-func.result }}';
+          const allSuccess = appResult === 'success' && funcResult === 'success';
+          const buildFailed = buildResult !== 'success';
+          const anyCancelled = [buildResult, appResult, funcResult].includes('cancelled');
+          const statusIcon = (result) => result === 'success' ? '\u2705' : '\u274c';
+          const url = '${{ env.TEST_APP_URL }}';
+          const commit = context.payload.pull_request.head.sha.substring(0, 7);
+          const branch = context.payload.pull_request.head.ref;
+
+          const lines = [];
+          if (anyCancelled) {
+            return;
+          } else if (buildFailed) {
+            lines.push(
+              '## \u274c PR Build Failed',
+              '',
+              `The build failed, so no deployment was attempted.`,
+              '',
+              '| Component | Status |',
+              '|-----------|--------|',
+              `| Build | ${statusIcon(buildResult)} ${buildResult} |`,
+              '',
+              `**Commit:** ${commit}`,
+              `**Branch:** ${branch}`,
+              '',
+              '---',
+              '*Deployment powered by GitHub Actions*',
+            );
+          } else if (allSuccess) {
+            lines.push(
+              '## \ud83d\ude80 PR Deployed Successfully!',
+              '',
+              `**Test Environment:** ${url}`,
+              '',
+              '| Component | Status |',
+              '|-----------|--------|',
+              `| App Service | ${statusIcon(appResult)} ${appResult} |`,
+              `| Function App | ${statusIcon(funcResult)} ${funcResult} |`,
+              '',
+              `**Push Page:** ${url}/test-feed/push`,
+              '',
+              `**Commit:** ${commit}`,
+              `**Branch:** ${branch}`,
+              '',
+              '---',
+              '*Deployment powered by GitHub Actions*',
+            );
+          } else {
+            lines.push(
+              '## \u26a0\ufe0f PR Deployment Partially Failed',
+              '',
+              `**Test Environment:** ${url}`,
+              '',
+              '| Component | Status |',
+              '|-----------|--------|',
+              `| App Service | ${statusIcon(appResult)} ${appResult} |`,
+              `| Function App | ${statusIcon(funcResult)} ${funcResult} |`,
+              '',
+              `**Commit:** ${commit}`,
+              `**Branch:** ${branch}`,
+              '',
+              '---',
+              '*Deployment powered by GitHub Actions*',
+            );
+          }
+
+          const body = lines.join('\n');
+          const marker = '<!-- pr-deploy-status -->';
+          const comment = `${marker}\n${body}`;
+
+          const { data: comments } = await github.rest.issues.listComments({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+          });
+          const existing = comments.find(c => c.body.includes(marker));
+
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body: comment,
+            });
+          } else {
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment,
+            });
+          }
 
   cleanup-comment:
     runs-on: ubuntu-latest
@@ -89,18 +227,24 @@ jobs:
       uses: actions/github-script@v7
       with:
         script: |
-          const comment = `## ✅ PR Closed
+          const url = '${{ env.TEST_APP_URL }}';
+          const appName = '${{ env.TEST_APP_NAME }}';
+          const rg = '${{ env.TEST_RESOURCE_GROUP }}';
 
-          The test environment at ${{ env.TEST_APP_URL }} is still available for manual testing.
+          const body = [
+            '## \u2705 PR Closed',
+            '',
+            `The test environment at ${url} is still available for manual testing.`,
+            '',
+            'To clean up the test environment manually:',
+            '```bash',
+            `az webapp restart --name ${appName} --resource-group ${rg}`,
+            '```',
+          ].join('\n');
 
-          To clean up the test environment manually:
-          \`\`\`bash
-          az webapp restart --name ${{ env.TEST_APP_NAME }} --resource-group ${{ env.TEST_RESOURCE_GROUP }}
-          \`\`\``;
-
-          github.rest.issues.createComment({
+          await github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
             repo: context.repo.repo,
-            body: comment
+            body: body,
           });

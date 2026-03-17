@@ -5,17 +5,17 @@ This guide explains how to set up automated PR deployments to Azure using GitHub
 ## Overview
 
 The PR deployment workflow automatically:
-1. Builds and deploys PRs to a test environment (`featherpod-test`)
-2. Comments on the PR with test environment URLs
-3. Allows testing bug fixes before merging to production
+1. Builds and deploys PRs to a test environment (`featherpod-test` App Service + `featherpod-test-func` Function App)
+2. Comments on the PR with deployment status and test environment URLs
+3. Allows testing changes before merging to production
 
 ## Architecture
 
-- **Production**: `featherpod` App Service with `featherpod` container
-- **Test**: `featherpod-test` App Service with `featherpod-test` container
-- **Shared**: Both environments use the same storage account (`featherpod`)
+- **Production**: `featherpod` App Service + `featherpod-func` Function App
+- **Test**: `featherpod-test` App Service + `featherpod-test-func` Function App
+- **Storage**: Separate accounts — production uses `featherpod`, test uses `featherpodtest`
 - **Container Structure**: Single container with hierarchical paths (`feeds.json`, `{feedId}/episodes.json`, `{feedId}/{filename}`)
-- **Cost**: Both use F1 (Free) tier, no additional costs
+- **Cost**: App Service uses F1 (Free) tier; Function App uses FC1 (Flex Consumption, pay-per-use)
 
 ## One-Time Setup
 
@@ -33,11 +33,11 @@ az group create --name featherpod-test-rg --location swedencentral
 # Deploy test infrastructure
 az deployment group create \
   --resource-group featherpod-test-rg \
-  --template-file infrastructure/test-environment.bicep \
-  --parameters infrastructure/test-environment.parameters.json
+  --template-file infrastructure/main.bicep \
+  --parameters infrastructure/parameters-test.json
 ```
 
-**Important**: If you use a different storage account or resource group, update the parameters in `test-environment.parameters.json`.
+**Important**: If you use a different storage account or resource group, update the parameters in `parameters-test.json`.
 
 ### Step 2: Create Azure Service Principal for GitHub Actions
 
@@ -88,9 +88,9 @@ You need to add TWO secrets to your GitHub repository:
 5. Value: Paste the entire JSON output from Step 2
 6. Click **Add secret**
 
-#### Secret 2: TEST_API_KEY
+#### Secret 2: TEST_API_KEY (optional)
 
-The test environment uses user-based API keys (format: `fp_{userId}_{secret}`). Create an admin user via the API or CLI and use that key for testing.
+The test environment uses user-based API keys (format: `fp_{userId}_{secret}`). This secret is not used by the PR deploy workflow itself, but can be referenced by other workflows or scripts that need to configure the test environment's app settings.
 
 1. Go to **Settings** → **Secrets and variables** → **Actions**
 2. Click **New repository secret**
@@ -136,29 +136,28 @@ The workflow runs on:
 ### Deployment Process
 
 1. **Checkout code** - Gets the PR branch code
-2. **Setup .NET** - Installs .NET 9 SDK
-3. **Build and publish** - Compiles release build
-4. **Create deployment package** - Zips the output
-5. **Azure Login** - Authenticates using `AZURE_CREDENTIALS` secret
-6. **Deploy** - Uploads to test App Service
-7. **Comment** - Posts deployment info to PR
+2. **Setup .NET** - Installs .NET 10 SDK
+3. **Publish** - Compiles release builds for Server and Functions
+4. **Upload artifacts** - Uploads server zip and functions output
+5. **Deploy App Service** - Azure login + deploy to `featherpod-test` (parallel)
+6. **Deploy Function App** - Azure login + deploy to `featherpod-test-func` (parallel)
+7. **Notify** - Posts deployment status to PR (updates existing comment)
 
 ### Test Environment Details
 
 - **URL**: https://featherpod-test.azurewebsites.net
 - **Resource Group**: `featherpod-test-rg`
 - **App Service**: `featherpod-test`
-- **Storage Container**: `featherpod-test` (single container, hierarchical structure)
-- **Tier**: F1 (Free)
+- **Function App**: `featherpod-test-func` (Flex Consumption)
+- **Storage**: `featherpodtest` account, `featherpod` container (hierarchical structure)
+- **Tier**: F1 (Free) for App Service, FC1 for Function App
 
 ## Testing a PR
 
-When a PR is deployed, the bot comments with test endpoints:
+When a PR is deployed, the bot comments with deployment status and a link to the push page:
 
 ```
-📡 RSS Feed: https://featherpod-test.azurewebsites.net/feed.xml
-📋 Episodes API: https://featherpod-test.azurewebsites.net/api/episodes
-🎵 Upload: POST https://featherpod-test.azurewebsites.net/api/episodes
+Push Page: https://featherpod-test.azurewebsites.net/test-feed/push
 ```
 
 ### Upload Test Files
@@ -166,28 +165,18 @@ When a PR is deployed, the bot comments with test endpoints:
 Use the test environment to verify bug fixes:
 
 ```bash
-# Upload an episode to test environment
-curl -X POST https://featherpod-test.azurewebsites.net/api/episodes \
-  -H "X-API-Key: test-api-key-change-me-in-production" \
+# Upload an episode to test environment (replace {feedId} with your feed ID)
+curl -X POST https://featherpod-test.azurewebsites.net/api/{feedId}/episodes \
+  -H "X-API-Key: fp_{userId}_{secret}" \
   -F "file=@your-test-file.mp3" \
   -F "title=Test Episode"
 
 # Check episodes list
-curl https://featherpod-test.azurewebsites.net/api/episodes
+curl https://featherpod-test.azurewebsites.net/api/{feedId}/episodes
 
 # Check RSS feed
-curl https://featherpod-test.azurewebsites.net/feed.xml
+curl https://featherpod-test.azurewebsites.net/{feedId}/feed.xml
 ```
-
-### Testing 502 Gateway Error Fix
-
-For the specific 502 gateway error bug:
-
-1. Upload files that previously caused 502 errors to the test environment
-2. Verify they upload successfully without errors
-3. Check the RSS feed includes the new episodes
-4. Try downloading the audio files via `/audio/{filename}` endpoint
-5. If all works, approve and merge the PR
 
 ## Cleanup
 
@@ -201,8 +190,8 @@ az webapp restart --name featherpod-test --resource-group featherpod-test-rg
 ### Clear test data
 ```bash
 # Delete all test episodes via API
-curl -X DELETE https://featherpod-test.azurewebsites.net/api/episodes/{episode-id} \
-  -H "X-API-Key: test-api-key-change-me-in-production"
+curl -X DELETE https://featherpod-test.azurewebsites.net/api/{feedId}/episodes/{episode-id} \
+  -H "X-API-Key: fp_{userId}_{secret}"
 ```
 
 ### Full cleanup (removes infrastructure)
@@ -248,7 +237,7 @@ Check that GitHub Actions has write permissions:
 ## Cost Considerations
 
 - **F1 Tier**: Free, but has 60 CPU minutes/day quota
-- **Storage**: Shared with production, minimal additional cost
+- **Storage**: Separate `featherpodtest` account, minimal additional cost
 - **Data Transfer**: Minimal for testing purposes
 
 If you hit quota limits during heavy testing, temporarily upgrade to B1:
@@ -264,7 +253,7 @@ az appservice plan update --name featherpod-test-plan --resource-group featherpo
 ## Security Notes
 
 1. **Separate API Keys**: Test environment uses different API key than production
-2. **Isolated Data**: Separate blob containers prevent test data mixing with production
+2. **Isolated Data**: Separate storage accounts (`featherpod` vs `featherpodtest`) prevent test data mixing with production
 3. **Service Principal**: Limited to test resource group only
 4. **GitHub Secrets**: Azure credentials are encrypted and never exposed in logs
 
