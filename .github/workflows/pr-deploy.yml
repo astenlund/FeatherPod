@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: pr-deploy-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event.action != 'closed' }}
 
 env:
   DOTNET_VERSION: '10.0.x'
@@ -26,10 +26,10 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
 
     - name: Setup .NET
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v5
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
 
@@ -45,17 +45,18 @@ jobs:
         zip -r ../server-deploy.zip .
 
     - name: Upload server artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: server-publish
         path: server-deploy.zip
         retention-days: 1
 
     - name: Upload functions artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: functions-publish
         path: publish-functions/
+        include-hidden-files: true  # Required: .azurefunctions dir needed for Flex Consumption deploy
         retention-days: 1
 
   deploy-app:
@@ -65,12 +66,12 @@ jobs:
 
     steps:
     - name: Download server artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v7
       with:
         name: server-publish
 
     - name: Azure Login
-      uses: azure/login@v2
+      uses: azure/login@v3
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -91,18 +92,18 @@ jobs:
 
     steps:
     - name: Download functions artifact
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v7
       with:
         name: functions-publish
         path: functions-publish
 
     - name: Azure Login
-      uses: azure/login@v2
+      uses: azure/login@v3
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
     - name: Deploy to Azure Function App
-      uses: azure/functions-action@v2
+      uses: azure/functions-action@v1
       with:
         app-name: ${{ env.TEST_FUNC_APP_NAME }}
         package: functions-publish
@@ -120,7 +121,7 @@ jobs:
 
     steps:
     - name: Comment PR with deployment status
-      uses: actions/github-script@v7
+      uses: actions/github-script@v8
       with:
         script: |
           const buildResult = '${{ needs.build.result }}';
@@ -133,6 +134,20 @@ jobs:
           const url = '${{ env.TEST_APP_URL }}';
           const commit = context.payload.pull_request.head.sha.substring(0, 7);
           const branch = context.payload.pull_request.head.ref;
+          const footer = [
+            '',
+            `**Commit:** \`${commit}\``,
+            `**Branch:** \`${branch}\``,
+            '',
+            '---',
+            '*Deployment powered by GitHub Actions*',
+          ];
+          const deployTable = [
+            '| Component | Status |',
+            '|-----------|--------|',
+            `| App Service | ${statusIcon(appResult)} ${appResult} |`,
+            `| Function App | ${statusIcon(funcResult)} ${funcResult} |`,
+          ];
 
           const lines = [];
           if (anyCancelled) {
@@ -141,36 +156,23 @@ jobs:
             lines.push(
               '## \u274c PR Build Failed',
               '',
-              `The build failed, so no deployment was attempted.`,
+              'The build failed, so no deployment was attempted.',
               '',
               '| Component | Status |',
               '|-----------|--------|',
               `| Build | ${statusIcon(buildResult)} ${buildResult} |`,
-              '',
-              `**Commit:** ${commit}`,
-              `**Branch:** ${branch}`,
-              '',
-              '---',
-              '*Deployment powered by GitHub Actions*',
+              ...footer,
             );
           } else if (allSuccess) {
             lines.push(
-              '## \ud83d\ude80 PR Deployed Successfully!',
+              '## \u{1f680} PR Deployed Successfully!',
               '',
               `**Test Environment:** ${url}`,
               '',
-              '| Component | Status |',
-              '|-----------|--------|',
-              `| App Service | ${statusIcon(appResult)} ${appResult} |`,
-              `| Function App | ${statusIcon(funcResult)} ${funcResult} |`,
+              ...deployTable,
               '',
               `**Push Page:** ${url}/test-feed/push`,
-              '',
-              `**Commit:** ${commit}`,
-              `**Branch:** ${branch}`,
-              '',
-              '---',
-              '*Deployment powered by GitHub Actions*',
+              ...footer,
             );
           } else {
             lines.push(
@@ -178,16 +180,8 @@ jobs:
               '',
               `**Test Environment:** ${url}`,
               '',
-              '| Component | Status |',
-              '|-----------|--------|',
-              `| App Service | ${statusIcon(appResult)} ${appResult} |`,
-              `| Function App | ${statusIcon(funcResult)} ${funcResult} |`,
-              '',
-              `**Commit:** ${commit}`,
-              `**Branch:** ${branch}`,
-              '',
-              '---',
-              '*Deployment powered by GitHub Actions*',
+              ...deployTable,
+              ...footer,
             );
           }
 
@@ -224,7 +218,7 @@ jobs:
 
     steps:
     - name: Comment on PR closure
-      uses: actions/github-script@v7
+      uses: actions/github-script@v8
       with:
         script: |
           const url = '${{ env.TEST_APP_URL }}';
