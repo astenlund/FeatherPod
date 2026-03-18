@@ -63,6 +63,8 @@ const API_KEY_SESSION_KEY = 'featherpod_api_key_' + FEED_ID;
 const API_KEY_LOCAL_KEY = 'featherpod_api_key_local_' + FEED_ID;
 const API_KEY_COOKIE_KEY = 'featherpod_key_' + FEED_ID;
 const MAX_LOCAL_HISTORY = 50;
+/** @type {number} - Max ms to wait for server job sync before showing the initial state (avoids blank page on slow networks) */
+const QUEUE_SYNC_TIMEOUT = 3000;
 
 // No-key state UI strings
 const STR_PASTE_KEY_BELOW = 'Paste key below';
@@ -1149,8 +1151,27 @@ async function init() {
     if (localSourceConfig) {
         await restoreQueueState();
         await connectLocalSource();
-        if (uploadQueue.length === 0) {
-            showState('ready');
+
+        // If connectLocalSource added files, queue state is already visible via addFilesToQueue.
+        // Otherwise, defer state decision until server sync completes (same rationale as normal path).
+        if (getCurrentState() === null) {
+            try {
+                const serverJobs = await Promise.race([
+                    serverJobsPromise,
+                    new Promise((_, reject) => setTimeout(() => reject(), QUEUE_SYNC_TIMEOUT))
+                ]);
+                mergeServerJobs(serverJobs);
+            } catch {
+                // Timeout — proceed with local-only state
+            }
+
+            if (uploadQueue.length > 0) {
+                showState('queue');
+                renderQueueList();
+                updateQueueTitle();
+            } else {
+                showState('ready');
+            }
         }
         await initHistorySection();
         serverJobsPromise.then(mergeServerJobs).catch(() => {});
@@ -1167,16 +1188,33 @@ async function init() {
         return;
     }
 
-    // Try to restore previous queue state (e.g., after page refresh)
-    if (await restoreQueueState()) {
-        serverJobsPromise.then(mergeServerJobs).catch(() => {});
+    // Restore previous queue state (data only — no display yet)
+    await restoreQueueState();
 
-        return;
+    // Wait for server sync before deciding which state to show, to avoid a jarring flash
+    // when the server response changes the visible state (e.g., ready → queue or vice versa).
+    // Cap the wait so a slow/unreachable server doesn't leave the page blank indefinitely.
+    try {
+        const serverJobs = await Promise.race([
+            serverJobsPromise,
+            new Promise((_, reject) => setTimeout(() => reject(), QUEUE_SYNC_TIMEOUT))
+        ]);
+        mergeServerJobs(serverJobs);
+    } catch {
+        // Timeout or fetch error — proceed with local-only state; late response handled below
     }
 
-    showState('ready');
+    if (uploadQueue.length > 0) {
+        showState('queue');
+        renderQueueList();
+        updateQueueTitle();
+    } else {
+        showState('ready');
+        document.getElementById('select-file').focus();
+    }
     await initHistorySection();
-    document.getElementById('select-file').focus();
+
+    // If the sync timed out, merge the late response when it arrives
     serverJobsPromise.then(mergeServerJobs).catch(() => {});
 }
 
@@ -4096,9 +4134,11 @@ async function consumeSharedFiles() {
 }
 
 /**
- * Restore queue state from localStorage.
+ * Restore queue state from localStorage (data only — does not show or render any UI).
  * Filters out entries older than 1 hour. Entries without startedAt (pre-migration) are treated as expired.
- * @returns {Promise<boolean>} True if state was restored
+ * Starts SSE monitors for normalizing entries so progress updates arrive during the sync wait.
+ * Caller is responsible for showing the appropriate state after server sync completes.
+ * @returns {Promise<boolean>} True if entries were restored into uploadQueue
  */
 async function restoreQueueState() {
     const saved = localStorage.getItem(QUEUE_STORAGE_KEY);
@@ -4149,17 +4189,11 @@ async function restoreQueueState() {
         return false;
     }
 
-    showState('queue');
-    renderQueueList();
-    void initHistorySection();
-
-    // Reconnect SSE for normalizing entries
+    // Data restored — caller decides when to show state (after server sync completes)
+    // Start SSE monitors now so progress updates arrive during the sync wait
     for (const entry of uploadQueue.filter(e => e.status === 'normalizing' && e.jobId)) {
         monitorEntryNormalizationInBackground(entry);
     }
-
-    // Update title based on whether there's active work
-    updateQueueTitle();
 
     return true;
 }
