@@ -1,4 +1,4 @@
-// FEED_ID, IS_DEV, PROGRESS_SMOOTHING are set as globals by the HTML page
+// FEED_ID, ICON_ETAG, IS_DEV, PROGRESS_SMOOTHING are set as globals by the HTML page
 const SHOW_GHOST = IS_DEV && window.location.search.includes('ghost');
 const DEBUG_TITLE_ANIMATION = IS_DEV && window.location.search.includes('alive');
 const VELOCITY_OVERRIDES = IS_DEV ? parseVelocityOverrides() : {};
@@ -63,6 +63,7 @@ const API_KEY_SESSION_KEY = 'featherpod_api_key_' + FEED_ID;
 const API_KEY_LOCAL_KEY = 'featherpod_api_key_local_' + FEED_ID;
 const API_KEY_COOKIE_KEY = 'featherpod_key_' + FEED_ID;
 const DISMISSED_STORAGE_KEY = 'featherpod_dismissed_' + FEED_ID;
+const THEME_CACHE_KEY = 'featherpod_theme_' + FEED_ID;
 const MAX_LOCAL_HISTORY = 50;
 /** @type {number} - Max ms to wait for server job sync before showing the initial state (avoids blank page on slow networks) */
 const QUEUE_SYNC_TIMEOUT = 3000;
@@ -920,23 +921,85 @@ function applyDefaultPalette() {
 }
 
 /**
- * Initialize feed artwork with dynamic color theming. The page starts with a
- * monochrome (B&W) appearance; once colors are determined (from artwork
- * extraction or defaults), the colored gradient crossfades in via `theme-ready`.
- * Loads the feed icon, extracts primary and accent colors via median cut
- * quantization, and re-themes the page's CSS custom properties. Sets the artwork
- * image inside the drop zone (making it clickable to select files, hiding the
- * CTA button), and displays a gradient backdrop for ambient color. On load
- * failure (404), adds `theme-ready` so the default indigo gradient fades in;
- * the CTA button is shown as fallback.
+ * Save extracted palette hues and the icon ETag to localStorage so subsequent
+ * visits can apply colors immediately without waiting for icon load + extraction.
+ * @param {number} primaryHue - Primary hue in degrees (0-360)
+ * @param {number} accentHue - Accent hue in degrees (0-360)
+ * @param {string} etag - Icon ETag used to invalidate stale cached colors
+ */
+function savePaletteToCache(primaryHue, accentHue, etag) {
+    try {
+        localStorage.setItem(THEME_CACHE_KEY, JSON.stringify({ primaryHue, accentHue, etag }));
+    } catch (_) {
+        // Private browsing or quota exceeded - ignore
+    }
+}
+
+/**
+ * Load cached palette from localStorage.
+ * @returns {{ primaryHue: number, accentHue: number, etag: string } | null}
+ */
+function loadCachedPalette() {
+    try {
+        const raw = localStorage.getItem(THEME_CACHE_KEY);
+
+        return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+/**
+ * Build the ambient backdrop gradient for a given primary/accent hue pair.
+ * @param {number} primaryHue - Primary hue in degrees (0-360)
+ * @param {number} accentHue - Accent hue in degrees (0-360)
+ * @returns {string} CSS linear-gradient value
+ */
+function buildBackdropGradient(primaryHue, accentHue) {
+    return 'linear-gradient(135deg, hsl(' + primaryHue + ', 50%, 18%), hsl(' + accentHue + ', 50%, 18%))';
+}
+
+/** Remove cached palette from localStorage (e.g. when icon is deleted or colors are grayscale). */
+function clearPaletteCache() {
+    try {
+        localStorage.removeItem(THEME_CACHE_KEY);
+    } catch (_) {
+        // Ignore
+    }
+}
+
+/**
+ * Initialize feed artwork with dynamic color theming. If a cached palette
+ * exists in localStorage, it is applied immediately to avoid the monochrome
+ * flash; the cache is invalidated and updated when the icon ETag changes.
+ * Otherwise the page starts with a monochrome (B&W) appearance; once colors
+ * are determined (from artwork extraction or defaults), the colored gradient
+ * crossfades in via `theme-ready`. Loads the feed icon, extracts primary and
+ * accent colors via median cut quantization, and re-themes the page's CSS
+ * custom properties. Sets the artwork image inside the drop zone (making it
+ * clickable to select files, hiding the CTA button), and displays a gradient
+ * backdrop for ambient color. On load failure (404), adds `theme-ready` so the
+ * default indigo gradient fades in; the CTA button is shown as fallback.
  */
 function initFeedArtwork() {
     const artwork = document.getElementById('feed-artwork');
     if (!artwork) {
+        clearPaletteCache();
         applyDefaultPalette();
         document.body.classList.add('theme-ready');
 
         return;
+    }
+
+    // Apply cached colors immediately to avoid the monochrome flash on revisits
+    const cached = loadCachedPalette();
+    if (cached && cached.primaryHue != null && ICON_ETAG) {
+        applyArtworkPalette(cached.primaryHue, cached.accentHue);
+        const backdrop = document.getElementById('artwork-backdrop');
+        if (backdrop) {
+            backdrop.style.background = buildBackdropGradient(cached.primaryHue, cached.accentHue);
+        }
+        document.body.classList.add('theme-ready');
     }
 
     let artworkProcessed = false;
@@ -952,6 +1015,7 @@ function initFeedArtwork() {
 
         const backdrop = document.getElementById('artwork-backdrop');
         if (!backdrop) {
+            clearPaletteCache();
             applyDefaultPalette();
             document.body.classList.add('theme-ready');
 
@@ -975,8 +1039,10 @@ function initFeedArtwork() {
 
         if (colors) {
             applyArtworkPalette(colors.primaryHue, colors.accentHue);
-            backdrop.style.background = 'linear-gradient(135deg, hsl(' + colors.primaryHue + ', 50%, 18%), hsl(' + colors.accentHue + ', 50%, 18%))';
+            backdrop.style.background = buildBackdropGradient(colors.primaryHue, colors.accentHue);
+            savePaletteToCache(colors.primaryHue, colors.accentHue, ICON_ETAG);
         } else {
+            clearPaletteCache();
             applyDefaultPalette();
         }
 
@@ -990,6 +1056,7 @@ function initFeedArtwork() {
     artwork.addEventListener('load', processArtwork);
     artwork.addEventListener('error', () => {
         artwork.remove();
+        clearPaletteCache();
         // Server may have pre-set artwork layout, but icon failed — revert to CTA
         document.getElementById('drop-zone')?.classList.remove('drop-zone--has-artwork');
         applyDefaultPalette();
@@ -1002,6 +1069,7 @@ function initFeedArtwork() {
             processArtwork();
         } else {
             artwork.remove();
+            clearPaletteCache();
             document.getElementById('drop-zone')?.classList.remove('drop-zone--has-artwork');
             applyDefaultPalette();
             document.body.classList.add('theme-ready');

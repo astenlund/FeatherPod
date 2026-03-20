@@ -520,6 +520,7 @@ static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvi
         .Replace("{{ICON_CACHE_BUSTER}}", iconCacheBuster)
         .Replace("{{DROP_ZONE_CLASS}}", hasArtwork ? " drop-zone--has-artwork" : "")
         .Replace("{{BACKDROP_SRC}}", hasArtwork ? $" src=\"/{feedId}/icon.png{iconCacheBuster}\"" : "")
+        .Replace("{{ICON_ETAG}}", iconETag ?? "")
         .Replace("{{IS_DEV}}", env.IsDevelopment().ToString().ToLowerInvariant())
         .Replace("{{PROGRESS_SMOOTHING}}", progressSmoothing.ToString().ToLowerInvariant());
 }
