@@ -365,12 +365,25 @@ h2 {
     animation: none;
 }
 
+/* Paused until a state class is applied — prevents title flash in wrong position.
+   Note: prefers-reduced-motion must NOT override animation-play-state. */
 h1 {
     animation: blur-fade-in 0.5s ease 0.05s both;
+    animation-play-state: paused;
 }
 
 .feed-name {
     animation: blur-fade-in 0.5s ease 0.1s both;
+    animation-play-state: paused;
+}
+
+.container.state-ready h1,
+.container.state-ready .feed-name,
+.container.state-queue h1,
+.container.state-queue .feed-name,
+.container.state-error h1,
+.container.state-error .feed-name {
+    animation-play-state: running;
 }
 
 .state h2,
@@ -1895,7 +1908,11 @@ h1 {
     /* Disable desktop animations on mobile - content stays visible under frosted glass */
     .container.state-ready h1,
     .container.state-ready .feed-name,
-    .container.state-ready #ready #select-file {
+    .container.state-ready #ready #select-file,
+    .container.state-queue h1,
+    .container.state-queue .feed-name,
+    .container.state-error h1,
+    .container.state-error .feed-name {
         animation: none !important;
         transition: none !important;
     }
