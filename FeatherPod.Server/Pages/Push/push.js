@@ -62,6 +62,7 @@ const HISTORY_FILTER_KEY = 'featherpod_history_filter_' + FEED_ID;
 const API_KEY_SESSION_KEY = 'featherpod_api_key_' + FEED_ID;
 const API_KEY_LOCAL_KEY = 'featherpod_api_key_local_' + FEED_ID;
 const API_KEY_COOKIE_KEY = 'featherpod_key_' + FEED_ID;
+const DISMISSED_STORAGE_KEY = 'featherpod_dismissed_' + FEED_ID;
 const MAX_LOCAL_HISTORY = 50;
 /** @type {number} - Max ms to wait for server job sync before showing the initial state (avoids blank page on slow networks) */
 const QUEUE_SYNC_TIMEOUT = 3000;
@@ -81,8 +82,8 @@ let localSourceConfig = null;
 let localSourceEvents = null;
 /** @type {Set<number>} - Local file server indices already fetched (persisted in sessionStorage to survive reloads) */
 let localSourceSeen = new Set();
-/** @type {Set<string>} - Job IDs dismissed by the user (guards against mergeServerJobs re-adding before server cancel completes) */
-let dismissedJobIds = new Set();
+/** @type {Map<string, number>} - Job IDs dismissed by the user mapped to dismissal timestamp (guards against mergeServerJobs re-adding; persisted to localStorage with 1-hour TTL) */
+let dismissedJobIds = new Map();
 
 /** @type {EventSource|null} - SSE connection for feed-level events (cross-tab sync) */
 let feedEventsSource = null;
@@ -1140,6 +1141,9 @@ async function init() {
         return;
     }
 
+    // Restore dismissed job IDs before any path that calls mergeServerJobs
+    loadDismissedJobIds();
+
     // Open feed-level SSE for cross-tab/cross-device queue sync
     connectFeedEvents();
 
@@ -1766,7 +1770,8 @@ async function dismissEntry(entryId) {
 
     const jobId = entry.jobId;
     if (jobId) {
-        dismissedJobIds.add(jobId);
+        dismissedJobIds.set(jobId, Date.now());
+        saveDismissedJobIds();
     }
 
     uploadQueue.splice(index, 1);
@@ -3902,7 +3907,7 @@ function clearTerminalEntries() {
     }
     for (const entry of terminalEntries) {
         if (entry.jobId) {
-            dismissedJobIds.add(entry.jobId);
+            dismissedJobIds.set(entry.jobId, Date.now());
         }
         if (entry.eventSource) {
             entry.eventSource.close();
@@ -3918,6 +3923,7 @@ function clearTerminalEntries() {
             uploadQueue.splice(idx, 1);
         }
     }
+    saveDismissedJobIds();
     saveQueueState();
     checkAllComplete();
 }
@@ -3944,6 +3950,45 @@ function rebindProgressAnimator() {
 // ============================================================================
 // SESSION PERSISTENCE (Step 10)
 // ============================================================================
+
+/**
+ * Save dismissedJobIds to localStorage for persistence across page reloads.
+ * Each entry stores the original dismissal timestamp for 1-hour TTL filtering.
+ */
+function saveDismissedJobIds() {
+    try {
+        const entries = Array.from(dismissedJobIds, ([jobId, dismissedAt]) => ({ jobId, dismissedAt }));
+        localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify(entries));
+    } catch (e) {
+        // Ignore
+    }
+}
+
+/**
+ * Load dismissedJobIds from localStorage, filtering out entries older than 1 hour.
+ */
+function loadDismissedJobIds() {
+    const saved = localStorage.getItem(DISMISSED_STORAGE_KEY);
+    if (!saved) {
+        return;
+    }
+    const entries = tryParseJson(saved);
+    if (!entries || !Array.isArray(entries)) {
+        return;
+    }
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    let pruned = false;
+    for (const entry of entries) {
+        if (entry.jobId && entry.dismissedAt && entry.dismissedAt >= oneHourAgo) {
+            dismissedJobIds.set(entry.jobId, entry.dismissedAt);
+        } else {
+            pruned = true;
+        }
+    }
+    if (pruned) {
+        saveDismissedJobIds();
+    }
+}
 
 /**
  * Save queue state to localStorage (omits File objects and XHR/EventSource refs).
