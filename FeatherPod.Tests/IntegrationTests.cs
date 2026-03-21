@@ -1012,7 +1012,7 @@ public sealed class IntegrationTests : IDisposable
     }
 
     [AzuriteFact]
-    public async Task PostEpisode_WithoutTitle_ShouldParseTitleFromFilename()
+    public async Task PostEpisode_WithoutTitle_ShouldGenerateTitleViaAi()
     {
         // Arrange
         await CreateTestFeedAsync();
@@ -1021,7 +1021,7 @@ public sealed class IntegrationTests : IDisposable
         var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
         fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
         content.Add(fileContent, "file", "My_Cool_Episode__Part_One.mp3");
-        // No title provided - should be parsed from filename
+        // No title provided - FakeAiService returns ParseTitleFromFilename output
 
         var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
         request.Content = content;
@@ -1035,6 +1035,80 @@ public sealed class IntegrationTests : IDisposable
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         // Should be parsed: underscores to spaces, double underscore to colon
         Assert.Contains("My Cool Episode: Part One", responseContent);
+    }
+
+    [AzuriteFact]
+    public async Task PostEpisode_WithExplicitTitle_ShouldPreserveTitle()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "Some_Random_Filename.mp3");
+        content.Add(new StringContent("My Custom Title"), "title");
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        request.Content = content;
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+        var responseContent = await response.Content.ReadAsStringAsync();
+
+        // Assert - explicit title should be preserved, not replaced by AI/filename parsing
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        Assert.Contains("My Custom Title", responseContent);
+    }
+
+    [AzuriteFact]
+    public async Task PostEpisode_WithNormalize_WithoutTitle_ShouldUseAiTitle()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "auto_title_test.mp3");
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes?normalize=true");
+        request.Content = content;
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert - job should be queued with AI-generated title (FakeAiService uses ParseTitleFromFilename)
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var responseContent = await response.Content.ReadAsStringAsync();
+        Assert.Contains("jobId", responseContent);
+    }
+
+    [AzuriteFact]
+    public async Task PostEpisode_WithNormalize_WithTitle_ShouldPreserveExplicitTitle()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "explicit_title_test.mp3");
+        content.Add(new StringContent("Explicit Normalize Title"), "title");
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes?normalize=true");
+        request.Content = content;
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        // Act
+        var response = await _client.SendAsync(request);
+
+        // Assert - job should be queued with the explicit title
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        var responseContent = await response.Content.ReadAsStringAsync();
+        Assert.Contains("jobId", responseContent);
     }
 
     [AzuriteFact]

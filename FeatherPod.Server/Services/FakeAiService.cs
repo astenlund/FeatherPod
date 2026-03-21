@@ -1,3 +1,5 @@
+using FeatherPod.Shared.Services;
+
 namespace FeatherPod.Server.Services;
 
 public class FakeAiService : IAiService

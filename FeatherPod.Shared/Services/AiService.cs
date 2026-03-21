@@ -1,8 +1,10 @@
 using Azure.AI.OpenAI;
 using Azure.Identity;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using OpenAI.Chat;
 
-namespace FeatherPod.Server.Services;
+namespace FeatherPod.Shared.Services;
 
 public interface IAiService
 {

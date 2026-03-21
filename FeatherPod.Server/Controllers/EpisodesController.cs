@@ -2,6 +2,7 @@ using System.Text.Json;
 using FeatherPod.Shared.Models;
 using FeatherPod.Server.Services;
 using FeatherPod.Server.Validation;
+using FeatherPod.Shared.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FeatherPod.Server.Controllers;
@@ -150,13 +151,19 @@ public class EpisodesController : ControllerBase
                 var jobId = Guid.NewGuid().ToString("N");
                 var fileSize = new FileInfo(tempPath).Length;
                 var effectiveEpisodeId = episodeId ?? Episode.GenerateId(feedId, file.FileName, fileSize);
-                var effectiveTitle = string.IsNullOrWhiteSpace(title) ? EpisodeService.ParseTitleFromFilename(file.FileName) : title;
                 var effectivePublishedDate = publishedDate ?? (feed.UseFileMetadataForPublishDate && EpisodeService.TryGetPublishedDateFromFile(tempPath, out var extractedDate)
                     ? extractedDate.Value
                     : DateTime.UtcNow);
 
-                // Upload to pending location
-                await _blobStorageService.UploadPendingAudioAsync(feedId, jobId, file.FileName, tempPath);
+                // Upload to pending location and generate AI title in parallel
+                var blobUploadTask = _blobStorageService.UploadPendingAudioAsync(feedId, jobId, file.FileName, tempPath);
+                var aiTitleTask = string.IsNullOrWhiteSpace(title) && _aiService.IsAvailable
+                    ? _aiService.SuggestTitleAsync(file.FileName, HttpContext.RequestAborted)
+                    : Task.FromResult<string?>(null);
+
+                await Task.WhenAll(blobUploadTask, aiTitleTask);
+                var aiTitle = aiTitleTask.Result;
+                var effectiveTitle = aiTitle ?? (string.IsNullOrWhiteSpace(title) ? EpisodeService.ParseTitleFromFilename(file.FileName) : title);
 
                 // Queue the normalization job first, then create status entry
                 // This order prevents orphaned status entries if queue send fails
@@ -193,6 +200,12 @@ public class EpisodesController : ControllerBase
                 _feedEventChannel.Publish(feedId, "job-added");
 
                 return Accepted($"/api/jobs/{jobId}", response);
+            }
+
+            // AI title generation for sync upload (when user didn't provide a title)
+            if (string.IsNullOrWhiteSpace(title) && _aiService.IsAvailable)
+            {
+                title = await _aiService.SuggestTitleAsync(file.FileName, HttpContext.RequestAborted);
             }
 
             // Synchronous upload (no normalization)

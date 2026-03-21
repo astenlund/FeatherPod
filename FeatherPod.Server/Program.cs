@@ -4,6 +4,7 @@ using FeatherPod.Server.Middleware;
 using FeatherPod.Server.Services;
 using FeatherPod.Server.Validation;
 using FeatherPod.Shared;
+using FeatherPod.Shared.Services;
 
 const long MaxUploadSizeBytes = 500 * 1024 * 1024; // 500 MB
 
