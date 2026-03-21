@@ -240,9 +240,57 @@ public class EpisodesController : ControllerBase
         }
 
         var deleted = await _episodeService.DeleteEpisodeAsync(feedId, id);
-        return deleted
-            ? Ok(new { message = $"Episode '{id}' deleted from feed '{feedId}'" })
-            : NotFound(new { error = $"Episode '{id}' not found in feed '{feedId}'" });
+        if (!deleted)
+        {
+            return NotFound(new { error = $"Episode '{id}' not found in feed '{feedId}'" });
+        }
+
+        _feedEventChannel.Publish(feedId, "episode-deleted");
+
+        return Ok(new { message = $"Episode '{id}' deleted from feed '{feedId}'" });
+    }
+
+    [HttpPatch("{id}")]
+    [ProducesResponseType<Episode>(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> UpdateEpisode(
+        string feedId,
+        string id,
+        [FromBody] JsonElement body)
+    {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
+        var feed = await _episodeService.GetFeedAsync(feedId);
+        if (feed == null)
+        {
+            return NotFound(new { error = $"Feed '{feedId}' not found" });
+        }
+
+        if (!body.TryGetProperty("title", out var titleElement))
+        {
+            return BadRequest(new { error = "title is required in request body" });
+        }
+
+        var title = titleElement.GetString()?.Trim();
+        if (string.IsNullOrEmpty(title))
+        {
+            return BadRequest(new { error = "title cannot be empty" });
+        }
+
+        var updated = await _episodeService.UpdateEpisodeTitleAsync(feedId, id, title);
+        if (updated == null)
+        {
+            return NotFound(new { error = $"Episode '{id}' not found in feed '{feedId}'" });
+        }
+
+        _feedEventChannel.Publish(feedId, "episode-updated");
+        var episodeWithUrl = updated with { Url = updated.GetAudioUrl(_baseUrl) };
+
+        return Ok(episodeWithUrl);
     }
 
     [HttpPost("{id}/move")]

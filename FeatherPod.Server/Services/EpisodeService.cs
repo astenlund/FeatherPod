@@ -445,6 +445,38 @@ public sealed partial class EpisodeService : IDisposable
         }
     }
 
+    public async Task<Episode?> UpdateEpisodeTitleAsync(string feedId, string id, string newTitle)
+    {
+        await _lock.WaitAsync();
+
+        try
+        {
+            if (!_episodesByFeed.TryGetValue(feedId, out var episodes))
+            {
+                return null;
+            }
+
+            var index = episodes.FindIndex(e => e.Id == id);
+            if (index < 0)
+            {
+                return null;
+            }
+
+            var oldTitle = episodes[index].Title;
+            var updated = episodes[index] with { Title = newTitle };
+            episodes[index] = updated;
+            await SaveEpisodesAsync(feedId);
+
+            _logger.LogInformation("Updated episode title in feed {FeedId}: {OldTitle} -> {NewTitle}", feedId, oldTitle, newTitle);
+
+            return updated;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     public async Task<Episode> MoveEpisodeAsync(string episodeId, string sourceFeedId, string targetFeedId)
     {
         await _lock.WaitAsync();

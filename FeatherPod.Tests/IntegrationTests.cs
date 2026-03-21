@@ -1036,6 +1036,92 @@ public sealed class IntegrationTests : IDisposable
         // Should be parsed: underscores to spaces, double underscore to colon
         Assert.Contains("My Cool Episode: Part One", responseContent);
     }
+
+    [AzuriteFact]
+    public async Task PatchEpisode_ShouldUpdateTitle()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "rename-me.mp3");
+        content.Add(new StringContent("Original Title"), "title");
+
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        var postResponse = await _client.SendAsync(postRequest);
+        postResponse.EnsureSuccessStatusCode();
+
+        var createdContent = await postResponse.Content.ReadAsStringAsync();
+        var idMatch = System.Text.RegularExpressions.Regex.Match(createdContent, @"""id"":""([^""]+)""");
+        var episodeId = idMatch.Groups[1].Value;
+
+        // Act
+        var patchRequest = new HttpRequestMessage(HttpMethod.Patch, $"/api/feeds/{TestFeedId}/episodes/{episodeId}");
+        patchRequest.Content = new StringContent("""{"title": "Updated Title"}""", System.Text.Encoding.UTF8, "application/json");
+        patchRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var patchResponse = await _client.SendAsync(patchRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, patchResponse.StatusCode);
+        var patchContent = await patchResponse.Content.ReadAsStringAsync();
+        Assert.Contains("Updated Title", patchContent);
+
+        // Verify RSS feed reflects the new title
+        var feedResponse = await _client.GetAsync($"/{TestFeedId}/feed.xml");
+        var feedContent = await feedResponse.Content.ReadAsStringAsync();
+        var doc = XDocument.Parse(feedContent);
+        var items = doc.Root!.Element("channel")!.Elements("item").ToList();
+        Assert.Single(items);
+        Assert.Equal("Updated Title", items[0].Element("title")!.Value);
+    }
+
+    [AzuriteFact]
+    public async Task PatchEpisode_ShouldReturn404_WhenEpisodeNotFound()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        // Act
+        var patchRequest = new HttpRequestMessage(HttpMethod.Patch, $"/api/feeds/{TestFeedId}/episodes/nonexistent");
+        patchRequest.Content = new StringContent("""{"title": "New Title"}""", System.Text.Encoding.UTF8, "application/json");
+        patchRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var response = await _client.SendAsync(patchRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [AzuriteFact]
+    public async Task PatchEpisode_ShouldReturn400_WhenTitleEmpty()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "episode.mp3");
+        content.Add(new StringContent("Test"), "title");
+
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        await _client.SendAsync(postRequest);
+
+        // Act
+        var patchRequest = new HttpRequestMessage(HttpMethod.Patch, $"/api/feeds/{TestFeedId}/episodes/someId");
+        patchRequest.Content = new StringContent("""{"title": "  "}""", System.Text.Encoding.UTF8, "application/json");
+        patchRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var response = await _client.SendAsync(patchRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
 }
 
 internal class FeatherPodWebApplicationFactory : WebApplicationFactory<FeatherPod.Server.ServerAssemblyMarker>

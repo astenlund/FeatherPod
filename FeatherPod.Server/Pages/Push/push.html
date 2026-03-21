@@ -88,6 +88,40 @@
         </div>
     </div>
 
+    <!-- Context menu (singleton, repositioned per-use) -->
+    <div id="context-menu" class="context-menu" role="menu" hidden>
+        <button class="context-menu-item" data-action="rename" role="menuitem" tabindex="-1">Rename</button>
+        <button class="context-menu-item context-menu-item--danger" data-action="delete" role="menuitem" tabindex="-1">Delete</button>
+    </div>
+
+    <!-- Rename modal -->
+    <div id="rename-modal-overlay" class="modal-overlay" hidden>
+        <div class="modal" role="dialog" aria-labelledby="rename-modal-title" aria-modal="true">
+            <h3 id="rename-modal-title" class="modal-title">Edit episode</h3>
+            <div class="modal-body">
+                <label for="rename-input" class="modal-label">Title</label>
+                <input id="rename-input" class="modal-input" type="text" autocomplete="off" spellcheck="true">
+                <p id="rename-filename" class="modal-filename"></p>
+            </div>
+            <div class="modal-actions">
+                <button id="rename-cancel" class="btn-modal btn-modal--secondary">Cancel</button>
+                <button id="rename-save" class="btn-modal btn-modal--primary">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete confirmation -->
+    <div id="delete-confirm-overlay" class="modal-overlay" hidden>
+        <div class="modal modal--narrow" role="alertdialog" aria-labelledby="delete-confirm-title" aria-describedby="delete-confirm-desc" aria-modal="true">
+            <h3 id="delete-confirm-title" class="modal-title">Delete episode</h3>
+            <p id="delete-confirm-desc" class="modal-desc"></p>
+            <div class="modal-actions">
+                <button id="delete-cancel" class="btn-modal btn-modal--secondary">Cancel</button>
+                <button id="delete-confirm" class="btn-modal btn-modal--danger">Delete</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Frosted glass overlay for mobile history (hidden on desktop) -->
     <div id="frosted-overlay" class="frosted-overlay"></div>
 

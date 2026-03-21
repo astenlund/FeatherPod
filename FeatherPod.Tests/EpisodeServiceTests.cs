@@ -501,6 +501,74 @@ public class EpisodeServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateEpisodeTitleAsync_ShouldUpdateTitle()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var testFile = Path.Combine(_testDirectory, "test.mp3");
+        await File.WriteAllTextAsync(testFile, "audio data");
+
+        var episode = await service.AddEpisodeAsync(TestFeedId, testFile, "Original Title");
+
+        // Act
+        var updated = await service.UpdateEpisodeTitleAsync(TestFeedId, episode.Id, "New Title");
+
+        // Assert
+        Assert.NotNull(updated);
+        Assert.Equal("New Title", updated.Title);
+
+        var retrieved = await service.GetEpisodeByIdAsync(TestFeedId, episode.Id);
+        Assert.NotNull(retrieved);
+        Assert.Equal("New Title", retrieved.Title);
+    }
+
+    [Fact]
+    public async Task UpdateEpisodeTitleAsync_ShouldReturnNull_WhenEpisodeNotFound()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        // Act
+        var result = await service.UpdateEpisodeTitleAsync(TestFeedId, "nonexistent", "New Title");
+
+        // Assert
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task UpdateEpisodeTitleAsync_ShouldPreserveOtherFields()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var testFile = Path.Combine(_testDirectory, "test.mp3");
+        await File.WriteAllTextAsync(testFile, "audio data");
+
+        var episode = await service.AddEpisodeAsync(TestFeedId, testFile, "Original Title", source: UploadSource.Browser);
+
+        // Act
+        var updated = await service.UpdateEpisodeTitleAsync(TestFeedId, episode.Id, "New Title");
+
+        // Assert
+        Assert.NotNull(updated);
+        Assert.Equal(episode.Id, updated.Id);
+        Assert.Equal(episode.FeedId, updated.FeedId);
+        Assert.Equal(episode.FileName, updated.FileName);
+        Assert.Equal(episode.FileSize, updated.FileSize);
+        Assert.Equal(episode.Duration, updated.Duration);
+        Assert.Equal(episode.PublishedDate, updated.PublishedDate);
+        Assert.Equal(episode.Source, updated.Source);
+        Assert.Equal(episode.UploadedAt, updated.UploadedAt);
+    }
+
+    [Fact]
     public async Task GetRecentUploadsAsync_ShouldClampLimitToValidRange()
     {
         // Arrange

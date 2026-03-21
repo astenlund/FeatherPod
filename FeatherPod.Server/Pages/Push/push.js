@@ -114,6 +114,9 @@ let cachedBrowserUploads = null;
 /** @type {Array<Object>|null} - Cached all uploads from server */
 let cachedAllUploads = null;
 
+/** @type {string|null} - Episode ID targeted by the open context menu */
+let contextMenuTargetId = null;
+
 /** @type {number|null} - Animation ID for title text animation */
 let titleAnimationId = null;
 /** @type {string} - Current first word of title (for animation) */
@@ -2226,6 +2229,331 @@ async function refreshHistoryList() {
     renderHistoryList(uploads);
 }
 
+// ============================================================================
+// CONTEXT MENU, DELETE, RENAME
+// ============================================================================
+
+/**
+ * Show the context menu at the given position, clamped to the viewport.
+ * @param {string} episodeId - ID of the targeted episode
+ * @param {number} x - Client X coordinate
+ * @param {number} y - Client Y coordinate
+ */
+function showContextMenu(episodeId, x, y) {
+    const menu = document.getElementById('context-menu');
+    if (!menu) {
+        return;
+    }
+
+    contextMenuTargetId = episodeId;
+
+    // Make visible but off-screen to measure
+    menu.style.left = '-9999px';
+    menu.style.top = '-9999px';
+    menu.removeAttribute('hidden');
+
+    // Clamp to viewport
+    const rect = menu.getBoundingClientRect();
+    const left = Math.min(x, window.innerWidth - rect.width - 8);
+    const top = Math.min(y, window.innerHeight - rect.height - 8);
+
+    menu.style.left = Math.max(8, left) + 'px';
+    menu.style.top = Math.max(8, top) + 'px';
+
+    // Focus first item for keyboard accessibility
+    const firstItem = menu.querySelector('.context-menu-item');
+    if (firstItem) {
+        firstItem.focus();
+    }
+}
+
+/** Hide the context menu and clear its target. */
+function hideContextMenu() {
+    const menu = document.getElementById('context-menu');
+    if (menu) {
+        menu.setAttribute('hidden', '');
+    }
+    contextMenuTargetId = null;
+}
+
+/**
+ * Show the delete confirmation dialog for an episode.
+ * @param {string} episodeId - ID of the episode to delete
+ */
+function showDeleteConfirm(episodeId) {
+    const episode = historyData?.find(e => e.id === episodeId);
+    if (!episode) {
+        return;
+    }
+
+    const desc = document.getElementById('delete-confirm-desc');
+    if (desc) {
+        const title = episode.title || episode.fileName;
+        desc.textContent = 'Delete "' + title + '"? This cannot be undone.';
+    }
+
+    const overlay = document.getElementById('delete-confirm-overlay');
+    if (overlay) {
+        overlay.dataset.episodeId = episodeId;
+        overlay.removeAttribute('hidden');
+    }
+
+    // Focus cancel button (safer default)
+    document.getElementById('delete-cancel')?.focus();
+}
+
+/** Hide the delete confirmation dialog. */
+function hideDeleteConfirm() {
+    const overlay = document.getElementById('delete-confirm-overlay');
+    if (overlay) {
+        overlay.setAttribute('hidden', '');
+        delete overlay.dataset.episodeId;
+    }
+}
+
+/**
+ * Delete an episode via the API and optimistically update the UI.
+ * @param {string} episodeId - ID of the episode to delete
+ */
+async function deleteEpisode(episodeId) {
+    try {
+        const response = await fetch('/api/feeds/' + FEED_ID + '/episodes/' + episodeId, {
+            method: 'DELETE',
+            headers: { 'X-API-Key': apiKey }
+        });
+
+        if (!response.ok && response.status !== 404) {
+            console.warn('Failed to delete episode:', response.status);
+
+            return;
+        }
+    } catch (err) {
+        console.warn('Error deleting episode:', err);
+
+        return;
+    }
+
+    // Remove from historyData
+    if (historyData) {
+        const index = historyData.findIndex(e => e.id === episodeId);
+        if (index >= 0) {
+            historyData.splice(index, 1);
+
+            // Update selection
+            if (historySelectedId === episodeId) {
+                if (historyData.length > 0) {
+                    const newIndex = Math.min(index, historyData.length - 1);
+                    selectHistoryUpload(historyData[newIndex].id);
+                } else {
+                    historySelectedId = null;
+                    updateHistoryInfoCard(null);
+                }
+            }
+        }
+    }
+
+    // Remove from localStorage history
+    removeFromLocalHistory(episodeId);
+
+    // Invalidate caches
+    cachedBrowserUploads = null;
+    cachedAllUploads = null;
+
+    // Remove the DOM element
+    const item = document.querySelector('#history-list .upload-item[data-id="' + episodeId + '"]');
+    if (item) {
+        item.remove();
+    }
+
+    // Update empty state and scroll
+    const list = document.getElementById('history-list');
+    const emptyState = document.getElementById('history-empty');
+    if (historyData && historyData.length === 0 && emptyState) {
+        emptyState.textContent = getHistoryEmptyMessage();
+        emptyState.style.display = 'block';
+    }
+    if (list) {
+        updateHistoryListScrollState();
+    }
+
+    hideDeleteConfirm();
+}
+
+/**
+ * Remove an episode from localStorage history.
+ * @param {string} episodeId - ID of the episode to remove
+ */
+function removeFromLocalHistory(episodeId) {
+    try {
+        const history = loadLocalHistory();
+        const filtered = history.filter(e => e.id !== episodeId);
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(filtered));
+    } catch (e) {
+        console.warn('Failed to update localStorage history:', e);
+    }
+}
+
+/**
+ * Show the rename modal for an episode.
+ * Pre-fills the input with the current title and shows the filename for context.
+ * @param {string} episodeId - ID of the episode to rename
+ */
+function showRenameModal(episodeId) {
+    const episode = historyData?.find(e => e.id === episodeId);
+    if (!episode) {
+        return;
+    }
+
+    const input = document.getElementById('rename-input');
+    const filenameEl = document.getElementById('rename-filename');
+    const overlay = document.getElementById('rename-modal-overlay');
+
+    if (input) {
+        input.value = episode.title || episode.fileName;
+    }
+    if (filenameEl) {
+        filenameEl.textContent = episode.fileName || '';
+    }
+    if (overlay) {
+        overlay.dataset.episodeId = episodeId;
+        overlay.removeAttribute('hidden');
+    }
+
+    // Select all text and focus the input
+    if (input) {
+        requestAnimationFrame(() => {
+            input.select();
+            input.focus();
+        });
+    }
+}
+
+/** Hide the rename modal. */
+function hideRenameModal() {
+    const overlay = document.getElementById('rename-modal-overlay');
+    if (overlay) {
+        overlay.setAttribute('hidden', '');
+        delete overlay.dataset.episodeId;
+    }
+}
+
+/**
+ * Rename an episode via the API and optimistically update the UI.
+ * @param {string} episodeId - ID of the episode to rename
+ * @param {string} newTitle - New title for the episode
+ */
+async function renameEpisode(episodeId, newTitle) {
+    const trimmed = newTitle.trim();
+    if (!trimmed) {
+        return;
+    }
+
+    // Check if title is unchanged
+    const episode = historyData?.find(e => e.id === episodeId);
+    if (episode && (episode.title || episode.fileName) === trimmed) {
+        hideRenameModal();
+
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/feeds/' + FEED_ID + '/episodes/' + episodeId, {
+            method: 'PATCH',
+            headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: trimmed })
+        });
+
+        if (!response.ok) {
+            console.warn('Failed to rename episode:', response.status);
+
+            return;
+        }
+
+        const updated = await response.json();
+
+        // Update historyData in-place
+        if (historyData) {
+            const index = historyData.findIndex(e => e.id === episodeId);
+            if (index >= 0) {
+                historyData[index] = { ...historyData[index], title: updated.title };
+            }
+        }
+
+        // Update localStorage history
+        updateLocalHistoryTitle(episodeId, updated.title);
+
+        // Invalidate caches
+        cachedBrowserUploads = null;
+        cachedAllUploads = null;
+
+        // Update the DOM item directly
+        const item = document.querySelector('#history-list .upload-item[data-id="' + episodeId + '"] .upload-title');
+        if (item) {
+            item.textContent = updated.title;
+        }
+
+        // Update info card if this is the selected episode
+        if (historySelectedId === episodeId && historyData) {
+            const ep = historyData.find(e => e.id === episodeId);
+            if (ep) {
+                updateHistoryInfoCard(ep);
+            }
+        }
+    } catch (err) {
+        console.warn('Error renaming episode:', err);
+
+        return;
+    }
+
+    hideRenameModal();
+}
+
+/**
+ * Update an episode's title in localStorage history.
+ * @param {string} episodeId - ID of the episode to update
+ * @param {string} newTitle - New title
+ */
+function updateLocalHistoryTitle(episodeId, newTitle) {
+    try {
+        const history = loadLocalHistory();
+        const entry = history.find(e => e.id === episodeId);
+        if (entry) {
+            entry.title = newTitle;
+            localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(history));
+        }
+    } catch (e) {
+        console.warn('Failed to update localStorage history:', e);
+    }
+}
+
+/**
+ * Simple focus trap for modal dialogs.
+ * Cycles Tab/Shift+Tab focus among focusable elements within the container.
+ * @param {KeyboardEvent} e - The keyboard event
+ * @param {HTMLElement} container - The modal container element
+ */
+function trapFocus(e, container) {
+    if (e.key !== 'Tab') {
+        return;
+    }
+
+    const focusable = container.querySelectorAll('input, button:not([hidden])');
+    if (focusable.length === 0) {
+        return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+    }
+}
+
 /**
  * Load saved filter preference from localStorage.
  * Returns 'local' as the default if no preference is saved or if parsing fails.
@@ -2761,6 +3089,56 @@ function renderHistoryList(uploads, focusFirst = false) {
         }
 
         item.addEventListener('click', () => selectHistoryUpload(upload.id));
+
+        // Desktop right-click context menu
+        item.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            selectHistoryUpload(upload.id);
+            showContextMenu(upload.id, e.clientX, e.clientY);
+        });
+
+        // Mobile long-press context menu
+        let longPressTimer = null;
+        let touchStartX = 0;
+        let touchStartY = 0;
+
+        item.addEventListener('touchstart', (e) => {
+            const touch = e.touches[0];
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+            longPressTimer = setTimeout(() => {
+                longPressTimer = null;
+                selectHistoryUpload(upload.id);
+                showContextMenu(upload.id, touch.clientX, touch.clientY);
+            }, 500);
+        });
+
+        item.addEventListener('touchmove', (e) => {
+            if (longPressTimer === null) {
+                return;
+            }
+            const touch = e.touches[0];
+            const dx = touch.clientX - touchStartX;
+            const dy = touch.clientY - touchStartY;
+            if (dx * dx + dy * dy > 100) { // 10px threshold
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+        });
+
+        item.addEventListener('touchend', () => {
+            if (longPressTimer !== null) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+        });
+
+        item.addEventListener('touchcancel', () => {
+            if (longPressTimer !== null) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+            }
+        });
 
         list.appendChild(item);
     });
@@ -4329,6 +4707,12 @@ function connectFeedEvents() {
     feedEventsSource.addEventListener('episode-added', () => {
         refreshHistoryList();
     });
+    feedEventsSource.addEventListener('episode-updated', () => {
+        refreshHistoryList();
+    });
+    feedEventsSource.addEventListener('episode-deleted', () => {
+        refreshHistoryList();
+    });
     feedEventsSource.onerror = () => {
         // readyState CLOSED (2) means the browser won't auto-reconnect (e.g., server returned error).
         // Reconnect on the next tab reactivation via the visibilitychange handler.
@@ -4618,12 +5002,45 @@ document.getElementById('history-info-filename')?.addEventListener('click', func
 
 // Global keyboard shortcuts for history panel
 document.addEventListener('keydown', (e) => {
+    // Escape priority: modal > context menu > history panel
+    if (e.key === 'Escape') {
+        const renameOverlay = document.getElementById('rename-modal-overlay');
+        if (renameOverlay && !renameOverlay.hidden) {
+            e.preventDefault();
+            hideRenameModal();
+
+            return;
+        }
+
+        const deleteOverlay = document.getElementById('delete-confirm-overlay');
+        if (deleteOverlay && !deleteOverlay.hidden) {
+            e.preventDefault();
+            hideDeleteConfirm();
+
+            return;
+        }
+
+        if (contextMenuTargetId !== null) {
+            e.preventDefault();
+            hideContextMenu();
+
+            return;
+        }
+    }
+
+    // When a modal is open, don't process history panel shortcuts (arrows, Q/E, etc.)
+    const renameOpen = document.getElementById('rename-modal-overlay')?.hidden === false;
+    const deleteOpen = document.getElementById('delete-confirm-overlay')?.hidden === false;
+    if (renameOpen || deleteOpen) {
+        return;
+    }
+
     const section = document.getElementById('history-section');
     if (!section?.classList.contains('history-section--expanded')) {
         return;
     }
 
-    // Escape to close
+    // Escape to close history panel (after checking modals/context menu above)
     if (e.key === 'Escape') {
         e.preventDefault();
         if (historyPanelPushedState) {
@@ -4683,10 +5100,113 @@ document.addEventListener('keydown', (e) => {
 window.addEventListener('popstate', () => {
     if (historyPanelPushedState) {
         historyPanelPushedState = false;
+        hideContextMenu();
+        window.getSelection()?.removeAllRanges();
         const toggle = document.getElementById('history-toggle');
         if (toggle?.getAttribute('aria-expanded') === 'true') {
             toggleHistorySection(false);
         }
+    }
+});
+
+// Context menu dismissal: click outside, scroll, resize
+document.addEventListener('click', (e) => {
+    if (contextMenuTargetId !== null) {
+        const menu = document.getElementById('context-menu');
+        if (menu && !menu.contains(e.target)) {
+            hideContextMenu();
+        }
+    }
+});
+document.getElementById('history-list')?.addEventListener('scroll', hideContextMenu);
+window.addEventListener('resize', hideContextMenu);
+
+// Context menu keyboard navigation
+document.getElementById('context-menu')?.addEventListener('keydown', (e) => {
+    const items = document.querySelectorAll('#context-menu .context-menu-item');
+    const current = Array.from(items).indexOf(document.activeElement);
+
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const next = Math.min(current + 1, items.length - 1);
+        items[next].focus();
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const prev = Math.max(current - 1, 0);
+        items[prev].focus();
+    } else if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        document.activeElement?.click();
+    }
+});
+
+// Context menu item actions
+document.querySelectorAll('#context-menu .context-menu-item').forEach(item => {
+    item.addEventListener('click', () => {
+        const episodeId = contextMenuTargetId;
+        const action = item.dataset.action;
+        hideContextMenu();
+        if (!episodeId) {
+            return;
+        }
+        if (action === 'rename') {
+            showRenameModal(episodeId);
+        } else if (action === 'delete') {
+            showDeleteConfirm(episodeId);
+        }
+    });
+});
+
+// Delete confirmation handlers
+document.getElementById('delete-cancel')?.addEventListener('click', hideDeleteConfirm);
+document.getElementById('delete-confirm')?.addEventListener('click', () => {
+    const overlay = document.getElementById('delete-confirm-overlay');
+    const episodeId = overlay?.dataset.episodeId;
+    if (episodeId) {
+        deleteEpisode(episodeId);
+    }
+});
+
+// Rename modal handlers
+document.getElementById('rename-cancel')?.addEventListener('click', hideRenameModal);
+document.getElementById('rename-save')?.addEventListener('click', () => {
+    const overlay = document.getElementById('rename-modal-overlay');
+    const episodeId = overlay?.dataset.episodeId;
+    const input = document.getElementById('rename-input');
+    if (episodeId && input) {
+        renameEpisode(episodeId, input.value);
+    }
+});
+document.getElementById('rename-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        document.getElementById('rename-save')?.click();
+    }
+});
+
+// Modal overlay click-outside-to-close
+document.getElementById('rename-modal-overlay')?.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) {
+        hideRenameModal();
+    }
+});
+document.getElementById('delete-confirm-overlay')?.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) {
+        hideDeleteConfirm();
+    }
+});
+
+// Focus trap for modals
+document.getElementById('rename-modal-overlay')?.addEventListener('keydown', (e) => {
+    const modal = document.getElementById('rename-modal-overlay')?.querySelector('.modal');
+    if (modal) {
+        trapFocus(e, modal);
+    }
+});
+document.getElementById('delete-confirm-overlay')?.addEventListener('keydown', (e) => {
+    const modal = document.getElementById('delete-confirm-overlay')?.querySelector('.modal');
+    if (modal) {
+        trapFocus(e, modal);
     }
 });
 
