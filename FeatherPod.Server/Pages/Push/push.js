@@ -4579,11 +4579,7 @@ document.addEventListener('visibilitychange', () => {
         // Catch any events missed while tab was inactive (browsers may throttle/disconnect SSE)
         if (apiKey) {
             fetchRecentJobs().then(mergeServerJobs).catch(() => {});
-            // Only refresh history here if the queue is still showing — when clearTerminalEntries
-            // empties the queue, checkAllComplete already calls initHistorySection
-            if (uploadQueue.length > 0) {
-                refreshHistoryList().catch(() => {});
-            }
+            refreshHistoryList().catch(() => {});
         }
     }
 });
