@@ -219,10 +219,8 @@ app.MapGet("/{feedId}/push",
             }
 
             var progressSmoothing = config.GetValue("PushPage:ProgressSmoothing", true);
-            var userAgent = context.Request.Headers.UserAgent.ToString();
-            var isAndroid = userAgent.Contains("Android", StringComparison.OrdinalIgnoreCase);
             var iconETag = await blobStorageService.GetIconETagAsync(feedId);
-            var pwaEnabled = isAndroid && iconETag != null;
+            var pwaEnabled = iconETag != null;
 
             return Results.Content(GeneratePushPageHtml(feedId, feed.Title, env, progressSmoothing, pwaEnabled, iconETag), "text/html");
         })
