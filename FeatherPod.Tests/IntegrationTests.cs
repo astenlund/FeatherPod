@@ -1122,6 +1122,54 @@ public sealed class IntegrationTests : IDisposable
         // Assert
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
+
+    [AzuriteFact]
+    public async Task SuggestTitle_ShouldReturnParsedTitle_ViaFakeAiService()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "my_test_episode_file.mp3");
+        content.Add(new StringContent("My Title"), "title");
+
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var postResponse = await _client.SendAsync(postRequest);
+        postResponse.EnsureSuccessStatusCode();
+
+        var createdContent = await postResponse.Content.ReadAsStringAsync();
+        var idMatch = System.Text.RegularExpressions.Regex.Match(createdContent, @"""id"":""([^""]+)""");
+        var episodeId = idMatch.Groups[1].Value;
+
+        // Act
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes/{episodeId}/suggest-title");
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var response = await _client.SendAsync(request);
+
+        // Assert - FakeAiService returns ParseTitleFromFilename result
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var responseContent = await response.Content.ReadAsStringAsync();
+        Assert.Contains("suggestedTitle", responseContent);
+        Assert.Contains("my test episode file", responseContent);
+    }
+
+    [AzuriteFact]
+    public async Task SuggestTitle_ShouldReturn401_WithoutApiKey()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        // Act
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes/some-id/suggest-title");
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+    }
 }
 
 internal class FeatherPodWebApplicationFactory : WebApplicationFactory<FeatherPod.Server.ServerAssemblyMarker>
@@ -1160,7 +1208,11 @@ internal class FeatherPodWebApplicationFactory : WebApplicationFactory<FeatherPo
                 // Push page defaults for tests (push mode enables instant SSE delivery via channel)
                 ["PushPage:ProgressMode"] = "push",
                 ["PushPage:ProgressIntervalMs"] = "250",
-                ["PushPage:PollIntervalMs"] = "500"
+                ["PushPage:PollIntervalMs"] = "500",
+
+                // Disable AI features in tests (override appsettings.Development.json)
+                ["AzureOpenAI:Endpoint"] = "",
+                ["AzureOpenAI:Deployment"] = ""
             }!);
         });
 

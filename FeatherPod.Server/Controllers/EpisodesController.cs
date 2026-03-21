@@ -15,17 +15,19 @@ public class EpisodesController : ControllerBase
     private readonly IJobService _jobService;
     private readonly IUserService _userService;
     private readonly IFeedEventChannel _feedEventChannel;
+    private readonly IAiService _aiService;
     private readonly string _baseUrl;
     private readonly string? _progressMode;
     private readonly int _progressIntervalMs;
 
-    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IConfiguration configuration)
+    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IAiService aiService, IConfiguration configuration)
     {
         _episodeService = episodeService;
         _blobStorageService = blobStorageService;
         _jobService = jobService;
         _userService = userService;
         _feedEventChannel = feedEventChannel;
+        _aiService = aiService;
         _baseUrl = configuration.GetSection("Podcast")["BaseUrl"]
             ?? throw new InvalidOperationException("Podcast.BaseUrl must be configured in appsettings.json");
 
@@ -291,6 +293,40 @@ public class EpisodesController : ControllerBase
         var episodeWithUrl = updated with { Url = updated.GetAudioUrl(_baseUrl) };
 
         return Ok(episodeWithUrl);
+    }
+
+    [HttpPost("{id}/suggest-title")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> SuggestTitle(string feedId, string id)
+    {
+        if (!_aiService.IsAvailable)
+        {
+            return NotFound(new { error = "AI title suggestions not available" });
+        }
+
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
+        var feed = await _episodeService.GetFeedAsync(feedId);
+        if (feed == null)
+        {
+            return NotFound(new { error = $"Feed '{feedId}' not found" });
+        }
+
+        var episode = await _episodeService.GetEpisodeByIdAsync(feedId, id);
+        if (episode == null)
+        {
+            return NotFound(new { error = $"Episode '{id}' not found in feed '{feedId}'" });
+        }
+
+        var suggestedTitle = await _aiService.SuggestTitleAsync(episode.FileName, HttpContext.RequestAborted)
+            ?? EpisodeService.ParseTitleFromFilename(episode.FileName);
+
+        return Ok(new { suggestedTitle });
     }
 
     [HttpPost("{id}/move")]

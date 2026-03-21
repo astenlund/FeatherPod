@@ -39,6 +39,14 @@ builder.Services.AddSingleton<IJobProgressChannel, JobProgressChannel>();
 builder.Services.AddSingleton<IFeedEventChannel, FeedEventChannel>();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IconResizeService>();
+if (builder.Environment.IsDevelopment() && string.IsNullOrEmpty(builder.Configuration["AzureOpenAI:Endpoint"]))
+{
+    builder.Services.AddSingleton<IAiService, FakeAiService>();
+}
+else
+{
+    builder.Services.AddSingleton<IAiService, AiService>();
+}
 
 // Add background service for periodic blob storage sync
 builder.Services.AddHostedService<BlobSyncBackgroundService>();

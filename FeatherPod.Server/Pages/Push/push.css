@@ -1489,6 +1489,12 @@ h1 {
     animation-delay: calc(var(--stagger-index) * 0.02s);
 }
 
+/* Skip animations on re-renders and tab switches */
+.history-section--no-animate #history-list .upload-item {
+    animation: none;
+    opacity: 1;
+}
+
 /* Scrollable list with fade hint */
 #history-list {
     max-height: 280px;
@@ -1686,6 +1692,8 @@ h1 {
     text-align: left;
     cursor: pointer;
     transition: background-color var(--transition-fast), color var(--transition-fast);
+    -webkit-user-select: none;
+    user-select: none;
 }
 
 .context-menu-item:hover,
@@ -1768,15 +1776,6 @@ h1 {
     margin-bottom: 1.25rem;
 }
 
-.modal-label {
-    display: block;
-    font-family: var(--font-display), sans-serif;
-    font-size: 0.8rem;
-    font-weight: 500;
-    color: var(--text-muted);
-    margin-bottom: 0.375rem;
-}
-
 .modal-input {
     width: 100%;
     background: var(--bg-surface);
@@ -1793,15 +1792,6 @@ h1 {
     border-color: var(--primary-400);
     box-shadow: 0 0 0 2px var(--primary-a10);
     outline: none;
-}
-
-.modal-filename {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    margin-top: 0.375rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .modal-actions {
@@ -1859,6 +1849,84 @@ h1 {
 
 .btn-modal:active {
     transform: scale(0.97);
+}
+
+/* AI suggestion area in rename modal */
+.modal-suggestion {
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background: var(--primary-a15);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+}
+
+.modal-suggestion[hidden] {
+    display: none;
+}
+
+.modal-suggestion-label {
+    display: block;
+    font-family: var(--font-display), sans-serif;
+    font-size: 0.8rem;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--text-muted);
+    margin-bottom: 0.75rem;
+}
+
+.modal-suggestion-text {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.modal-suggestion--loading .modal-suggestion-text {
+    background: var(--bg-surface);
+    border-radius: var(--radius-sm);
+    position: relative;
+    overflow: hidden;
+    color: transparent;
+}
+
+.modal-suggestion--loading .modal-suggestion-text::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.08) 50%, transparent 100%);
+    animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.modal-suggestion--loading .btn-suggestion-accept {
+    display: none;
+}
+
+.btn-suggestion-accept {
+    float: right;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    margin-left: 1.125rem;
+    margin-bottom: 0.25rem;
+    padding: 0;
+    border-radius: var(--radius-md);
+    background: var(--primary-a15);
+    border: 1px solid var(--border-muted);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.btn-suggestion-accept:hover {
+    background: var(--primary-a25);
+    border-color: var(--primary-500);
+    color: var(--text-primary);
 }
 
 /* ============================================================================

@@ -2226,7 +2226,7 @@ async function refreshHistoryList() {
         return;
     }
     const uploads = await fetchHistoryByFilter();
-    renderHistoryList(uploads);
+    renderHistoryList(uploads, false, true);
 }
 
 // ============================================================================
@@ -2288,8 +2288,7 @@ function showDeleteConfirm(episodeId) {
 
     const desc = document.getElementById('delete-confirm-desc');
     if (desc) {
-        const title = episode.title || episode.fileName;
-        desc.textContent = 'Delete "' + title + '"? This cannot be undone.';
+        desc.textContent = episode.title || episode.fileName;
     }
 
     const overlay = document.getElementById('delete-confirm-overlay');
@@ -2394,8 +2393,62 @@ function removeFromLocalHistory(episodeId) {
 }
 
 /**
+ * Fetch a suggested title for an episode. Shows shimmer while loading,
+ * populates suggestion text on success, hides suggestion area on failure.
+ * Falls back to a filename-parsed title if AI is unavailable.
+ * @param {string} episodeId - ID of the episode to suggest a title for
+ * @returns {Promise<void>}
+ */
+async function fetchTitleSuggestion(episodeId) {
+    const container = document.getElementById('rename-suggestion');
+    const textEl = document.getElementById('rename-suggestion-text');
+    if (!container || !textEl) {
+        return;
+    }
+
+    container.removeAttribute('hidden');
+    container.classList.add('modal-suggestion--loading');
+    textEl.textContent = '\u00a0';
+
+    try {
+        const response = await fetch('/api/feeds/' + FEED_ID + '/episodes/' + episodeId + '/suggest-title', {
+            method: 'POST',
+            headers: { 'X-API-Key': apiKey },
+        });
+
+        const overlay = document.getElementById('rename-modal-overlay');
+        if (!overlay || overlay.hasAttribute('hidden') || overlay.dataset.episodeId !== episodeId) {
+            return;
+        }
+
+        if (!response.ok) {
+            container.setAttribute('hidden', '');
+
+            return;
+        }
+
+        const data = await response.json();
+        container.classList.remove('modal-suggestion--loading');
+
+        const suggestion = data.suggestedTitle || '';
+        if (!suggestion) {
+            container.setAttribute('hidden', '');
+
+            return;
+        }
+
+        textEl.textContent = suggestion;
+    } catch {
+        const containerEl = document.getElementById('rename-suggestion');
+        if (containerEl) {
+            containerEl.setAttribute('hidden', '');
+        }
+    }
+}
+
+/**
  * Show the rename modal for an episode.
- * Pre-fills the input with the current title and shows the filename for context.
+ * Pre-fills the input with the current title and fires an AI title suggestion.
  * @param {string} episodeId - ID of the episode to rename
  */
 function showRenameModal(episodeId) {
@@ -2405,35 +2458,33 @@ function showRenameModal(episodeId) {
     }
 
     const input = document.getElementById('rename-input');
-    const filenameEl = document.getElementById('rename-filename');
     const overlay = document.getElementById('rename-modal-overlay');
 
     if (input) {
         input.value = episode.title || episode.fileName;
-    }
-    if (filenameEl) {
-        filenameEl.textContent = episode.fileName || '';
+        input.placeholder = episode.fileName || '';
     }
     if (overlay) {
         overlay.dataset.episodeId = episodeId;
         overlay.removeAttribute('hidden');
     }
 
-    // Select all text and focus the input
-    if (input) {
-        requestAnimationFrame(() => {
-            input.select();
-            input.focus();
-        });
-    }
+    // Fire AI title suggestion (async, non-blocking)
+    fetchTitleSuggestion(episodeId);
 }
 
-/** Hide the rename modal. */
+/** Hide the rename modal and reset the suggestion area. */
 function hideRenameModal() {
     const overlay = document.getElementById('rename-modal-overlay');
     if (overlay) {
         overlay.setAttribute('hidden', '');
         delete overlay.dataset.episodeId;
+    }
+
+    const suggestion = document.getElementById('rename-suggestion');
+    if (suggestion) {
+        suggestion.setAttribute('hidden', '');
+        suggestion.classList.remove('modal-suggestion--loading');
     }
 }
 
@@ -3022,16 +3073,22 @@ function updateHistoryListScrollState() {
 
 /**
  * Render the history list in the ready state.
- * Clears existing list, creates upload items, and selects the first item by default.
+ * Clears existing list, creates upload items, and preserves the current selection if possible.
  * Shows an empty state message if no uploads are provided.
  * @param {Array<Episode>} uploads - Array of episodes to render
  * @param {boolean} [focusFirst=false] - Whether to focus the first item after rendering
+ * @param {boolean} [skipAnimation=false] - Whether to skip stagger animations (used on re-renders and tab switches)
  */
-function renderHistoryList(uploads, focusFirst = false) {
+function renderHistoryList(uploads, focusFirst = false, skipAnimation = false) {
     const list = document.getElementById('history-list');
     const emptyState = document.getElementById('history-empty');
     if (!list) {
         return;
+    }
+
+    const section = document.getElementById('history-section');
+    if (section) {
+        section.classList.toggle('history-section--no-animate', skipAnimation);
     }
 
     list.innerHTML = '';
@@ -3055,9 +3112,14 @@ function renderHistoryList(uploads, focusFirst = false) {
 
     historyData = uploads;
 
-    // Select first item by default
-    historySelectedId = uploads[0].id;
-    updateHistoryInfoCard(uploads[0]);
+    // Preserve selection if the previously selected episode is still in the list
+    const preserved = historySelectedId && uploads.find(u => u.id === historySelectedId);
+    if (preserved) {
+        updateHistoryInfoCard(preserved);
+    } else {
+        historySelectedId = uploads[0].id;
+        updateHistoryInfoCard(uploads[0]);
+    }
 
     uploads.forEach((upload, index) => {
         const item = document.createElement('div');
@@ -3147,8 +3209,14 @@ function renderHistoryList(uploads, focusFirst = false) {
     requestAnimationFrame(() => {
         updateHistoryListScrollState();
 
-        // Focus first item if requested (e.g., after switching tabs via keyboard)
-        if (focusFirst) {
+        // Scroll selected item into view and optionally focus it
+        const selectedItem = list.querySelector('.upload-item--selected');
+        if (selectedItem) {
+            selectedItem.scrollIntoView({ block: 'nearest' });
+            if (focusFirst) {
+                selectedItem.focus();
+            }
+        } else if (focusFirst) {
             const firstItem = list.querySelector('.upload-item');
             if (firstItem) {
                 firstItem.focus();
@@ -3232,7 +3300,7 @@ async function changeHistoryFilter(filter, focusFirst = false) {
         return;
     }
 
-    renderHistoryList(uploads, focusFirst);
+    renderHistoryList(uploads, focusFirst, true);
 }
 
 /**
@@ -3259,7 +3327,7 @@ async function initHistorySection() {
         toggle.style.display = 'block';
     }
     section.style.display = 'block';
-    renderHistoryList(uploads || []);
+    renderHistoryList(uploads || [], false, false);
 }
 
 /**
@@ -5181,6 +5249,13 @@ document.getElementById('rename-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
         e.preventDefault();
         document.getElementById('rename-save')?.click();
+    }
+});
+document.getElementById('rename-accept')?.addEventListener('click', () => {
+    const textEl = document.getElementById('rename-suggestion-text');
+    const input = document.getElementById('rename-input');
+    if (textEl && input && textEl.textContent.trim()) {
+        input.value = textEl.textContent.trim();
     }
 });
 

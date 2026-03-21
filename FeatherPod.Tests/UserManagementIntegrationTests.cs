@@ -638,7 +638,9 @@ internal class UserManagementWebApplicationFactory : WebApplicationFactory<Feath
             {
                 ["Azure:ConnectionString"] = "UseDevelopmentStorage=true",
                 ["Azure:ContainerName"] = ContainerName,
-                ["Podcast:BaseUrl"] = "http://localhost:5000"
+                ["Podcast:BaseUrl"] = "http://localhost:5000",
+                ["AzureOpenAI:Endpoint"] = "",
+                ["AzureOpenAI:Deployment"] = ""
             }!);
         });
 

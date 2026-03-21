@@ -63,6 +63,9 @@ param internalApiKey string
 @description('Name of the Azure SignalR Service')
 param signalRServiceName string
 
+@description('Name of the Azure OpenAI account')
+param openAiAccountName string
+
 // Resource tags
 var tags = {
   Environment: environment
@@ -200,6 +203,8 @@ resource appServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
     Podcast__BaseUrl: 'https://${appServiceName}.azurewebsites.net'
     Internal__Key: internalApiKey
     Azure__SignalR__ConnectionString: signalRService.listKeys().primaryConnectionString
+    AzureOpenAI__Endpoint: 'https://${openAiAccountName}.openai.azure.com/'
+    AzureOpenAI__Deployment: gpt4oMiniDeployment.name
     APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.properties.ConnectionString
   }
 }
@@ -208,6 +213,7 @@ resource appServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
 var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
 var storageTableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
+var cognitiveServicesOpenAiUserRoleId = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
 
 // Role Assignment: Grant App Service managed identity access to Storage Account (Blob)
 resource appServiceBlobRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -390,6 +396,48 @@ resource signalRService 'Microsoft.SignalRService/signalR@2024-03-01' = {
   }
 }
 
+// Azure OpenAI (for AI title suggestions)
+resource openAiAccount 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
+  name: openAiAccountName
+  location: location
+  tags: tags
+  kind: 'OpenAI'
+  sku: {
+    name: 'S0'
+  }
+  properties: {
+    customSubDomainName: openAiAccountName
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+resource gpt4oMiniDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
+  parent: openAiAccount
+  name: 'gpt-4o-mini'
+  sku: {
+    name: 'Standard'
+    capacity: 10
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: 'gpt-4o-mini'
+      version: '2024-07-18'
+    }
+  }
+}
+
+// Role Assignment: Grant App Service managed identity access to Azure OpenAI
+resource appServiceOpenAiRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(openAiAccount.id, appService.id, cognitiveServicesOpenAiUserRoleId)
+  scope: openAiAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cognitiveServicesOpenAiUserRoleId)
+    principalId: appService.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 // Outputs
 output storageAccountId string = storageAccount.id
 output storageAccountName string = storageAccount.name
@@ -406,3 +454,4 @@ output functionAppDefaultHostname string = functionApp.properties.defaultHostNam
 output functionAppPrincipalId string = functionApp.identity.principalId
 output appInsightsName string = appInsights.name
 output signalRServiceName string = signalRService.name
+output openAiAccountName string = openAiAccount.name
