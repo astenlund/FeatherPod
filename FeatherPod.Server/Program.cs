@@ -259,6 +259,7 @@ app.MapGet("/{feedId}/push/manifest.json", async (string feedId, EpisodeService 
             start_url = $"/{feedId}/push",
             scope = $"/{feedId}/push",
             display = "standalone",
+            orientation = "portrait",
             background_color = "#1a1a2e",
             theme_color = "#1a1a2e",
             icons = new[]
