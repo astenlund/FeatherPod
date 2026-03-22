@@ -1,4 +1,22 @@
 // FEED_ID, ICON_ETAG, IS_DEV, PROGRESS_SMOOTHING are set as globals by the HTML page
+
+/**
+ * Dev-only query params (IS_DEV only, combine freely in query string):
+ *
+ * ?pwa   (FAKE_PWA)               - Fakes PWA standalone mode. Any logic checking
+ *                                    standalone display mode must also check this flag.
+ * ?ghost (SHOW_GHOST)             - Shows unfiltered "ghost" progress bar and logs
+ *                                    velocity deltas. New progress visualization or
+ *                                    velocity logging should be gated behind this flag.
+ * ?alive (DEBUG_TITLE_ANIMATION)  - Bypasses isFirstStateChange optimization so morph
+ *                                    animation triggers on first render. New "skip
+ *                                    animation on first load" logic should check this.
+ * ?state={name}                   - Forces a visual-only UI state (no-key, no-key-invalid,
+ *                                    no-key-no-access, ready, queue, error) via applyDevState().
+ * ?vup={kB/s}, ?vanal={kB/s},    - Override localStorage-based learned velocity history.
+ *  ?vnorm={kB/s}                    New code reading learned velocities should check
+ *  (VELOCITY_OVERRIDES)             VELOCITY_OVERRIDES[stage] first.
+ */
 const SHOW_GHOST = IS_DEV && window.location.search.includes('ghost');
 const DEBUG_TITLE_ANIMATION = IS_DEV && window.location.search.includes('alive');
 const VELOCITY_OVERRIDES = IS_DEV ? parseVelocityOverrides() : {};
@@ -33,6 +51,82 @@ function parseVelocityOverrides() {
 
     return overrides;
 }
+
+/**
+ * Apply a dev-only forced UI state (purely visual, no real init).
+ * @param {string} devState - The state value from ?state= query param
+ * @returns {boolean} True if the state was recognized
+ */
+function applyDevState(devState) {
+    switch (devState) {
+        case 'no-key':
+            setNoKeyError(null);
+            showState('no-key');
+            initNoKeyState();
+
+            return true;
+        case 'no-key-invalid':
+            setNoKeyError('invalid');
+            showState('no-key');
+            initNoKeyState();
+
+            return true;
+        case 'no-key-no-access':
+            setNoKeyError('no-access');
+            showState('no-key');
+            initNoKeyState();
+
+            return true;
+        case 'ready':
+            showState('ready');
+
+            return true;
+        case 'queue':
+            uploadQueue = [
+                {
+                    id: 'dev-1', file: null, status: 'completed', progress: 100,
+                    stage: 'Completed', jobId: null, episodeId: 'abc123def456',
+                    episode: { id: 'abc123def456', title: 'Morning Thoughts on Architecture', fileName: 'morning-thoughts.m4a', fileSize: 15728640, duration: '0:42:15', publishedDate: '2026-03-22T08:00:00Z' },
+                    error: null, xhr: null, eventSource: null,
+                    fileSize: 15728640, fileName: 'morning-thoughts.m4a',
+                    validationError: false, backgroundMonitoring: false, startedAt: Date.now() - 300000, _resolveMonitor: null,
+                },
+                {
+                    id: 'dev-2', file: null, status: 'uploading', progress: 45,
+                    stage: null, jobId: null, episodeId: null, episode: null,
+                    error: null, xhr: null, eventSource: null,
+                    fileSize: 52428800, fileName: 'interview-with-special-guest.m4a',
+                    validationError: false, backgroundMonitoring: false, startedAt: Date.now() - 60000, _resolveMonitor: null,
+                },
+                {
+                    id: 'dev-3', file: null, status: 'failed', progress: 0,
+                    stage: null, jobId: null, episodeId: null, episode: null,
+                    error: 'File exceeds maximum size of 200 MB', xhr: null, eventSource: null,
+                    fileSize: 209715200, fileName: 'uncompressed-recording.wav',
+                    validationError: true, backgroundMonitoring: false, startedAt: Date.now() - 120000, _resolveMonitor: null,
+                },
+                {
+                    id: 'dev-4', file: null, status: 'queued', progress: 0,
+                    stage: null, jobId: null, episodeId: null, episode: null,
+                    error: null, xhr: null, eventSource: null,
+                    fileSize: 8388608, fileName: 'quick-update.m4a',
+                    validationError: false, backgroundMonitoring: false, startedAt: Date.now() - 10000, _resolveMonitor: null,
+                },
+            ];
+            showState('queue');
+            renderQueueList();
+            updateQueueTitle();
+
+            return true;
+        case 'error':
+            showError('This is a test error message');
+
+            return true;
+        default:
+            return false;
+    }
+}
+
 /**
  * @typedef {Object} QueueEntry
  * @property {string} id - Unique entry ID
@@ -1123,6 +1217,18 @@ async function init() {
         return false;
     }
 
+    // Dev: force a specific UI state via ?state= param (purely visual, no init)
+    if (IS_DEV) {
+        const devState = new URLSearchParams(window.location.search).get('state');
+        if (devState) {
+            if (!applyDevState(devState)) {
+                showError(`Unknown state: ${devState}`);
+            }
+
+            return;
+        }
+    }
+
     // Storage precedence: fragment > sessionStorage > localStorage > cookie
     // Fragment format: API_KEY or API_KEY&source=localhost:PORT&token=TOKEN (local source mode)
     const fragment = window.location.hash.slice(1);
@@ -1201,13 +1307,6 @@ async function init() {
     } else {
         // No key available
         showNoKeyUI(null);
-
-        return;
-    }
-
-    // Debug: show error state with ?error query param (dev only)
-    if (IS_DEV && window.location.search.includes('error')) {
-        showError('This is a test error message');
 
         return;
     }
