@@ -487,6 +487,70 @@ internal static class EpisodeHelpers
         }
     }
 
+    internal static async Task<EpisodeOperationResult> UpdateEpisodeTitleAsync(
+        HttpClient httpClient, string feedId, string episodeId, string newTitle,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var requestBody = new { title = newTitle };
+            var json = JsonSerializer.Serialize(requestBody);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+            var response = await httpClient.PatchAsync($"/api/feeds/{feedId}/episodes/{episodeId}", content, cancellationToken);
+
+            if (response.IsSuccessStatusCode)
+            {
+                return new() { Success = true, EpisodeId = episodeId };
+            }
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                Out.Error("Episode not found.");
+
+                return new() { Success = false, ErrorMessage = "Episode not found" };
+            }
+
+            var errorJson = await response.Content.ReadAsStringAsync(cancellationToken);
+            var errorObj = JsonSerializer.Deserialize<JsonElement>(errorJson);
+            var errorMsg = errorObj.TryGetProperty("error", out var err) ? err.GetString() : "Unknown error";
+            Out.Error(Markup.Escape(errorMsg ?? "Unknown error"));
+
+            return new() { Success = false, ErrorMessage = errorMsg };
+        }
+        catch (Exception ex)
+        {
+            Out.Error($"Error renaming episode: {Markup.Escape(ex.Message)}");
+
+            return new() { Success = false, ErrorMessage = ex.Message };
+        }
+    }
+
+    internal static async Task<string?> SuggestTitleAsync(
+        HttpClient httpClient, string feedId, string episodeId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await httpClient.PostAsync(
+                $"/api/feeds/{feedId}/episodes/{episodeId}/suggest-title", null, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            var result = JsonSerializer.Deserialize<JsonElement>(json);
+
+            return result.TryGetProperty("suggestedTitle", out var title) ? title.GetString() : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     internal static List<Episode> SelectEpisodesMulti(List<Episode> episodes)
     {
         if (episodes.Count == 0)
@@ -500,10 +564,42 @@ internal static class EpisodeHelpers
             .NotRequired()
             .MoreChoicesText("[grey](Move up/down for more)[/]")
             .InstructionsText("[grey]([blue]Space[/] to toggle, [green]Enter[/] to confirm, Enter with none to cancel)[/]")
-            .UseConverter(ep => $"[grey]{ep.PublishedDate:yyyy-MM-dd}[/] {Markup.Escape(ep.Title)}")
+            .UseConverter(EpisodeConverter(episodes))
             .AddChoices(episodes);
 
         return AnsiConsole.Prompt(prompt);
+    }
+
+    internal static Episode? SelectEpisodeSingle(List<Episode> episodes)
+    {
+        if (episodes.Count == 0)
+        {
+            return null;
+        }
+
+        var prompt = new SelectionPrompt<Episode>()
+            .Title("Select episode:")
+            .PageSize(10)
+            .MoreChoicesText("[grey](Move up/down for more)[/]")
+            .EnableSearch()
+            .SearchPlaceholderText("[grey](type to search)[/]")
+            .UseConverter(EpisodeConverter(episodes))
+            .AddChoices(episodes);
+
+        return AnsiConsole.Prompt(prompt);
+    }
+
+    private static Func<Episode, string> EpisodeConverter(List<Episode> episodes)
+    {
+        var numberById = episodes.Select((ep, i) => (ep.Id, Number: episodes.Count - i))
+            .ToDictionary(x => x.Id, x => x.Number);
+
+        return ep =>
+        {
+            var number = numberById.TryGetValue(ep.Id, out var n) ? n : 0;
+
+            return $"[grey]#{number}[/] {Markup.Escape(ep.Title)}";
+        };
     }
 
     internal static List<Episode> MatchEpisodesByPattern(List<Episode> episodes, string pattern)

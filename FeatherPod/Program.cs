@@ -48,6 +48,11 @@ internal class Program
                     .WithExample("episode", "delete", "abc123", "-f", "my-podcast")
                     .WithExample("episode", "delete", "-f", "my-podcast");
 
+                episode.AddCommand<RenameCommand>("rename")
+                    .WithDescription("Rename an episode title")
+                    .WithExample("episode", "rename", "abc123", "-f", "my-feed", "-t", "New Title")
+                    .WithExample("episode", "rename", "-f", "my-feed", "--suggest");
+
                 episode.AddCommand<MoveCommand>("move")
                     .WithDescription("Move episode(s) from one feed to another")
                     .WithExample("episode", "move")

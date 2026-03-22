@@ -762,6 +762,12 @@ public sealed partial class EpisodeService : IDisposable
         // But preserve sequences like "2D", "3D", "4K" (digit followed by uppercase)
         title = PascalRegex().Replace(title, " ");
 
+        // Fix Apple brand names broken by PascalCase splitting
+        title = title.Replace("i Pad", "iPad")
+                     .Replace("i Phone", "iPhone")
+                     .Replace("i OS", "iOS")
+                     .Replace("Mac Book", "MacBook");
+
         // Collapse multiple spaces into single space
         title = SpaceRegex().Replace(title, " ");
 

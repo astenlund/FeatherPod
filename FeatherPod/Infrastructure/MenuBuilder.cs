@@ -47,6 +47,8 @@ internal class MenuBuilder<T>
             throw new InvalidOperationException("Menu must have at least one option");
         }
 
+        Out.Flush();
+
         var selected = 0;
 
         Console.CursorVisible = false;

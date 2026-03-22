@@ -664,6 +664,21 @@ public class TitleParsingTests
     }
 
     [Theory]
+    [InlineData("Apple_s_iPad_Ad.m4a", "Apple's iPad Ad")]
+    [InlineData("New_iPhone_Features.mp3", "New iPhone Features")]
+    [InlineData("iOS_18_Review.m4a", "iOS 18 Review")]
+    [InlineData("iPad_Pro_Review.m4a", "iPad Pro Review")]
+    [InlineData("iPad_vs_MacBook.m4a", "iPad vs MacBook")]
+    public void ParseTitleFromFilename_PreservesAppleBrandNames(string fileName, string expected)
+    {
+        // Arrange / Act
+        var result = EpisodeService.ParseTitleFromFilename(fileName);
+
+        // Assert
+        Assert.Equal(expected, result);
+    }
+
+    [Theory]
     [InlineData("America_s_Future__A_Deep_Dive.m4a", "America's Future: A Deep Dive")]
     public void ParseTitleFromFilename_HandlesCombinedPatterns(string fileName, string expected)
     {

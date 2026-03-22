@@ -11,6 +11,7 @@ using static FeatherPod.Infrastructure.ConsoleWriter;
 
 using EpisodeDeleteCommand = FeatherPod.Commands.Episode.DeleteCommand;
 using EpisodeListCommand = FeatherPod.Commands.Episode.ListCommand;
+using EpisodeRenameCommand = FeatherPod.Commands.Episode.RenameCommand;
 using FeedUpdateCommand = FeatherPod.Commands.Feed.UpdateCommand;
 using FeedCreateCommand = FeatherPod.Commands.Feed.CreateCommand;
 using FeedDeleteCommand = FeatherPod.Commands.Feed.DeleteCommand;
@@ -886,6 +887,57 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                                     {
                                         Out.Error($"Failed to delete {delFailureCount} episode(s)");
                                     }
+                                }
+                            }
+                        }
+                    }
+
+                    WaitForKeyPress();
+
+                    break;
+
+                case MenuChoice.Rename:
+                    if (!isConnected || httpClient == null)
+                    {
+                        Out.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                    }
+                    else if (currentFeed == null)
+                    {
+                        Out.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
+                        Out.BlankLine();
+                    }
+                    else
+                    {
+                        var renameEpisodes = await EpisodeHelpers.GetEpisodesAsync(httpClient, currentFeed.Id);
+                        if (renameEpisodes == null || renameEpisodes.Count == 0)
+                        {
+                            Out.MarkupLine("[yellow]No episodes to rename.[/]");
+                        }
+                        else
+                        {
+                            var episodeToRename = EpisodeHelpers.SelectEpisodeSingle(renameEpisodes);
+                            if (episodeToRename == null)
+                            {
+                                Out.Cancelled();
+                            }
+                            else
+                            {
+                                Out.BlankLine();
+                                Out.MarkupLine($"  Current title: [cyan]{Markup.Escape(episodeToRename.Title)}[/]");
+                                Out.MarkupLine($"  Filename: [grey]{Markup.Escape(episodeToRename.FileName)}[/]");
+                                Out.BlankLine();
+
+                                var renameNewTitle = await EpisodeRenameCommand.ResolveNewTitleInteractiveAsync(
+                                    httpClient, currentFeed.Id, episodeToRename, cancellationToken);
+
+                                if (!string.IsNullOrWhiteSpace(renameNewTitle))
+                                {
+                                    await EpisodeRenameCommand.RenameEpisodeAsync(
+                                        httpClient, currentFeed.Id, episodeToRename, renameNewTitle.Trim(), cancellationToken);
+                                }
+                                else
+                                {
+                                    Out.Cancelled();
                                 }
                             }
                         }
@@ -1776,6 +1828,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             .AddOption("L", "List episodes", MenuChoice.List)
             .AddOption("P", "Push episodes", MenuChoice.Push)
             .AddOption("D", "Delete episodes", MenuChoice.Delete)
+            .AddOption("R", "Rename episode", MenuChoice.Rename)
             .AddOption("V", "Move/Copy episodes", MenuChoice.MoveCopy);
 
         // Only show User Management for Admin users when admin features are enabled
@@ -1805,6 +1858,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         List,
         Push,
         Delete,
+        Rename,
         MoveCopy,
         UserManagement,
         SwitchFeed,

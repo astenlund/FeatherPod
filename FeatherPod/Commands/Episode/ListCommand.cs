@@ -57,7 +57,7 @@ internal sealed class ListCommand : AsyncCommand<ListSettings>
                 var formattedDuration = EpisodeHelpers.FormatDuration(episode.Duration);
 
                 table.AddRow(
-                    $"[grey]{i + 1}[/]",
+                    $"[grey]{episodes.Count - i}[/]",
                     $"[grey]{formattedDate}[/]",
                     Markup.Escape(episode.Title),
                     $"[cyan]{Markup.Escape(episode.Url ?? string.Empty)}[/]",
