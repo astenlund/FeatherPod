@@ -11,6 +11,7 @@ namespace FeatherPod.Server.Controllers;
 [Route("api/feeds/{feedId}/episodes")]
 public class EpisodesController : ControllerBase
 {
+    private const int MaxNoteLength = 500;
     private readonly EpisodeService _episodeService;
     private readonly IBlobStorageService _blobStorageService;
     private readonly IJobService _jobService;
@@ -158,7 +159,7 @@ public class EpisodesController : ControllerBase
                 // Upload to pending location and generate AI title in parallel
                 var blobUploadTask = _blobStorageService.UploadPendingAudioAsync(feedId, jobId, file.FileName, tempPath);
                 var aiTitleTask = string.IsNullOrWhiteSpace(title) && _aiService.IsAvailable
-                    ? _aiService.SuggestTitleAsync(file.FileName, HttpContext.RequestAborted)
+                    ? _aiService.SuggestTitleAsync(file.FileName, cancellationToken: HttpContext.RequestAborted)
                     : Task.FromResult<string?>(null);
 
                 await Task.WhenAll(blobUploadTask, aiTitleTask);
@@ -205,7 +206,7 @@ public class EpisodesController : ControllerBase
             // AI title generation for sync upload (when user didn't provide a title)
             if (string.IsNullOrWhiteSpace(title) && _aiService.IsAvailable)
             {
-                title = await _aiService.SuggestTitleAsync(file.FileName, HttpContext.RequestAborted);
+                title = await _aiService.SuggestTitleAsync(file.FileName, cancellationToken: HttpContext.RequestAborted);
             }
 
             // Synchronous upload (no normalization)
@@ -285,18 +286,30 @@ public class EpisodesController : ControllerBase
             return NotFound(new { error = $"Feed '{feedId}' not found" });
         }
 
-        if (!body.TryGetProperty("title", out var titleElement))
+        string? title = null;
+        string? note = null;
+
+        if (body.TryGetProperty("title", out var titleElement))
         {
-            return BadRequest(new { error = "title is required in request body" });
+            title = titleElement.GetString()?.Trim();
+            if (string.IsNullOrEmpty(title))
+            {
+                return BadRequest(new { error = "title cannot be empty" });
+            }
         }
 
-        var title = titleElement.GetString()?.Trim();
-        if (string.IsNullOrEmpty(title))
+        if (body.TryGetProperty("note", out var noteElement))
         {
-            return BadRequest(new { error = "title cannot be empty" });
+            var rawNote = noteElement.ValueKind == JsonValueKind.Null ? "" : noteElement.GetString()?.Trim() ?? "";
+            note = rawNote.Length > MaxNoteLength ? rawNote[..MaxNoteLength] : rawNote;
         }
 
-        var updated = await _episodeService.UpdateEpisodeTitleAsync(feedId, id, title);
+        if (title == null && note == null)
+        {
+            return BadRequest(new { error = "At least one of 'title' or 'note' is required" });
+        }
+
+        var updated = await _episodeService.UpdateEpisodeMetadataAsync(feedId, id, title, note);
         if (updated == null)
         {
             return NotFound(new { error = $"Episode '{id}' not found in feed '{feedId}'" });
@@ -336,7 +349,22 @@ public class EpisodesController : ControllerBase
             return NotFound(new { error = $"Episode '{id}' not found in feed '{feedId}'" });
         }
 
-        var suggestedTitle = await _aiService.SuggestTitleAsync(episode.FileName, HttpContext.RequestAborted)
+        // Read optional note from request body, fall back to stored episode note
+        string? note = episode.Note;
+        if (Request.ContentType?.Contains("application/json", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            using var doc = await JsonDocument.ParseAsync(Request.Body, cancellationToken: HttpContext.RequestAborted);
+            if (doc.RootElement.TryGetProperty("note", out var noteElement) && noteElement.ValueKind == JsonValueKind.String)
+            {
+                var requestNote = noteElement.GetString()?.Trim();
+                if (!string.IsNullOrEmpty(requestNote))
+                {
+                    note = requestNote.Length > MaxNoteLength ? requestNote[..MaxNoteLength] : requestNote;
+                }
+            }
+        }
+
+        var suggestedTitle = await _aiService.SuggestTitleAsync(episode.FileName, note, HttpContext.RequestAborted)
             ?? EpisodeService.ParseTitleFromFilename(episode.FileName);
 
         return Ok(new { suggestedTitle });

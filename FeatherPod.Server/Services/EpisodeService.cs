@@ -445,7 +445,12 @@ public sealed partial class EpisodeService : IDisposable
         }
     }
 
-    public async Task<Episode?> UpdateEpisodeTitleAsync(string feedId, string id, string newTitle)
+    public Task<Episode?> UpdateEpisodeTitleAsync(string feedId, string id, string newTitle)
+    {
+        return UpdateEpisodeMetadataAsync(feedId, id, title: newTitle);
+    }
+
+    public async Task<Episode?> UpdateEpisodeMetadataAsync(string feedId, string id, string? title = null, string? note = null)
     {
         await _lock.WaitAsync();
 
@@ -462,12 +467,24 @@ public sealed partial class EpisodeService : IDisposable
                 return null;
             }
 
-            var oldTitle = episodes[index].Title;
-            var updated = episodes[index] with { Title = newTitle };
+            var existing = episodes[index];
+            var updated = existing with
+            {
+                Title = title ?? existing.Title,
+                Note = note ?? existing.Note,
+            };
             episodes[index] = updated;
             await SaveEpisodesAsync(feedId);
 
-            _logger.LogInformation("Updated episode title in feed {FeedId}: {OldTitle} -> {NewTitle}", feedId, oldTitle, newTitle);
+            if (title != null)
+            {
+                _logger.LogInformation("Updated episode title in feed {FeedId}: {OldTitle} -> {NewTitle}", feedId, existing.Title, title);
+            }
+
+            if (note != null)
+            {
+                _logger.LogInformation("Updated episode note in feed {FeedId}, episode {EpisodeId}", feedId, id);
+            }
 
             return updated;
         }

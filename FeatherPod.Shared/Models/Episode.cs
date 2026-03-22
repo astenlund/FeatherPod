@@ -17,6 +17,7 @@ public record Episode
     public string? Url { get; init; }
     required public UploadSource Source { get; init; }
     required public DateTime UploadedAt { get; init; }
+    public string? Note { get; init; }
 
     public static string GenerateId(string feedId, string fileName, long fileSize)
     {

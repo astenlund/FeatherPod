@@ -100,9 +100,15 @@
             <h3 id="rename-modal-title" class="modal-title">Edit episode</h3>
             <div class="modal-body">
                 <div id="rename-suggestion" class="modal-suggestion" hidden>
-                    <button id="rename-accept" class="btn-suggestion-accept" aria-label="Accept suggestion"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5 6.5 12 13 4"/></svg></button>
+                    <div class="suggestion-buttons">
+                        <button id="rename-note" class="btn-suggestion-icon" aria-label="Add note" title="Add note"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6l-3 3V4a1 1 0 0 1 1-1z"/></svg></button>
+                        <button id="rename-accept" class="btn-suggestion-icon" aria-label="Accept suggestion" title="Accept"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5 6.5 12 13 4"/></svg></button>
+                    </div>
                     <span class="modal-suggestion-label">Suggestion</span>
                     <div id="rename-suggestion-text" class="modal-suggestion-text"></div>
+                    <div id="rename-note-panel" class="modal-note-panel" hidden>
+                        <textarea id="rename-note-input" class="modal-note-input" placeholder="Add a note to guide the suggestion..." rows="2" maxlength="500"></textarea>
+                    </div>
                 </div>
                 <label for="rename-input" class="visually-hidden">Title</label>
                 <input id="rename-input" class="modal-input" type="text" autocomplete="off" spellcheck="true">

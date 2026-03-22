@@ -9,7 +9,7 @@ namespace FeatherPod.Shared.Services;
 public interface IAiService
 {
     bool IsAvailable { get; }
-    Task<string?> SuggestTitleAsync(string filename, CancellationToken cancellationToken = default);
+    Task<string?> SuggestTitleAsync(string filename, string? note = null, CancellationToken cancellationToken = default);
 }
 
 public class AiService : IAiService
@@ -53,7 +53,7 @@ public class AiService : IAiService
         _logger.LogInformation("AI title suggestions enabled (endpoint: {Endpoint}, deployment: {Deployment})", endpoint, deployment);
     }
 
-    public async Task<string?> SuggestTitleAsync(string filename, CancellationToken cancellationToken = default)
+    public async Task<string?> SuggestTitleAsync(string filename, string? note = null, CancellationToken cancellationToken = default)
     {
         if (_chatClient == null)
         {
@@ -63,12 +63,16 @@ public class AiService : IAiService
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(Timeout);
 
+        var userMessage = string.IsNullOrWhiteSpace(note)
+            ? filename
+            : $"{filename}\n\nUser note: {note}";
+
         try
         {
             var completion = await _chatClient.CompleteChatAsync(
                 [
                     new SystemChatMessage(SystemPrompt),
-                    new UserChatMessage(filename),
+                    new UserChatMessage(userMessage),
                 ],
                 new ChatCompletionOptions { MaxOutputTokenCount = 80, Temperature = 0.3f },
                 timeoutCts.Token);

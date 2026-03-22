@@ -29,6 +29,7 @@ const VELOCITY_OVERRIDES = IS_DEV ? parseVelocityOverrides() : {};
  * @property {string} [duration] - Duration string (e.g. "1:23:45")
  * @property {string} [publishedDate] - ISO date string
  * @property {string} [uploadedAt] - ISO date string
+ * @property {string} [note] - User note for AI title suggestion guidance
  */
 
 /**
@@ -210,6 +211,17 @@ let cachedAllUploads = null;
 
 /** @type {string|null} - Episode ID targeted by the open context menu */
 let contextMenuTargetId = null;
+
+/** @type {boolean} - Whether the note panel is currently open in the rename modal */
+let notePanelOpen = false;
+/** @type {number|null} - Debounce timer for note input triggering re-fetch */
+let noteDebounceTimer = null;
+/** @type {string} - Original title stored when rename modal opens, for dirty detection */
+let renameOriginalTitle = '';
+/** @type {string} - Note value when the note panel was opened, for Escape restoration */
+let notePanelSnapshot = '';
+/** @type {string} - Note value when the modal was opened, for Cancel restoration */
+let noteModalOriginalValue = '';
 
 /** @type {number|null} - Animation ID for title text animation */
 let titleAnimationId = null;
@@ -2494,7 +2506,7 @@ function removeFromLocalHistory(episodeId) {
 /**
  * Fetch a suggested title for an episode. Shows shimmer while loading,
  * populates suggestion text on success, hides suggestion area on failure.
- * Falls back to a filename-parsed title if AI is unavailable.
+ * Sends optional note from the note textarea to guide the AI.
  * @param {string} episodeId - ID of the episode to suggest a title for
  * @returns {Promise<void>}
  */
@@ -2505,14 +2517,33 @@ async function fetchTitleSuggestion(episodeId) {
         return;
     }
 
+    const isRefresh = !container.hasAttribute('hidden');
     container.removeAttribute('hidden');
-    container.classList.add('modal-suggestion--loading');
-    textEl.textContent = '\u00a0';
+
+    if (isRefresh) {
+        // Re-fetch: shimmer only the text, keep buttons and layout stable
+        textEl.classList.add('modal-suggestion-text--loading');
+    } else {
+        // Initial fetch: shimmer the whole container (buttons hidden until loaded)
+        container.classList.add('modal-suggestion--loading');
+        textEl.textContent = '\u00a0';
+    }
+
+    const body = {};
+    const noteInput = document.getElementById('rename-note-input');
+    const noteText = noteInput?.value?.trim();
+    if (noteText) {
+        body.note = noteText;
+    }
 
     try {
         const response = await fetch('/api/feeds/' + FEED_ID + '/episodes/' + episodeId + '/suggest-title', {
             method: 'POST',
-            headers: { 'X-API-Key': apiKey },
+            headers: {
+                'X-API-Key': apiKey,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
         });
 
         const overlay = document.getElementById('rename-modal-overlay');
@@ -2528,15 +2559,18 @@ async function fetchTitleSuggestion(episodeId) {
 
         const data = await response.json();
         container.classList.remove('modal-suggestion--loading');
+        textEl.classList.remove('modal-suggestion-text--loading');
 
         const suggestion = data.suggestedTitle || '';
-        if (!suggestion) {
+        if (!suggestion && !isRefresh) {
             container.setAttribute('hidden', '');
 
             return;
         }
 
-        textEl.textContent = suggestion;
+        if (suggestion) {
+            textEl.textContent = suggestion;
+        }
     } catch {
         const containerEl = document.getElementById('rename-suggestion');
         if (containerEl) {
@@ -2547,7 +2581,8 @@ async function fetchTitleSuggestion(episodeId) {
 
 /**
  * Show the rename modal for an episode.
- * Pre-fills the input with the current title and fires an AI title suggestion.
+ * Pre-fills the input with the current title, sets up note panel state,
+ * disables Save until dirty, and fires an AI title suggestion.
  * @param {string} episodeId - ID of the episode to rename
  */
 function showRenameModal(episodeId) {
@@ -2567,14 +2602,62 @@ function showRenameModal(episodeId) {
         overlay.dataset.episodeId = episodeId;
         overlay.removeAttribute('hidden');
     }
+    if (input && !window.matchMedia('(pointer: coarse)').matches) {
+        input.focus();
+    }
+
+    // Track original title for dirty detection
+    renameOriginalTitle = input?.value?.trim() || '';
+    const saveBtn = document.getElementById('rename-save');
+    if (saveBtn) {
+        saveBtn.disabled = true;
+    }
+
+    // Reset note panel state
+    notePanelOpen = false;
+    if (noteDebounceTimer) {
+        clearTimeout(noteDebounceTimer);
+        noteDebounceTimer = null;
+    }
+
+    const notePanel = document.getElementById('rename-note-panel');
+    if (notePanel) {
+        notePanel.setAttribute('hidden', '');
+    }
+
+    const noteInput = document.getElementById('rename-note-input');
+    noteModalOriginalValue = episode.note || '';
+    if (noteInput) {
+        noteInput.value = noteModalOriginalValue;
+        noteInput.style.height = 'auto';
+    }
+
+    updateNoteButtonState(!!episode.note);
 
     // Fire AI title suggestion (async, non-blocking)
     fetchTitleSuggestion(episodeId);
 }
 
-/** Hide the rename modal and reset the suggestion area. */
-function hideRenameModal() {
+/**
+ * Hide the rename modal and reset the suggestion area.
+ * @param {boolean} [cancel=false] - Whether to discard note changes (Cancel/Escape)
+ */
+function hideRenameModal(cancel) {
     const overlay = document.getElementById('rename-modal-overlay');
+    const episodeId = overlay?.dataset.episodeId;
+
+    if (noteDebounceTimer) {
+        clearTimeout(noteDebounceTimer);
+        noteDebounceTimer = null;
+    }
+
+    if (cancel && episodeId) {
+        // Restore note to what it was when the modal opened
+        saveEpisodeNote(episodeId, noteModalOriginalValue.trim());
+    } else if (notePanelOpen && episodeId) {
+        saveNoteIfChanged(episodeId);
+    }
+
     if (overlay) {
         overlay.setAttribute('hidden', '');
         delete overlay.dataset.episodeId;
@@ -2585,22 +2668,215 @@ function hideRenameModal() {
         suggestion.setAttribute('hidden', '');
         suggestion.classList.remove('modal-suggestion--loading');
     }
+
+    const suggestionText = document.getElementById('rename-suggestion-text');
+    if (suggestionText) {
+        suggestionText.classList.remove('modal-suggestion-text--loading');
+    }
+
+    notePanelOpen = false;
 }
 
 /**
- * Rename an episode via the API and optimistically update the UI.
- * @param {string} episodeId - ID of the episode to rename
+ * Toggle the note panel in the rename modal. When opening, snapshots the note
+ * value and shows the textarea. When closing, saves the note via PATCH if changed.
+ */
+function toggleNotePanel() {
+    if (notePanelOpen) {
+        closeNotePanel(false);
+    } else {
+        openNotePanel();
+    }
+}
+
+/** Open the note panel, snapshotting the current value for Escape restoration. */
+function openNotePanel() {
+    const notePanel = document.getElementById('rename-note-panel');
+    const noteInput = document.getElementById('rename-note-input');
+
+    notePanelSnapshot = noteInput?.value || '';
+    notePanelOpen = true;
+
+    if (notePanel) {
+        notePanel.removeAttribute('hidden');
+    }
+    if (!window.matchMedia('(pointer: coarse)').matches) {
+        noteInput?.focus();
+    }
+    updateNoteButtonState(!!noteInput?.value?.trim());
+}
+
+/**
+ * Close the note panel. If cancelled, restores the original note value and
+ * patches the episode to undo any debounce-persisted changes.
+ * @param {boolean} cancel - Whether to discard changes (Escape)
+ * @param {boolean} [skipSave=false] - Skip saving (caller will handle it)
+ */
+function closeNotePanel(cancel, skipSave) {
+    const overlay = document.getElementById('rename-modal-overlay');
+    const episodeId = overlay?.dataset.episodeId;
+    const notePanel = document.getElementById('rename-note-panel');
+    const noteInput = document.getElementById('rename-note-input');
+
+    if (noteDebounceTimer) {
+        clearTimeout(noteDebounceTimer);
+        noteDebounceTimer = null;
+    }
+
+    notePanelOpen = false;
+
+    if (notePanel) {
+        notePanel.setAttribute('hidden', '');
+    }
+
+    if (cancel && noteInput) {
+        noteInput.value = notePanelSnapshot;
+        if (episodeId) {
+            saveEpisodeNote(episodeId, notePanelSnapshot.trim());
+        }
+    } else if (!skipSave && episodeId) {
+        saveNoteIfChanged(episodeId);
+    }
+
+    updateNoteButtonState(!!noteInput?.value?.trim());
+    updateRenameSaveState();
+
+    if (!window.matchMedia('(pointer: coarse)').matches) {
+        document.getElementById('rename-input')?.focus();
+    }
+}
+
+/**
+ * Save the note for the current episode if it has changed from the stored value.
+ * Reads the note textarea value and compares against historyData.
+ * @param {string} episodeId - Episode ID
+ */
+function saveNoteIfChanged(episodeId) {
+    const noteInput = document.getElementById('rename-note-input');
+    const noteText = noteInput?.value?.trim() || '';
+    const episode = historyData?.find(e => e.id === episodeId);
+    if (episode && noteText !== (episode.note || '')) {
+        saveEpisodeNote(episodeId, noteText);
+    }
+}
+
+/**
+ * Save the note and re-fetch the AI title suggestion for the current episode.
+ * Cancels any pending debounce timer to prevent double fetches.
+ */
+function commitNoteAndRefreshSuggestion() {
+    if (noteDebounceTimer) {
+        clearTimeout(noteDebounceTimer);
+        noteDebounceTimer = null;
+    }
+
+    const overlay = document.getElementById('rename-modal-overlay');
+    const episodeId = overlay?.dataset.episodeId;
+    if (!episodeId) {
+        return;
+    }
+
+    const noteInput = document.getElementById('rename-note-input');
+    if (noteInput) {
+        saveEpisodeNote(episodeId, noteInput.value.trim());
+    }
+    fetchTitleSuggestion(episodeId);
+}
+
+/**
+ * Save episode note via PATCH and update historyData in-place.
+ * Fire-and-forget with console.warn on failure.
+ * @param {string} episodeId - Episode ID
+ * @param {string} note - Note text (empty string to clear)
+ */
+function saveEpisodeNote(episodeId, note) {
+    // Update historyData in-place
+    if (historyData) {
+        const index = historyData.findIndex(e => e.id === episodeId);
+        if (index >= 0) {
+            historyData[index] = { ...historyData[index], note: note || null };
+        }
+    }
+
+    updateNoteButtonState(!!note);
+
+    fetch('/api/feeds/' + FEED_ID + '/episodes/' + episodeId, {
+        method: 'PATCH',
+        headers: {
+            'X-API-Key': apiKey,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ note }),
+    }).catch(err => {
+        console.warn('Failed to save episode note:', err);
+    });
+}
+
+/**
+ * Update the note button's filled icon state based on whether a note exists,
+ * and the highlighted state based on whether the panel is open.
+ * @param {boolean} hasNote - Whether a note is set for the current episode
+ */
+function updateNoteButtonState(hasNote) {
+    const noteBtn = document.getElementById('rename-note');
+    if (noteBtn) {
+        noteBtn.classList.toggle('btn-suggestion-icon--filled', hasNote);
+        noteBtn.classList.toggle('btn-suggestion-icon--active', notePanelOpen);
+        noteBtn.title = hasNote ? 'Edit note' : 'Add note';
+        noteBtn.setAttribute('aria-label', hasNote ? 'Edit note' : 'Add note');
+    }
+}
+
+/**
+ * Auto-resize a textarea to fit its content, up to its CSS max-height.
+ * @param {HTMLTextAreaElement} textarea - The textarea element
+ */
+function autoGrowTextarea(textarea) {
+    textarea.style.height = 'auto';
+    textarea.style.height = textarea.scrollHeight + 'px';
+    textarea.classList.toggle('modal-note-input--scrollable', textarea.scrollHeight > textarea.offsetHeight);
+}
+
+/**
+ * Check if the title or note has changed from the modal's original values
+ * and toggle the Save button accordingly.
+ */
+function updateRenameSaveState() {
+    const input = document.getElementById('rename-input');
+    const noteInput = document.getElementById('rename-note-input');
+    const saveBtn = document.getElementById('rename-save');
+    if (!saveBtn) {
+        return;
+    }
+
+    const titleDirty = input && input.value.trim() !== renameOriginalTitle;
+    const noteDirty = noteInput && noteInput.value.trim() !== noteModalOriginalValue.trim();
+    saveBtn.disabled = !titleDirty && !noteDirty;
+}
+
+/**
+ * Save episode changes (title and/or note) via the API and optimistically update the UI.
+ * @param {string} episodeId - ID of the episode to update
  * @param {string} newTitle - New title for the episode
  */
-async function renameEpisode(episodeId, newTitle) {
+async function saveEpisodeChanges(episodeId, newTitle) {
     const trimmed = newTitle.trim();
     if (!trimmed) {
         return;
     }
 
-    // Check if title is unchanged
-    const episode = historyData?.find(e => e.id === episodeId);
-    if (episode && (episode.title || episode.fileName) === trimmed) {
+    const patchBody = {};
+    if (trimmed !== renameOriginalTitle) {
+        patchBody.title = trimmed;
+    }
+
+    const noteInput = document.getElementById('rename-note-input');
+    const noteText = noteInput?.value?.trim() || '';
+    if (noteText !== noteModalOriginalValue.trim()) {
+        patchBody.note = noteText;
+    }
+
+    if (Object.keys(patchBody).length === 0) {
         hideRenameModal();
 
         return;
@@ -2610,11 +2886,11 @@ async function renameEpisode(episodeId, newTitle) {
         const response = await fetch('/api/feeds/' + FEED_ID + '/episodes/' + episodeId, {
             method: 'PATCH',
             headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title: trimmed })
+            body: JSON.stringify(patchBody)
         });
 
         if (!response.ok) {
-            console.warn('Failed to rename episode:', response.status);
+            console.warn('Failed to save episode:', response.status);
 
             return;
         }
@@ -2625,36 +2901,39 @@ async function renameEpisode(episodeId, newTitle) {
         if (historyData) {
             const index = historyData.findIndex(e => e.id === episodeId);
             if (index >= 0) {
-                historyData[index] = { ...historyData[index], title: updated.title };
+                historyData[index] = { ...historyData[index], title: updated.title, note: updated.note || null };
             }
         }
 
-        // Update localStorage history
-        updateLocalHistoryTitle(episodeId, updated.title);
+        if (patchBody.title) {
+            // Update localStorage history
+            updateLocalHistoryTitle(episodeId, updated.title);
 
-        // Invalidate caches
-        cachedBrowserUploads = null;
-        cachedAllUploads = null;
+            // Invalidate caches
+            cachedBrowserUploads = null;
+            cachedAllUploads = null;
 
-        // Update the DOM item directly
-        const item = document.querySelector('#history-list .upload-item[data-id="' + episodeId + '"] .upload-title');
-        if (item) {
-            item.textContent = updated.title;
-        }
+            // Update the DOM item directly
+            const item = document.querySelector('#history-list .upload-item[data-id="' + episodeId + '"] .upload-title');
+            if (item) {
+                item.textContent = updated.title;
+            }
 
-        // Update info card if this is the selected episode
-        if (historySelectedId === episodeId && historyData) {
-            const ep = historyData.find(e => e.id === episodeId);
-            if (ep) {
-                updateHistoryInfoCard(ep);
+            // Update info card if this is the selected episode
+            if (historySelectedId === episodeId && historyData) {
+                const ep = historyData.find(e => e.id === episodeId);
+                if (ep) {
+                    updateHistoryInfoCard(ep);
+                }
             }
         }
     } catch (err) {
-        console.warn('Error renaming episode:', err);
+        console.warn('Error saving episode:', err);
 
         return;
     }
 
+    notePanelOpen = false;
     hideRenameModal();
 }
 
@@ -2687,7 +2966,7 @@ function trapFocus(e, container) {
         return;
     }
 
-    const focusable = container.querySelectorAll('input, button:not([hidden])');
+    const focusable = container.querySelectorAll('input, textarea, button:not([hidden])');
     if (focusable.length === 0) {
         return;
     }
@@ -5169,12 +5448,16 @@ document.getElementById('history-info-filename')?.addEventListener('click', func
 
 // Global keyboard shortcuts for history panel
 document.addEventListener('keydown', (e) => {
-    // Escape priority: modal > context menu > history panel
+    // Escape priority: note panel > modal > context menu > history panel
     if (e.key === 'Escape') {
         const renameOverlay = document.getElementById('rename-modal-overlay');
         if (renameOverlay && !renameOverlay.hidden) {
             e.preventDefault();
-            hideRenameModal();
+            if (notePanelOpen) {
+                closeNotePanel(true);
+            } else {
+                hideRenameModal(true);
+            }
 
             return;
         }
@@ -5335,33 +5618,62 @@ document.getElementById('delete-confirm')?.addEventListener('click', () => {
 });
 
 // Rename modal handlers
-document.getElementById('rename-cancel')?.addEventListener('click', hideRenameModal);
+document.getElementById('rename-cancel')?.addEventListener('click', () => hideRenameModal(true));
 document.getElementById('rename-save')?.addEventListener('click', () => {
     const overlay = document.getElementById('rename-modal-overlay');
     const episodeId = overlay?.dataset.episodeId;
     const input = document.getElementById('rename-input');
     if (episodeId && input) {
-        renameEpisode(episodeId, input.value);
+        saveEpisodeChanges(episodeId, input.value);
     }
 });
 document.getElementById('rename-input')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
         e.preventDefault();
-        document.getElementById('rename-save')?.click();
+        const saveBtn = document.getElementById('rename-save');
+        if (saveBtn && !saveBtn.disabled) {
+            saveBtn.click();
+        }
     }
 });
+document.getElementById('rename-input')?.addEventListener('input', updateRenameSaveState);
 document.getElementById('rename-accept')?.addEventListener('click', () => {
     const textEl = document.getElementById('rename-suggestion-text');
     const input = document.getElementById('rename-input');
     if (textEl && input && textEl.textContent.trim()) {
         input.value = textEl.textContent.trim();
+        updateRenameSaveState();
+    }
+});
+
+// Note button and panel handlers
+document.getElementById('rename-note')?.addEventListener('click', toggleNotePanel);
+document.getElementById('rename-note-input')?.addEventListener('input', function() {
+    autoGrowTextarea(this);
+    updateNoteButtonState(!!this.value.trim());
+    updateRenameSaveState();
+
+    // Debounce: save note and re-fetch suggestion after 2s idle
+    if (noteDebounceTimer) {
+        clearTimeout(noteDebounceTimer);
+    }
+    noteDebounceTimer = setTimeout(() => {
+        noteDebounceTimer = null;
+        commitNoteAndRefreshSuggestion();
+    }, 2000);
+});
+document.getElementById('rename-note-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        closeNotePanel(false, true);
+        commitNoteAndRefreshSuggestion();
     }
 });
 
 // Modal overlay click-outside-to-close
 document.getElementById('rename-modal-overlay')?.addEventListener('click', (e) => {
     if (e.target === e.currentTarget) {
-        hideRenameModal();
+        hideRenameModal(true);
     }
 });
 document.getElementById('delete-confirm-overlay')?.addEventListener('click', (e) => {

@@ -1244,6 +1244,270 @@ public sealed class IntegrationTests : IDisposable
         // Assert
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
+
+    [AzuriteFact]
+    public async Task SuggestTitle_WithNoteInBody_ShouldReturn200()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "my_test_file.mp3");
+        content.Add(new StringContent("Test"), "title");
+
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var postResponse = await _client.SendAsync(postRequest);
+        postResponse.EnsureSuccessStatusCode();
+
+        var createdContent = await postResponse.Content.ReadAsStringAsync();
+        var idMatch = System.Text.RegularExpressions.Regex.Match(createdContent, @"""id"":""([^""]+)""");
+        var episodeId = idMatch.Groups[1].Value;
+
+        // Act
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes/{episodeId}/suggest-title");
+        request.Content = new StringContent("""{"note":"Use title case"}""", System.Text.Encoding.UTF8, "application/json");
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var responseContent = await response.Content.ReadAsStringAsync();
+        Assert.Contains("suggestedTitle", responseContent);
+    }
+
+    [AzuriteFact]
+    public async Task SuggestTitle_WithEmptyBody_ShouldReturn200()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "empty_body_test.mp3");
+        content.Add(new StringContent("Test"), "title");
+
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var postResponse = await _client.SendAsync(postRequest);
+        postResponse.EnsureSuccessStatusCode();
+
+        var createdContent = await postResponse.Content.ReadAsStringAsync();
+        var idMatch = System.Text.RegularExpressions.Regex.Match(createdContent, @"""id"":""([^""]+)""");
+        var episodeId = idMatch.Groups[1].Value;
+
+        // Act
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes/{episodeId}/suggest-title");
+        request.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [AzuriteFact]
+    public async Task SuggestTitle_WithNoBody_ShouldReturn200()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "no_body_test.mp3");
+        content.Add(new StringContent("Test"), "title");
+
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var postResponse = await _client.SendAsync(postRequest);
+        postResponse.EnsureSuccessStatusCode();
+
+        var createdContent = await postResponse.Content.ReadAsStringAsync();
+        var idMatch = System.Text.RegularExpressions.Regex.Match(createdContent, @"""id"":""([^""]+)""");
+        var episodeId = idMatch.Groups[1].Value;
+
+        // Act - no body, no content-type (like CLI does)
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes/{episodeId}/suggest-title");
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var response = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [AzuriteFact]
+    public async Task PatchEpisode_WithNote_ShouldUpdateNote()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "note-test.mp3");
+        content.Add(new StringContent("Note Test"), "title");
+
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var postResponse = await _client.SendAsync(postRequest);
+        postResponse.EnsureSuccessStatusCode();
+
+        var createdContent = await postResponse.Content.ReadAsStringAsync();
+        var idMatch = System.Text.RegularExpressions.Regex.Match(createdContent, @"""id"":""([^""]+)""");
+        var episodeId = idMatch.Groups[1].Value;
+
+        // Act - set note only (no title change)
+        var patchRequest = new HttpRequestMessage(HttpMethod.Patch, $"/api/feeds/{TestFeedId}/episodes/{episodeId}");
+        patchRequest.Content = new StringContent("""{"note": "Use title case"}""", System.Text.Encoding.UTF8, "application/json");
+        patchRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var patchResponse = await _client.SendAsync(patchRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, patchResponse.StatusCode);
+        var patchContent = await patchResponse.Content.ReadAsStringAsync();
+        Assert.Contains("Use title case", patchContent);
+        Assert.Contains("Note Test", patchContent);
+    }
+
+    [AzuriteFact]
+    public async Task PatchEpisode_WithTitleAndNote_ShouldUpdateBoth()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "both-test.mp3");
+        content.Add(new StringContent("Original"), "title");
+
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var postResponse = await _client.SendAsync(postRequest);
+        postResponse.EnsureSuccessStatusCode();
+
+        var createdContent = await postResponse.Content.ReadAsStringAsync();
+        var idMatch = System.Text.RegularExpressions.Regex.Match(createdContent, @"""id"":""([^""]+)""");
+        var episodeId = idMatch.Groups[1].Value;
+
+        // Act
+        var patchRequest = new HttpRequestMessage(HttpMethod.Patch, $"/api/feeds/{TestFeedId}/episodes/{episodeId}");
+        patchRequest.Content = new StringContent("""{"title": "New Title", "note": "Some context"}""", System.Text.Encoding.UTF8, "application/json");
+        patchRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var patchResponse = await _client.SendAsync(patchRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, patchResponse.StatusCode);
+        var patchContent = await patchResponse.Content.ReadAsStringAsync();
+        Assert.Contains("New Title", patchContent);
+        Assert.Contains("Some context", patchContent);
+    }
+
+    [AzuriteFact]
+    public async Task PatchEpisode_ClearNote_ShouldRemoveNote()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "clear-note-test.mp3");
+        content.Add(new StringContent("Title"), "title");
+
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var postResponse = await _client.SendAsync(postRequest);
+        postResponse.EnsureSuccessStatusCode();
+
+        var createdContent = await postResponse.Content.ReadAsStringAsync();
+        var idMatch = System.Text.RegularExpressions.Regex.Match(createdContent, @"""id"":""([^""]+)""");
+        var episodeId = idMatch.Groups[1].Value;
+
+        // Set a note first
+        var setRequest = new HttpRequestMessage(HttpMethod.Patch, $"/api/feeds/{TestFeedId}/episodes/{episodeId}");
+        setRequest.Content = new StringContent("""{"note": "Temporary note"}""", System.Text.Encoding.UTF8, "application/json");
+        setRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        await _client.SendAsync(setRequest);
+
+        // Act - clear note with empty string
+        var clearRequest = new HttpRequestMessage(HttpMethod.Patch, $"/api/feeds/{TestFeedId}/episodes/{episodeId}");
+        clearRequest.Content = new StringContent("""{"note": ""}""", System.Text.Encoding.UTF8, "application/json");
+        clearRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var clearResponse = await _client.SendAsync(clearRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, clearResponse.StatusCode);
+        var clearContent = await clearResponse.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("Temporary note", clearContent);
+    }
+
+    [AzuriteFact]
+    public async Task PatchEpisode_ShouldReturn400_WhenBodyEmpty()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        // Act
+        var patchRequest = new HttpRequestMessage(HttpMethod.Patch, $"/api/feeds/{TestFeedId}/episodes/someId");
+        patchRequest.Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
+        patchRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var response = await _client.SendAsync(patchRequest);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    [AzuriteFact]
+    public async Task PatchEpisode_TitleOnlyShouldNotAffectNote()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "preserve-note-test.mp3");
+        content.Add(new StringContent("Original"), "title");
+
+        var postRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        postRequest.Content = content;
+        postRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var postResponse = await _client.SendAsync(postRequest);
+        postResponse.EnsureSuccessStatusCode();
+
+        var createdContent = await postResponse.Content.ReadAsStringAsync();
+        var idMatch = System.Text.RegularExpressions.Regex.Match(createdContent, @"""id"":""([^""]+)""");
+        var episodeId = idMatch.Groups[1].Value;
+
+        // Set a note
+        var noteRequest = new HttpRequestMessage(HttpMethod.Patch, $"/api/feeds/{TestFeedId}/episodes/{episodeId}");
+        noteRequest.Content = new StringContent("""{"note": "Important context"}""", System.Text.Encoding.UTF8, "application/json");
+        noteRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        await _client.SendAsync(noteRequest);
+
+        // Act - update title only (no note field)
+        var titleRequest = new HttpRequestMessage(HttpMethod.Patch, $"/api/feeds/{TestFeedId}/episodes/{episodeId}");
+        titleRequest.Content = new StringContent("""{"title": "New Title"}""", System.Text.Encoding.UTF8, "application/json");
+        titleRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var titleResponse = await _client.SendAsync(titleRequest);
+
+        // Assert - note should be preserved
+        Assert.Equal(HttpStatusCode.OK, titleResponse.StatusCode);
+        var titleContent = await titleResponse.Content.ReadAsStringAsync();
+        Assert.Contains("New Title", titleContent);
+        Assert.Contains("Important context", titleContent);
+    }
 }
 
 internal class FeatherPodWebApplicationFactory : WebApplicationFactory<FeatherPod.Server.ServerAssemblyMarker>
