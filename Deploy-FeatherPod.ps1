@@ -39,6 +39,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$script:publishPath = Join-Path $PSScriptRoot "publish"
+$script:funcPublishPath = Join-Path $PSScriptRoot "publish-func"
+$script:zipPath = Join-Path $PSScriptRoot "deploy.zip"
+
 function Main {
     param(
         [string]$Environment,
@@ -58,50 +62,122 @@ function Main {
         throw "Deployment aborted: uncommitted changes detected."
     }
 
-    if ($Environment -eq "All") {
-        $environments = @("Test", "Prod")
-        foreach ($env in $environments) { Deploy-Environment -TargetEnvironment $env -Infrastructure:$Infrastructure }
-        Write-Host "`n======================================" -ForegroundColor Green
-        Write-Host "  All deployments completed!" -ForegroundColor Green
-        Write-Host "======================================`n" -ForegroundColor Green
+    $environments = if ($Environment -eq "All") { @("Test", "Prod") } else { @($Environment) }
+
+    $needsBuild = -not $Infrastructure
+
+    try {
+        if ($needsBuild) {
+            Build-Artifacts
+        }
+
+        foreach ($env in $environments) {
+            Deploy-Environment -TargetEnvironment $env -Infrastructure:$Infrastructure
+        }
+
+        if ($environments.Count -gt 1) {
+            Write-Host "`n======================================" -ForegroundColor Green
+            Write-Host "  All deployments completed!" -ForegroundColor Green
+            Write-Host "======================================`n" -ForegroundColor Green
+        }
     }
-    else {
-        Deploy-Environment -TargetEnvironment $Environment -Infrastructure:$Infrastructure
+    finally {
+        if ($needsBuild) {
+            Remove-Artifacts
+        }
     }
 }
 
-# Deployment function for a single environment
+# Build solution, publish projects, and create deployment packages
+function Build-Artifacts {
+    Write-Host "`n======================================" -ForegroundColor Cyan
+    Write-Host "  Building deployment artifacts" -ForegroundColor Cyan
+    Write-Host "======================================`n" -ForegroundColor Cyan
+
+    # 1. Build solution
+    Write-Host "Building solution...`n" -ForegroundColor Cyan
+    dotnet build -c Release
+    if ($LASTEXITCODE -ne 0) {
+        throw "dotnet build failed with exit code $LASTEXITCODE"
+    }
+
+    # 2. Publish NativeAOT bridge (side effect for local CLI use)
+    $bridgeProjectPath = Join-Path $PSScriptRoot "FeatherPod.Bridge\FeatherPod.Bridge.csproj"
+    Write-Host "`nPublishing FeatherPod.Bridge (NativeAOT)..." -ForegroundColor Cyan
+    dotnet publish $bridgeProjectPath -c Release -p:DebugType=None --no-restore
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Bridge publish failed (non-fatal) - context menu may not work" -ForegroundColor Yellow
+    }
+
+    # 3. Publish App Service
+    $serverProjectPath = Join-Path $PSScriptRoot "FeatherPod.Server\FeatherPod.Server.csproj"
+    Write-Host "`nPublishing App Service...`n" -ForegroundColor Cyan
+    dotnet publish $serverProjectPath -c Release -o $script:publishPath --no-build
+    if ($LASTEXITCODE -ne 0) {
+        throw "dotnet publish (Server) failed with exit code $LASTEXITCODE"
+    }
+
+    # 4. Create App Service zip package
+    Write-Host "`nCreating deployment package..." -ForegroundColor Cyan
+    if (Test-Path $script:zipPath) {
+        Remove-Item $script:zipPath -Force
+    }
+
+    Push-Location $script:publishPath
+    try {
+        Compress-Archive -Path * -DestinationPath $script:zipPath -Force
+    }
+    finally {
+        Pop-Location
+    }
+
+    # 5. Publish Function App
+    $functionsProjectPath = Join-Path $PSScriptRoot "FeatherPod.Functions\FeatherPod.Functions.csproj"
+    Write-Host "`nPublishing Function App...`n" -ForegroundColor Cyan
+    dotnet publish $functionsProjectPath -c Release -o $script:funcPublishPath --no-build
+    if ($LASTEXITCODE -ne 0) {
+        throw "dotnet publish (Functions) failed with exit code $LASTEXITCODE"
+    }
+
+    Write-Host "`n======================================" -ForegroundColor Green
+    Write-Host "  Build complete" -ForegroundColor Green
+    Write-Host "======================================" -ForegroundColor Green
+}
+
+# Clean up build artifacts
+function Remove-Artifacts {
+    Write-Host "`nCleaning up...`n" -ForegroundColor Cyan
+
+    if (Test-Path $script:zipPath) {
+        Remove-Item $script:zipPath -Force
+        Write-Host "Removed $script:zipPath" -ForegroundColor Gray
+    }
+
+    if (Test-Path $script:publishPath) {
+        Remove-Item $script:publishPath -Recurse -Force
+        Write-Host "Removed $script:publishPath" -ForegroundColor Gray
+    }
+
+    if (Test-Path $script:funcPublishPath) {
+        Remove-Item $script:funcPublishPath -Recurse -Force
+        Write-Host "Removed $script:funcPublishPath" -ForegroundColor Gray
+    }
+
+    Write-Host "`nCleanup complete.`n" -ForegroundColor Green
+}
+
+# Deploy pre-built artifacts to a single environment
 function Deploy-Environment {
     param(
         [string]$TargetEnvironment,
         [switch]$Infrastructure
     )
 
-    $ResourceGroup = switch ($TargetEnvironment) {
-        "Test" { "featherpod-test-rg" }
-        "Prod" { "featherpod-rg" }
-    }
-
-    $AppName = switch ($TargetEnvironment) {
-        "Test" { "featherpod-test" }
-        "Prod" { "featherpod" }
-    }
-
-    $FunctionAppName = switch ($TargetEnvironment) {
-        "Test" { "featherpod-test-func" }
-        "Prod" { "featherpod-func" }
-    }
-
-    $ParametersFile = switch ($TargetEnvironment) {
-        "Test" { "parameters-test.json" }
-        "Prod" { "parameters.json" }
-    }
-
-    $serverProjectPath = Join-Path $PSScriptRoot "FeatherPod.Server\FeatherPod.Server.csproj"
-    $functionsProjectPath = Join-Path $PSScriptRoot "FeatherPod.Functions\FeatherPod.Functions.csproj"
-    $publishPath = Join-Path $PSScriptRoot "publish"
-    $funcPublishPath = Join-Path $PSScriptRoot "publish-func"
-    $zipPath = Join-Path $PSScriptRoot "deploy.zip"
+    $suffix = if ($TargetEnvironment -eq "Test") { "-test" } else { "" }
+    $AppName          = "featherpod$suffix"
+    $ResourceGroup    = "featherpod$suffix-rg"
+    $FunctionAppName  = "featherpod$suffix-func"
+    $ParametersFile   = "parameters$suffix.json"
 
     Write-Host "`n======================================" -ForegroundColor Magenta
     Write-Host "  Deploying to: $TargetEnvironment" -ForegroundColor Magenta
@@ -113,145 +189,78 @@ function Deploy-Environment {
     }
     Write-Host "======================================`n" -ForegroundColor Magenta
 
-    try {
-        # 1. Deploy infrastructure (if requested)
-        if ($Infrastructure) {
-            Write-Host "Deploying infrastructure via Bicep...`n" -ForegroundColor Cyan
+    # Deploy infrastructure (if requested)
+    if ($Infrastructure) {
+        Write-Host "Deploying infrastructure via Bicep...`n" -ForegroundColor Cyan
 
-            $secretsFile = Join-Path $PSScriptRoot "infrastructure\parameters.secrets.json"
-            if (-not (Test-Path $secretsFile)) {
-                throw "Secrets file not found: $secretsFile. Create it with internalApiKey parameter."
-            }
-
-            az deployment group create `
-                --resource-group $ResourceGroup `
-                --template-file (Join-Path $PSScriptRoot "infrastructure\main.bicep") `
-                --parameters (Join-Path $PSScriptRoot "infrastructure\$ParametersFile") `
-                --parameters $secretsFile `
-                --output none
-            if ($LASTEXITCODE -ne 0) {
-                throw "Bicep deployment failed with exit code $LASTEXITCODE"
-            }
-            Write-Host "`nInfrastructure deployment complete.`n" -ForegroundColor Green
-
-            return
+        $secretsFile = Join-Path $PSScriptRoot "infrastructure\parameters.secrets.json"
+        if (-not (Test-Path $secretsFile)) {
+            throw "Secrets file not found: $secretsFile. Create it with internalApiKey parameter."
         }
 
-        # 2. Build solution
-        Write-Host "Building solution...`n" -ForegroundColor Cyan
-        dotnet build -c Release
+        az deployment group create `
+            --resource-group $ResourceGroup `
+            --template-file (Join-Path $PSScriptRoot "infrastructure\main.bicep") `
+            --parameters (Join-Path $PSScriptRoot "infrastructure\$ParametersFile") `
+            --parameters $secretsFile `
+            --output none
         if ($LASTEXITCODE -ne 0) {
-            throw "dotnet build failed with exit code $LASTEXITCODE"
+            throw "Bicep deployment failed with exit code $LASTEXITCODE"
         }
+        Write-Host "`nInfrastructure deployment complete.`n" -ForegroundColor Green
 
-        # 2b. Publish NativeAOT bridge (side effect for local CLI use)
-        $bridgeProjectPath = Join-Path $PSScriptRoot "FeatherPod.Bridge\FeatherPod.Bridge.csproj"
-        Write-Host "`nPublishing FeatherPod.Bridge (NativeAOT)..." -ForegroundColor Cyan
-        dotnet publish $bridgeProjectPath -c Release -p:DebugType=None --no-restore
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "Bridge publish failed (non-fatal) - context menu may not work" -ForegroundColor Yellow
-        }
-
-        # 3. Deploy App Service
-        Write-Host "`nPublishing App Service...`n" -ForegroundColor Cyan
-        dotnet publish $serverProjectPath -c Release -o $publishPath --no-build
-        if ($LASTEXITCODE -ne 0) {
-            throw "dotnet publish (Server) failed with exit code $LASTEXITCODE"
-        }
-
-        Write-Host "`nCreating deployment package..." -ForegroundColor Cyan
-        if (Test-Path $zipPath) {
-            Remove-Item $zipPath -Force
-        }
-
-        Push-Location $publishPath
-        try {
-            Compress-Archive -Path * -DestinationPath $zipPath -Force
-        }
-        finally {
-            Pop-Location
-        }
-
-        Write-Host "Deploying to Azure App Service...`n" -ForegroundColor Cyan
-        az webapp deploy --resource-group $ResourceGroup --name $AppName --src-path $zipPath --type zip --clean true --async true
-        if ($LASTEXITCODE -ne 0) {
-            throw "az webapp deploy failed with exit code $LASTEXITCODE"
-        }
-
-        # Give the app a moment to start, then verify it's running
-        Write-Host "Waiting for App Service to start..." -ForegroundColor Yellow
-        Start-Sleep -Seconds 30
-        $versionUrl = "https://$AppName.azurewebsites.net/api/version"
-        $maxAttempts = 10
-        $attempt = 0
-        while ($attempt -lt $maxAttempts) {
-            $attempt++
-            try {
-                $response = Invoke-RestMethod -Uri $versionUrl -TimeoutSec 10 -ErrorAction Stop
-                Write-Host "App Service is running: v$($response.version)" -ForegroundColor Green
-                break
-            }
-            catch {
-                if ($attempt -eq $maxAttempts) {
-                    Write-Host "Warning: App Service health check timed out. It may still be starting." -ForegroundColor Yellow
-                }
-                else {
-                    Write-Host "  Attempt $attempt/$maxAttempts - waiting..." -ForegroundColor Gray
-                    Start-Sleep -Seconds 15
-                }
-            }
-        }
-
-        # 4. Deploy Function App
-        Write-Host "`nPublishing Function App...`n" -ForegroundColor Cyan
-        dotnet publish $functionsProjectPath -c Release -o $funcPublishPath --no-build
-        if ($LASTEXITCODE -ne 0) {
-            throw "dotnet publish (Functions) failed with exit code $LASTEXITCODE"
-        }
-
-        Write-Host "Deploying to Azure Function App (Flex Consumption)...`n" -ForegroundColor Cyan
-        Push-Location $funcPublishPath
-        try {
-            # Flex Consumption: runtime is configured via functionAppConfig in Bicep, not func CLI
-            # --no-build: we publish pre-built binaries, skip remote build
-            func azure functionapp publish $FunctionAppName --dotnet-isolated --no-build
-            if ($LASTEXITCODE -ne 0) {
-                throw "func azure functionapp publish failed with exit code $LASTEXITCODE"
-            }
-        }
-        finally {
-            Pop-Location
-        }
-
-        Write-Host "`nDeployment successful!`n" -ForegroundColor Green
-        Write-Host "App Service URL: https://$AppName.azurewebsites.net" -ForegroundColor Yellow
-        Write-Host "Function App URL: https://$FunctionAppName.azurewebsites.net" -ForegroundColor Yellow
+        return
     }
-    catch {
-        Write-Error "Deployment to $TargetEnvironment failed: $_"
-        throw
+
+    # Deploy App Service
+    Write-Host "Deploying to Azure App Service...`n" -ForegroundColor Cyan
+    az webapp deploy --resource-group $ResourceGroup --name $AppName --src-path $script:zipPath --type zip --clean true --async true
+    if ($LASTEXITCODE -ne 0) {
+        throw "az webapp deploy failed with exit code $LASTEXITCODE"
+    }
+
+    # Give the app a moment to start, then verify it's running
+    Write-Host "Waiting for App Service to start..." -ForegroundColor Yellow
+    Start-Sleep -Seconds 30
+    $versionUrl = "https://$AppName.azurewebsites.net/api/version"
+    $maxAttempts = 10
+    $attempt = 0
+    while ($attempt -lt $maxAttempts) {
+        $attempt++
+        try {
+            $response = Invoke-RestMethod -Uri $versionUrl -TimeoutSec 10 -ErrorAction Stop
+            Write-Host "App Service is running: v$($response.version)" -ForegroundColor Green
+            break
+        }
+        catch {
+            if ($attempt -eq $maxAttempts) {
+                Write-Host "Warning: App Service health check timed out. It may still be starting." -ForegroundColor Yellow
+            }
+            else {
+                Write-Host "  Attempt $attempt/$maxAttempts - waiting..." -ForegroundColor Gray
+                Start-Sleep -Seconds 15
+            }
+        }
+    }
+
+    # Deploy Function App
+    Write-Host "`nDeploying to Azure Function App (Flex Consumption)...`n" -ForegroundColor Cyan
+    Push-Location $script:funcPublishPath
+    try {
+        # Flex Consumption: runtime is configured via functionAppConfig in Bicep, not func CLI
+        # --no-build: we publish pre-built binaries, skip remote build
+        func azure functionapp publish $FunctionAppName --dotnet-isolated --no-build
+        if ($LASTEXITCODE -ne 0) {
+            throw "func azure functionapp publish failed with exit code $LASTEXITCODE"
+        }
     }
     finally {
-        # Clean up
-        Write-Host "`nCleaning up...`n" -ForegroundColor Cyan
-
-        if (Test-Path $zipPath) {
-            Remove-Item $zipPath -Force
-            Write-Host "Removed $zipPath" -ForegroundColor Gray
-        }
-
-        if (Test-Path $publishPath) {
-            Remove-Item $publishPath -Recurse -Force
-            Write-Host "Removed $publishPath" -ForegroundColor Gray
-        }
-
-        if (Test-Path $funcPublishPath) {
-            Remove-Item $funcPublishPath -Recurse -Force
-            Write-Host "Removed $funcPublishPath" -ForegroundColor Gray
-        }
-
-        Write-Host "`nCleanup complete.`n" -ForegroundColor Green
+        Pop-Location
     }
+
+    Write-Host "`nDeployment to $TargetEnvironment successful!`n" -ForegroundColor Green
+    Write-Host "App Service URL: https://$AppName.azurewebsites.net" -ForegroundColor Yellow
+    Write-Host "Function App URL: https://$FunctionAppName.azurewebsites.net" -ForegroundColor Yellow
 }
 
 Main @PSBoundParameters
