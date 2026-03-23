@@ -2,6 +2,8 @@ using FeatherPod.Server.Services;
 using FeatherPod.Shared.Models;
 using Microsoft.AspNetCore.SignalR;
 
+using static FeatherPod.Server.Validation.SecurityHelpers;
+
 namespace FeatherPod.Server.Hubs;
 
 /// <summary>
@@ -25,7 +27,7 @@ public class ProgressHub : Hub
         if (!string.IsNullOrEmpty(_internalKey))
         {
             var providedKey = Context.GetHttpContext()?.Request.Query["key"].FirstOrDefault();
-            if (providedKey != _internalKey)
+            if (!ConstantTimeEquals(providedKey, _internalKey))
             {
                 Context.Abort();
 

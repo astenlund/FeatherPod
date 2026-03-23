@@ -1,7 +1,7 @@
-using System.Text.Json;
-using FeatherPod.Shared.Models;
+using FeatherPod.Server.Models;
 using FeatherPod.Server.Services;
 using FeatherPod.Server.Validation;
+using FeatherPod.Shared.Models;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FeatherPod.Server.Controllers;
@@ -98,44 +98,36 @@ public class UsersController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> CreateUser([FromBody] JsonElement body)
+    public async Task<IActionResult> CreateUser([FromBody] CreateUserRequest request)
     {
-        if (!body.TryGetProperty("id", out var idElement) || string.IsNullOrWhiteSpace(idElement.GetString()))
+        if (string.IsNullOrWhiteSpace(request.Id))
         {
             return BadRequest(new { error = "User ID is required" });
         }
 
-        var userId = idElement.GetString()!;
-        if (!InputValidation.IsValidUserId(userId))
+        if (!InputValidation.IsValidUserId(request.Id))
         {
-            return BadRequest(new { error = InputValidation.GetUserIdValidationError(userId) });
+            return BadRequest(new { error = InputValidation.GetUserIdValidationError(request.Id) });
         }
 
-        if (!body.TryGetProperty("name", out var nameElement) || string.IsNullOrWhiteSpace(nameElement.GetString()))
+        if (string.IsNullOrWhiteSpace(request.Name))
         {
             return BadRequest(new { error = "Name is required" });
         }
 
-        // Email is optional
-        body.TryGetProperty("email", out var emailElement);
-        var email = emailElement.ValueKind == JsonValueKind.String ? emailElement.GetString() : null;
-        if (string.IsNullOrWhiteSpace(email)) email = null;
+        var email = string.IsNullOrWhiteSpace(request.Email) ? null : request.Email;
 
-        if (!body.TryGetProperty("role", out var roleElement) || !Enum.TryParse<UserRole>(roleElement.GetString(), true, out var role))
+        if (!Enum.TryParse<UserRole>(request.Role, true, out var role))
         {
             return BadRequest(new { error = "Valid role is required (Admin or FeedOwner)" });
         }
 
-        var ownedFeeds = new List<string>();
-        if (body.TryGetProperty("ownedFeeds", out var ownedFeedsElement) && ownedFeedsElement.ValueKind == JsonValueKind.Array)
-        {
-            ownedFeeds = ownedFeedsElement.EnumerateArray().Select(e => e.GetString() ?? "").Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
-        }
+        var ownedFeeds = request.OwnedFeeds?.Where(s => !string.IsNullOrWhiteSpace(s)).ToList() ?? [];
 
         var user = new User
         {
-            Id = userId,
-            Name = nameElement.GetString()!,
+            Id = request.Id,
+            Name = request.Name,
             Email = email,
             Role = role,
             OwnedFeeds = ownedFeeds,
@@ -213,14 +205,14 @@ public class UsersController : ControllerBase
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
-    public async Task<IActionResult> GrantFeedOwnership(string userId, [FromBody] JsonElement body)
+    public async Task<IActionResult> GrantFeedOwnership(string userId, [FromBody] GrantFeedOwnershipRequest request)
     {
-        if (!body.TryGetProperty("feedId", out var feedIdElement) || string.IsNullOrWhiteSpace(feedIdElement.GetString()))
+        if (string.IsNullOrWhiteSpace(request.FeedId))
         {
             return BadRequest(new { error = "feedId is required in request body" });
         }
 
-        var feedId = feedIdElement.GetString()!;
+        var feedId = request.FeedId;
         var granted = await _userService.GrantFeedOwnershipAsync(userId, feedId);
 
         if (!granted)

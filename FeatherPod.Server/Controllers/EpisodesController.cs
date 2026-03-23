@@ -1,7 +1,8 @@
 using System.Text.Json;
-using FeatherPod.Shared.Models;
+using FeatherPod.Server.Models;
 using FeatherPod.Server.Services;
 using FeatherPod.Server.Validation;
+using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -163,7 +164,7 @@ public class EpisodesController : ControllerBase
                     : Task.FromResult<string?>(null);
 
                 await Task.WhenAll(blobUploadTask, aiTitleTask);
-                var aiTitle = aiTitleTask.Result;
+                var aiTitle = await aiTitleTask;
                 var effectiveTitle = aiTitle ?? (string.IsNullOrWhiteSpace(title) ? EpisodeService.ParseTitleFromFilename(file.FileName) : title);
 
                 // Queue the normalization job first, then create status entry
@@ -325,7 +326,7 @@ public class EpisodesController : ControllerBase
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> SuggestTitle(string feedId, string id)
+    public async Task<IActionResult> SuggestTitle(string feedId, string id, [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] SuggestTitleRequest? request)
     {
         if (!_aiService.IsAvailable)
         {
@@ -349,19 +350,12 @@ public class EpisodesController : ControllerBase
             return NotFound(new { error = $"Episode '{id}' not found in feed '{feedId}'" });
         }
 
-        // Read optional note from request body, fall back to stored episode note
-        string? note = episode.Note;
-        if (Request.ContentType?.Contains("application/json", StringComparison.OrdinalIgnoreCase) == true)
+        // Use note from request body if provided, otherwise fall back to stored episode note
+        var note = episode.Note;
+        var requestNote = request?.Note?.Trim();
+        if (!string.IsNullOrEmpty(requestNote))
         {
-            using var doc = await JsonDocument.ParseAsync(Request.Body, cancellationToken: HttpContext.RequestAborted);
-            if (doc.RootElement.TryGetProperty("note", out var noteElement) && noteElement.ValueKind == JsonValueKind.String)
-            {
-                var requestNote = noteElement.GetString()?.Trim();
-                if (!string.IsNullOrEmpty(requestNote))
-                {
-                    note = requestNote.Length > MaxNoteLength ? requestNote[..MaxNoteLength] : requestNote;
-                }
-            }
+            note = requestNote.Length > MaxNoteLength ? requestNote[..MaxNoteLength] : requestNote;
         }
 
         var suggestedTitle = await _aiService.SuggestTitleAsync(episode.FileName, note, HttpContext.RequestAborted)
@@ -376,22 +370,17 @@ public class EpisodesController : ControllerBase
     public async Task<IActionResult> MoveEpisode(
         string feedId,
         string id,
-        [FromBody] JsonElement body)
+        [FromBody] MoveEpisodeRequest request)
     {
         if (!InputValidation.IsValidFeedId(feedId))
         {
             return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
         }
 
-        if (!body.TryGetProperty("targetFeedId", out var targetFeedIdElement))
-        {
-            return BadRequest(new { error = "targetFeedId is required in request body" });
-        }
-
-        var targetFeedId = targetFeedIdElement.GetString();
+        var targetFeedId = request.TargetFeedId;
         if (string.IsNullOrEmpty(targetFeedId))
         {
-            return BadRequest(new { error = "targetFeedId cannot be empty" });
+            return BadRequest(new { error = "targetFeedId is required in request body" });
         }
 
         if (!InputValidation.IsValidFeedId(targetFeedId))
@@ -427,22 +416,17 @@ public class EpisodesController : ControllerBase
     public async Task<IActionResult> CopyEpisode(
         string feedId,
         string id,
-        [FromBody] JsonElement body)
+        [FromBody] CopyEpisodeRequest request)
     {
         if (!InputValidation.IsValidFeedId(feedId))
         {
             return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
         }
 
-        if (!body.TryGetProperty("targetFeedId", out var targetFeedIdElement))
-        {
-            return BadRequest(new { error = "targetFeedId is required in request body" });
-        }
-
-        var targetFeedId = targetFeedIdElement.GetString();
+        var targetFeedId = request.TargetFeedId;
         if (string.IsNullOrEmpty(targetFeedId))
         {
-            return BadRequest(new { error = "targetFeedId cannot be empty" });
+            return BadRequest(new { error = "targetFeedId is required in request body" });
         }
 
         if (!InputValidation.IsValidFeedId(targetFeedId))

@@ -67,7 +67,7 @@ public class IconsController : ControllerBase
 
             // Validate file type
             var allowedTypes = new[] { "image/png", "image/jpeg", "image/jpg" };
-            if (!allowedTypes.Contains(file.ContentType.ToLower()))
+            if (!allowedTypes.Contains(file.ContentType, StringComparer.OrdinalIgnoreCase))
             {
                 _logger.LogWarning("Invalid file type '{ContentType}' for feed '{FeedId}'", file.ContentType, feedId);
                 return BadRequest(new { error = "Only PNG and JPEG images are allowed" });
@@ -94,15 +94,16 @@ public class IconsController : ControllerBase
             }
             finally
             {
-                // Clean up temp file
-                if (System.IO.File.Exists(tempPath))
+                // Clean up temp directory - best effort, don't fail the request on cleanup errors
+                try
                 {
-                    System.IO.File.Delete(tempPath);
+                    if (Directory.Exists(tempDir))
+                    {
+                        Directory.Delete(tempDir, recursive: true);
+                    }
                 }
-                if (Directory.Exists(tempDir))
-                {
-                    Directory.Delete(tempDir);
-                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
             }
         }
         catch (Exception ex)

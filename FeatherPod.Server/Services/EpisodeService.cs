@@ -603,41 +603,37 @@ public sealed partial class EpisodeService : IDisposable
 
     public async Task SyncWithBlobStorageAsync(string feedId)
     {
-        await _lock.WaitAsync();
+        // Fetch data outside the lock to avoid blocking reads during blob I/O
+        var metadataJson = await _blobStorage.LoadEpisodeMetadataAsync(feedId);
+        var episodes = metadataJson != null
+            ? JsonSerializer.Deserialize<List<Episode>>(metadataJson) ?? []
+            : [];
+        var blobFiles = await _blobStorage.ListAudioFilesAsync(feedId);
 
+        // Acquire lock only for in-memory state update
+        await _lock.WaitAsync();
         try
         {
-            // Reload episodes from blob storage (picks up changes from Azure Functions)
-            var metadataJson = await _blobStorage.LoadEpisodeMetadataAsync(feedId);
-            if (metadataJson != null)
-            {
-                var episodes = JsonSerializer.Deserialize<List<Episode>>(metadataJson) ?? [];
-                _episodesByFeed[feedId] = episodes;
-                _logger.LogInformation("Reloaded {Count} episodes for feed {FeedId} from blob storage", episodes.Count, feedId);
-            }
-            else
-            {
-                _episodesByFeed[feedId] = [];
-            }
-
-            var blobFiles = await _blobStorage.ListAudioFilesAsync(feedId);
-
-            // Warn about episodes whose blob files are missing (don't auto-delete to prevent silent data loss)
-            var orphanedEpisodes = _episodesByFeed[feedId]
-                .Where(e => !blobFiles.Contains(e.FileName))
-                .ToList();
-
-            foreach (var episode in orphanedEpisodes)
-            {
-                _logger.LogWarning("Episode has missing blob file in feed {FeedId}: {Title} ({FileName})", feedId, episode.Title, episode.FileName);
-            }
-
-            _logger.LogInformation("Sync complete for feed {FeedId}. Found {Count} episodes with missing files.", feedId, orphanedEpisodes.Count);
+            _episodesByFeed[feedId] = episodes;
         }
         finally
         {
             _lock.Release();
         }
+
+        _logger.LogInformation("Reloaded {Count} episodes for feed {FeedId} from blob storage", episodes.Count, feedId);
+
+        // Warn about episodes whose blob files are missing (don't auto-delete to prevent silent data loss)
+        var orphanedEpisodes = episodes
+            .Where(e => !blobFiles.Contains(e.FileName))
+            .ToList();
+
+        foreach (var episode in orphanedEpisodes)
+        {
+            _logger.LogWarning("Episode has missing blob file in feed {FeedId}: {Title} ({FileName})", feedId, episode.Title, episode.FileName);
+        }
+
+        _logger.LogInformation("Sync complete for feed {FeedId}. Found {Count} episodes with missing files.", feedId, orphanedEpisodes.Count);
     }
 
     // Private helper methods

@@ -3,6 +3,8 @@ using FeatherPod.Server.Validation;
 using FeatherPod.Shared.Models;
 using Microsoft.AspNetCore.Mvc;
 
+using static FeatherPod.Server.Validation.SecurityHelpers;
+
 namespace FeatherPod.Server.Controllers;
 
 /// <summary>
@@ -41,7 +43,7 @@ public class InternalController : ControllerBase
         if (!string.IsNullOrEmpty(_internalKey))
         {
             var providedKey = Request.Headers["X-Internal-Key"].FirstOrDefault();
-            if (providedKey != _internalKey)
+            if (!ConstantTimeEquals(providedKey, _internalKey))
             {
                 return Unauthorized(new { error = "Invalid or missing X-Internal-Key header" });
             }
@@ -77,7 +79,7 @@ public class InternalController : ControllerBase
         if (!string.IsNullOrEmpty(_internalKey))
         {
             var providedKey = Request.Headers["X-Internal-Key"].FirstOrDefault();
-            if (providedKey != _internalKey)
+            if (!ConstantTimeEquals(providedKey, _internalKey))
             {
                 return Unauthorized(new { error = "Invalid or missing X-Internal-Key header" });
             }
