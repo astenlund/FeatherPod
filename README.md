@@ -8,15 +8,20 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 - **Role-based access control** - Admin and FeedOwner roles with per-user API keys
 - **User management** - Create users, manage permissions, and assign feed ownership via API and CLI
 - **Audio normalization** - Loudness normalization (-16 LUFS) via FFmpeg, locally or server-side (async via Azure Functions)
-- **Azure Blob Storage** - Scalable cloud storage for audio files
+- **AI-assisted episode titles** - Azure OpenAI auto-generates titles on upload; on-demand suggestions in CLI and push page
+- **Azure Blob Storage** - Scalable cloud storage for audio files with Managed Identity
 - **RSS podcast feeds** - iTunes spec compatible with per-feed configuration
 - **CLI tool** - Command-line interface for episode, icon, feed, and user management
 - **REST API** - REST API for management (consumed by CLI tool)
-- **Browser push page** - Quick mobile uploads via `/{feedId}/push#API_KEY` with server-side normalization
-- **Version tracking** - Git SHA embedded in binaries and available via `/api/version`
+- **Browser push page** - PWA at `/{feedId}/push#API_KEY` with multi-file upload, server-side normalization, real-time progress, upload history, episode context menus (rename, delete), and cross-device sync via SSE
+- **Android Share Target** - Install the push page as a PWA to share audio files directly from Android
+- **Windows context menu** - Right-click audio files in Explorer to push to a feed
+- **Real-time progress** - SSE and SignalR-based progress streaming for normalization jobs
+- **Episode rename** - Rename episodes via CLI (with `--suggest` for AI titles) or push page context menu
+- **Delete after upload** - `--delete-after` flag with cross-platform trash support
 - **Hash-based episode IDs** - Preserves play progress; re-uploading same file updates metadata
 - **Cross-feed operations** - Move or copy episodes between feeds
-- **Managed Identity** - Secure Azure authentication without secrets
+- **Version tracking** - Git SHA embedded in binaries and available via `/api/version`
 - **Automated PR testing** - GitHub Actions deploys PRs to isolated test environment
 - **CI/CD pipeline** - Test-before-merge workflow with automated deployments
 
@@ -169,19 +174,24 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/api/feeds/{feedId}/episodes` | GET | Admin/Owner | List episodes for feed |
+| `/api/feeds/{feedId}/episodes` | GET | Public | List episodes for feed |
 | `/api/feeds/{feedId}/episodes` | POST | Admin/Owner | Upload episode (201), or with `?normalize=true` for async normalization (202) |
-| `/api/feeds/{feedId}/episodes/recent-uploads` | GET | Admin/Owner | Recent uploads with optional `?source=Browser&limit=5` |
+| `/api/feeds/{feedId}/episodes/recent-uploads` | GET | Public | Recent uploads with optional `?source=Browser&limit=5` |
 | `/api/feeds/{feedId}/episodes/{id}` | DELETE | Admin/Owner | Delete episode |
+| `/api/feeds/{feedId}/episodes/{id}` | PATCH | Admin/Owner | Update episode metadata (title, note) |
+| `/api/feeds/{feedId}/episodes/{id}/suggest-title` | POST | Admin/Owner | AI-suggested title for episode |
 | `/api/feeds/{feedId}/episodes/{id}/move` | POST | Admin/Owner | Move episode between feeds |
 | `/api/feeds/{feedId}/episodes/{id}/copy` | POST | Admin/Owner | Copy episode between feeds |
 
-### Job Status (Async Normalization)
+### Jobs & Events
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/api/jobs/{jobId}` | GET | Any | Get normalization job status (Queued/Processing/Completed/Failed) |
-| `/api/jobs/{jobId}/progress` | GET | Any | SSE stream for real-time progress updates |
+| `/api/feeds/{feedId}/jobs` | GET | Admin/Owner | Active jobs, or all jobs within `?since=1h` window |
+| `/api/feeds/{feedId}/events` | GET | Public | SSE stream for feed events (job/episode changes, cross-device sync) |
+| `/api/jobs/{jobId}` | GET | Public | Get normalization job status |
+| `/api/jobs/{jobId}/cancel` | POST | Admin/Owner | Cancel a normalization job |
+| `/api/jobs/{jobId}/progress` | GET | Public | SSE stream for real-time job progress |
 
 ### Icon Management
 
@@ -208,9 +218,11 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
 | `/{feedId}/feed.xml` | GET | Public | RSS podcast feed |
-| `/{feedId}/icon.png` | GET | Public | Feed icon |
+| `/{feedId}/icon.png` | GET | Public | Feed icon (immutable cache, 1 year) |
+| `/{feedId}/icon-{size}.png` | GET | Public | Resized icon (192 or 512px, for PWA manifest) |
 | `/{feedId}/audio/{filename}` | GET | Public | Stream audio (RFC 7233 range requests) |
-| `/{feedId}/push` | GET | Public | Browser upload page (API key via URL fragment) |
+| `/{feedId}/push` | GET | Public | Browser upload page (PWA, API key via URL fragment) |
+| `/{feedId}/push/manifest.json` | GET | Public | PWA manifest for Android Share Target |
 | `/health` | GET | Public | Health check (returns blob storage status) |
 
 **Authentication:** `X-API-Key` header required for protected endpoints. Admin has full access; FeedOwner limited to owned feeds.
@@ -234,7 +246,7 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 }
 ```
 
-**Podcast icon:** Upload via API (`POST /api/feeds/{feedId}/icon`) or CLI (`FeatherPod icon set icon.png`)
+**Podcast icon:** Upload via API (`POST /api/feeds/{feedId}/icon`) or CLI (`FeatherPod feed set-icon icon.png my-podcast`)
 
 **Additional options:** See configuration files for published date behavior, language, category, and more.
 
@@ -243,19 +255,18 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 FeatherPod includes a command-line tool for managing feeds, episodes, icons, and users:
 
 ```bash
-# Episode management
-FeatherPod episode push *.mp3 -f my-podcast -x  # -x extracts date from file before normalization
-FeatherPod episode push *.mp3 -f my-podcast -n  # -n uses server-side normalization (SSE progress)
-FeatherPod episode list -f my-podcast           # List episodes
-FeatherPod episode delete -f my-podcast         # Interactive delete (supports multi-select)
-FeatherPod episode delete abc123 -f my-podcast --force  # Delete by ID
-FeatherPod push episode.mp3 --title "Episode Title" --description "Full description"  # Alias
+# Episodes
+FeatherPod episode push *.mp3 -f my-podcast       # Upload with local normalization
+FeatherPod episode push *.mp3 -f my-podcast -n     # -n for server-side normalization
+FeatherPod episode push *.mp3 -f my-podcast -x     # -x extracts date from file metadata
+FeatherPod episode push *.mp3 --delete-after       # Delete source files after upload (--dry-run to preview)
+FeatherPod episode list -f my-podcast
+FeatherPod episode delete -f my-podcast            # Interactive multi-select
+FeatherPod episode rename -f my-podcast --suggest  # AI-suggested title with inline editing
+FeatherPod episode move --from feed1 --to feed2 --episode "Episode*"
+FeatherPod episode copy --from feed1 --to feed2
 
-# Move/copy episodes between feeds
-FeatherPod episode move --from feed1 --to feed2 --episode "Episode*"  # Pattern matching
-FeatherPod episode copy --from feed1 --to feed2  # Interactive multi-select
-
-# Feed management
+# Feeds
 FeatherPod feed list
 FeatherPod feed create --id my-podcast --title "My Podcast" --author "John Doe"
 FeatherPod feed update my-podcast --title "New Title"
@@ -263,42 +274,28 @@ FeatherPod feed rename old-id new-id
 FeatherPod feed delete my-podcast --force
 FeatherPod feed set-icon icon.png my-podcast
 FeatherPod feed unset-icon my-podcast
+FeatherPod feed push-url -f my-podcast --copy      # Push page URL to clipboard
+FeatherPod feed config set -f my-podcast -x true   # Enable date extraction from file metadata
+FeatherPod feed check-integrity -f my-podcast
 
-# User management (Admin only)
-FeatherPod user create
-FeatherPod user list
-FeatherPod user delete
-FeatherPod user rotate-key
-FeatherPod user grant
-FeatherPod user revoke
+# Users (requires: preferences admin-features enable)
+FeatherPod user create / list / delete / rotate-key / grant / revoke
 
-# Data integrity
-FeatherPod feed check-integrity             # Verify all accessible feeds have valid audio blobs
-FeatherPod feed check-integrity -f my-podcast  # Check a specific feed
+# Preferences (alias: prefs)
+FeatherPod preferences key show / set <key> / rotate
+FeatherPod preferences normalization enable / disable
+FeatherPod preferences auto-connect enable / disable
+FeatherPod preferences admin-features enable / disable
 
-# Preferences
-FeatherPod preferences show                      # Show all preferences
-FeatherPod preferences api-key show              # Show current API key
-FeatherPod preferences api-key set <key>         # Set API key
-FeatherPod preferences normalization enable      # Enable audio normalization
-FeatherPod preferences normalization disable     # Disable audio normalization
-FeatherPod preferences auto-connect enable       # Enable auto-connect on startup
-FeatherPod preferences auto-connect disable      # Disable auto-connect on startup
-FeatherPod prefs ...                             # Alias for preferences
+# Windows context menu
+FeatherPod config context-menu install -f my-podcast  # Right-click audio files to push
+FeatherPod config context-menu list / remove
 
-# Configuration files
-FeatherPod config generate   # Generate appsettings files from defaults
-FeatherPod config generate --select  # Choose which files to generate
-
-# Version info
-FeatherPod version           # Shows CLI and server versions
-FeatherPod --version         # Shows CLI version
-
-# Environment selection (defaults to Prod)
-FeatherPod -e Test feed list
-
-# Interactive mode (default)
-FeatherPod
+# Other
+FeatherPod config generate [--select]   # Generate appsettings from defaults
+FeatherPod version                      # CLI and server versions
+FeatherPod -e Test feed list            # Environment selection (defaults to Prod)
+FeatherPod                              # Interactive mode
 ```
 
 **Interactive mode** provides full feature parity with CLI commands - all operations (push, move, copy, delete, icon management, user management, etc.) are available through menus with arrow key navigation. When pushing episodes, choose between Local (client-side), Server (server-side), or no normalization.
@@ -307,6 +304,8 @@ FeatherPod
 - API keys (per environment)
 - Audio normalization enabled/disabled (per environment, defaults to enabled)
 - Auto-connect on startup enabled/disabled (per environment, defaults to enabled)
+- Delete-after-upload trash behavior (global)
+- Admin features visibility (global)
 
 The CLI prompts for the API key on first use and saves it automatically. If auto-connect is disabled, interactive mode starts in disconnected mode and you can connect manually via Preferences.
 
@@ -322,11 +321,15 @@ dotnet test           # Run tests (starts integration tests if Azurite is runnin
 ## Architecture
 
 - **.NET 10 ASP.NET Core** - Controllers-based REST API
-- **Azure Functions** - Queue-triggered async audio normalization
+- **Azure Functions** - Queue-triggered async audio normalization with timer-triggered cleanup
+- **Azure OpenAI** - GPT-4o-mini for episode title suggestions via Managed Identity
+- **Azure SignalR Service** - Real-time progress push from Functions to Server
 - **Multi-feed** - Single instance, multiple isolated feeds
-- **Role-based access** - Admin and FeedOwner roles with per-user API keys
+- **Role-based access** - Admin and FeedOwner roles with salted, hashed API keys
 - **Azure Blob Storage** - Managed Identity support, hash-based episode IDs
 - **Azure Queue/Table Storage** - Job queuing and status tracking for async operations
+- **Background services** - Hourly blob sync and stale temp file cleanup
+- **PWA/Service Worker** - Offline-capable push page with Android Share Target
 - **Range requests** - Seeking/resuming in podcast apps
 
 **Supported formats:** MP3, M4A, AAC, WAV, OGG, FLAC

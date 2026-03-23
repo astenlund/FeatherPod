@@ -49,8 +49,9 @@ else
     builder.Services.AddSingleton<IAiService, AiService>();
 }
 
-// Add background service for periodic blob storage sync
+// Add background services
 builder.Services.AddHostedService<BlobSyncBackgroundService>();
+builder.Services.AddHostedService<TempFileCleanupService>();
 
 // Add controllers
 builder.Services

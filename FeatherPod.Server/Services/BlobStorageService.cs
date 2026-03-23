@@ -177,7 +177,9 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task<string> DownloadAudioToTempAsync(string feedId, string fileName)
     {
-        var tempPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}_{fileName}");
+        var tempDir = Path.Combine(Path.GetTempPath(), "FeatherPod");
+        Directory.CreateDirectory(tempDir);
+        var tempPath = Path.Combine(tempDir, $"{Guid.NewGuid()}_{fileName}");
 
         var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
         var blobPath = $"{feedId}/audio/{fileName}";

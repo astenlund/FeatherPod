@@ -122,7 +122,9 @@ public class TestBlobStorageService : IBlobStorageService
     public async Task<string> DownloadAudioToTempAsync(string feedId, string fileName)
     {
         var sourcePath = Path.Combine(_rootPath, feedId, "audio", fileName);
-        var tempPath = Path.Combine(Path.GetTempPath(), fileName);
+        var tempDir = Path.Combine(Path.GetTempPath(), "FeatherPod");
+        Directory.CreateDirectory(tempDir);
+        var tempPath = Path.Combine(tempDir, fileName);
         File.Copy(sourcePath, tempPath, overwrite: true);
         return await Task.FromResult(tempPath);
     }
