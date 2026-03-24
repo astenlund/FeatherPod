@@ -211,6 +211,24 @@ public class TestBlobStorageService : IBlobStorageService
         await Task.CompletedTask;
     }
 
+    public async Task<string?> LoadPushSubscriptionsAsync(string feedId)
+    {
+        var path = Path.Combine(_rootPath, feedId, "push-subscriptions.json");
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        return await File.ReadAllTextAsync(path);
+    }
+
+    public async Task SavePushSubscriptionsAsync(string feedId, string subscriptionsJson)
+    {
+        var feedDir = Path.Combine(_rootPath, feedId);
+        Directory.CreateDirectory(feedDir);
+        await File.WriteAllTextAsync(Path.Combine(feedDir, "push-subscriptions.json"), subscriptionsJson);
+    }
+
     public async Task DeletePendingJobBlobsAsync(string feedId, string jobId)
     {
         var pendingPath = Path.Combine(_rootPath, feedId, "pending", jobId);

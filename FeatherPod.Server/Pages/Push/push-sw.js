@@ -13,6 +13,39 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => event.waitUntil(clients.claim()));
 
+self.addEventListener('push', (event) => {
+    if (!event.data) return;
+
+    const data = event.data.json();
+    const { title, body, icon, feedId } = data;
+
+    event.waitUntil(
+        self.registration.showNotification(title || 'FeatherPod', {
+            body: body || '',
+            icon: icon || '',
+            data: { feedId },
+        })
+    );
+});
+
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+
+    const feedId = event.notification.data?.feedId;
+    const targetUrl = feedId ? `/${feedId}/push` : '/';
+
+    event.waitUntil((async () => {
+        const windowClients = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+        const existing = windowClients.find(c => new URL(c.url).pathname === targetUrl);
+
+        if (existing) {
+            await existing.focus();
+        } else {
+            await clients.openWindow(targetUrl);
+        }
+    })());
+});
+
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
 

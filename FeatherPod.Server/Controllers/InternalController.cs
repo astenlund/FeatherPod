@@ -18,13 +18,15 @@ public class InternalController : ControllerBase
     private readonly EpisodeService _episodeService;
     private readonly IJobProgressChannel _progressChannel;
     private readonly IFeedEventChannel _feedEventChannel;
+    private readonly PushNotificationService _pushNotificationService;
     private readonly string? _internalKey;
 
-    public InternalController(EpisodeService episodeService, IJobProgressChannel progressChannel, IFeedEventChannel feedEventChannel, IConfiguration configuration)
+    public InternalController(EpisodeService episodeService, IJobProgressChannel progressChannel, IFeedEventChannel feedEventChannel, PushNotificationService pushNotificationService, IConfiguration configuration)
     {
         _episodeService = episodeService;
         _progressChannel = progressChannel;
         _feedEventChannel = feedEventChannel;
+        _pushNotificationService = pushNotificationService;
         _internalKey = configuration["Internal:Key"];
     }
 
@@ -86,6 +88,7 @@ public class InternalController : ControllerBase
         }
 
         _progressChannel.Publish(jobId, progress);
+        _pushNotificationService.TryNotifyJobTerminal(progress);
 
         return Ok();
     }

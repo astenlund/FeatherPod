@@ -50,13 +50,16 @@ public class BlobStorageService : IBlobStorageService
         var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
         var blobClient = containerClient.GetBlobClient("feeds.json");
 
-        if (!await blobClient.ExistsAsync())
+        try
+        {
+            var response = await blobClient.DownloadContentAsync();
+
+            return response.Value.Content.ToString();
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {
             return null;
         }
-
-        var response = await blobClient.DownloadContentAsync();
-        return response.Value.Content.ToString();
     }
 
     public async Task SaveFeedsConfigAsync(string feedsJson)
@@ -75,14 +78,16 @@ public class BlobStorageService : IBlobStorageService
         var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
         var blobClient = containerClient.GetBlobClient("users.json");
 
-        if (!await blobClient.ExistsAsync())
+        try
+        {
+            var response = await blobClient.DownloadContentAsync();
+
+            return response.Value.Content.ToString();
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {
             return null;
         }
-
-        var response = await blobClient.DownloadContentAsync();
-
-        return response.Value.Content.ToString();
     }
 
     public async Task SaveUsersConfigAsync(string usersJson)
@@ -269,13 +274,44 @@ public class BlobStorageService : IBlobStorageService
         var blobPath = $"{feedId}/episodes.json";
         var blobClient = containerClient.GetBlobClient(blobPath);
 
-        if (!await blobClient.ExistsAsync())
+        try
+        {
+            var response = await blobClient.DownloadContentAsync();
+
+            return response.Value.Content.ToString();
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
         {
             return null;
         }
+    }
 
-        var response = await blobClient.DownloadContentAsync();
-        return response.Value.Content.ToString();
+    public async Task<string?> LoadPushSubscriptionsAsync(string feedId)
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+        var blobClient = containerClient.GetBlobClient($"{feedId}/push-subscriptions.json");
+
+        try
+        {
+            var response = await blobClient.DownloadContentAsync();
+
+            return response.Value.Content.ToString();
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
+    }
+
+    public async Task SavePushSubscriptionsAsync(string feedId, string subscriptionsJson)
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+        var blobClient = containerClient.GetBlobClient($"{feedId}/push-subscriptions.json");
+
+        await using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(subscriptionsJson));
+        await blobClient.UploadAsync(stream, overwrite: true);
+
+        _logger.LogInformation("Saved push subscriptions for feed: {FeedId}", feedId);
     }
 
     public async Task DeletePendingJobBlobsAsync(string feedId, string jobId)

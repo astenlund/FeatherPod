@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FeatherPod.Server.Services;
 using FeatherPod.Server.Validation;
+using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using Microsoft.AspNetCore.Mvc;
 
@@ -15,6 +16,7 @@ public class JobsController : ControllerBase
     private readonly IUserService _userService;
     private readonly IJobProgressChannel _progressChannel;
     private readonly IFeedEventChannel _feedEventChannel;
+    private readonly PushNotificationService _pushNotificationService;
     private readonly int _pollIntervalMs;
 
     private static readonly TimeSpan PushFallbackTimeout = TimeSpan.FromMilliseconds(1500);
@@ -22,13 +24,14 @@ public class JobsController : ControllerBase
     private static readonly TimeSpan MaxSinceDuration = TimeSpan.FromHours(24);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public JobsController(IJobService jobService, IBlobStorageService blobService, IUserService userService, IJobProgressChannel progressChannel, IFeedEventChannel feedEventChannel, IConfiguration configuration)
+    public JobsController(IJobService jobService, IBlobStorageService blobService, IUserService userService, IJobProgressChannel progressChannel, IFeedEventChannel feedEventChannel, PushNotificationService pushNotificationService, IConfiguration configuration)
     {
         _jobService = jobService;
         _blobService = blobService;
         _userService = userService;
         _progressChannel = progressChannel;
         _feedEventChannel = feedEventChannel;
+        _pushNotificationService = pushNotificationService;
         _pollIntervalMs = configuration.GetValue("PushPage:PollIntervalMs", 500);
     }
 
@@ -185,7 +188,9 @@ public class JobsController : ControllerBase
         }
 
         // Publish cancellation to channel for instant SSE notification
-        _progressChannel.Publish(jobId, JobStatusResponse.FromEntity(cancelled));
+        var cancelledResponse = JobStatusResponse.FromEntity(cancelled);
+        _progressChannel.Publish(jobId, cancelledResponse);
+        _pushNotificationService.TryNotifyJobTerminal(cancelledResponse);
 
         // Clean up pending blobs (idempotent — safe even if Function also deletes)
         if (cancelled.FeedId != null)
@@ -193,7 +198,7 @@ public class JobsController : ControllerBase
             await _blobService.DeletePendingJobBlobsAsync(cancelled.FeedId, jobId);
         }
 
-        return Ok(JobStatusResponse.FromEntity(cancelled));
+        return Ok(cancelledResponse);
     }
 
     /// <summary>
@@ -257,15 +262,17 @@ public class JobsController : ControllerBase
                     break;
                 }
 
+                JobStatusResponse? response = null;
                 if (HasChanged(lastEntity, entity))
                 {
-                    var response = JobStatusResponse.FromEntity(entity);
+                    response = JobStatusResponse.FromEntity(entity);
                     await WriteEventAsync("progress", JsonSerializer.Serialize(response, JsonOptions), cancellationToken);
                     lastEntity = entity;
                 }
 
                 if (IsTerminal(entity.Status))
                 {
+                    _pushNotificationService.TryNotifyJobTerminal(response ?? JobStatusResponse.FromEntity(entity));
                     await WriteEventAsync("done", "{}", cancellationToken);
 
                     break;
@@ -298,6 +305,7 @@ public class JobsController : ControllerBase
                 timeoutCts.CancelAfter(PushFallbackTimeout);
 
                 JobStatusResponse? update = null;
+                var fromFallbackPoll = false;
                 try
                 {
                     if (await reader.WaitToReadAsync(timeoutCts.Token))
@@ -316,6 +324,7 @@ public class JobsController : ControllerBase
                     if (entity != null)
                     {
                         update = JobStatusResponse.FromEntity(entity);
+                        fromFallbackPoll = true;
                     }
                 }
 
@@ -327,6 +336,12 @@ public class JobsController : ControllerBase
 
                 if (update != null && IsTerminal(update.Status))
                 {
+                    // Only notify from fallback poll -- channel updates already triggered
+                    // TryNotifyJobTerminal at the ingestion point (ProgressHub/InternalController)
+                    if (fromFallbackPoll)
+                    {
+                        _pushNotificationService.TryNotifyJobTerminal(update);
+                    }
                     await WriteEventAsync("done", "{}", cancellationToken);
 
                     break;

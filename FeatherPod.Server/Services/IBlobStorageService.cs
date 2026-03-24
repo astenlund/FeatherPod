@@ -36,6 +36,10 @@ public interface IBlobStorageService
     // Pending blob operations
     Task DeletePendingJobBlobsAsync(string feedId, string jobId);
 
+    // Push subscription operations (feed-aware)
+    Task<string?> LoadPushSubscriptionsAsync(string feedId);
+    Task SavePushSubscriptionsAsync(string feedId, string subscriptionsJson);
+
     // Feed management operations
     Task RenameFeedAsync(string oldFeedId, string newFeedId);
     Task DeleteFeedAsync(string feedId);

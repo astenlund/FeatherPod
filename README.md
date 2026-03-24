@@ -13,7 +13,7 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 - **RSS podcast feeds** - iTunes spec compatible with per-feed configuration
 - **CLI tool** - Command-line interface for episode, icon, feed, and user management
 - **REST API** - REST API for management (consumed by CLI tool)
-- **Browser push page** - PWA at `/{feedId}/push#API_KEY` with multi-file upload, server-side normalization, real-time progress, upload history, episode context menus (rename, delete), and cross-device sync via SSE
+- **Browser push page** - PWA at `/{feedId}/push#API_KEY` with multi-file upload, server-side normalization, real-time progress, upload history, episode context menus (rename, delete), cross-device sync via SSE, and push notifications via Web Push API
 - **Android Share Target** - Install the push page as a PWA to share audio files directly from Android
 - **Windows context menu** - Right-click audio files in Explorer to push to a feed
 - **Real-time progress** - SSE and SignalR-based progress streaming for normalization jobs
@@ -223,6 +223,9 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 | `/{feedId}/audio/{filename}` | GET | Public | Stream audio (RFC 7233 range requests) |
 | `/{feedId}/push` | GET | Public | Browser upload page (PWA, API key via URL fragment) |
 | `/{feedId}/push/manifest.json` | GET | Public | PWA manifest for Android Share Target |
+| `/api/feeds/{feedId}/push-subscriptions` | POST | FeedOwner | Subscribe to push notifications (VAPID/Web Push) |
+| `/api/feeds/{feedId}/push-subscriptions` | DELETE | FeedOwner | Unsubscribe from push notifications |
+| `/api/feeds/{feedId}/push-sessions` | POST | FeedOwner | Track jobIds for batched push notification (one notification when all done) |
 | `/health` | GET | Public | Health check (returns blob storage status) |
 
 **Authentication:** `X-API-Key` header required for protected endpoints. Admin has full access; FeedOwner limited to owned feeds.
@@ -329,7 +332,7 @@ dotnet test           # Run tests (starts integration tests if Azurite is runnin
 - **Azure Blob Storage** - Managed Identity support, hash-based episode IDs
 - **Azure Queue/Table Storage** - Job queuing and status tracking for async operations
 - **Background services** - Hourly blob sync and stale temp file cleanup
-- **PWA/Service Worker** - Offline-capable push page with Android Share Target
+- **PWA/Service Worker** - Offline-capable push page with Android Share Target and Web Push notifications
 - **Range requests** - Seeking/resuming in podcast apps
 
 **Supported formats:** MP3, M4A, AAC, WAV, OGG, FLAC

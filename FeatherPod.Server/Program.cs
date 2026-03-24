@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using FeatherPod.Server.Hubs;
 using FeatherPod.Server.Middleware;
 using FeatherPod.Server.Services;
+using FeatherPod.Server.Models;
 using FeatherPod.Server.Validation;
 using FeatherPod.Shared;
 using FeatherPod.Shared.Services;
@@ -31,6 +32,9 @@ builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(optio
     options.MultipartHeadersLengthLimit = int.MaxValue;
 });
 
+// Application Insights (picks up APPLICATIONINSIGHTS_CONNECTION_STRING automatically)
+builder.Services.AddApplicationInsightsTelemetry();
+
 // Add services
 builder.Services.AddSingleton<IBlobStorageService, BlobStorageService>();
 builder.Services.AddSingleton<EpisodeService>();
@@ -40,6 +44,7 @@ builder.Services.AddSingleton<IJobProgressChannel, JobProgressChannel>();
 builder.Services.AddSingleton<IFeedEventChannel, FeedEventChannel>();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IconResizeService>();
+builder.Services.AddSingleton<PushNotificationService>();
 if (builder.Environment.IsDevelopment() && string.IsNullOrEmpty(builder.Configuration["AzureOpenAI:Endpoint"]))
 {
     builder.Services.AddSingleton<IAiService, FakeAiService>();
@@ -222,9 +227,9 @@ app.MapGet("/{feedId}/push",
 
             var progressSmoothing = config.GetValue("PushPage:ProgressSmoothing", true);
             var iconETag = await blobStorageService.GetIconETagAsync(feedId);
-            var pwaEnabled = iconETag != null;
+            var vapidPublicKey = config["PushNotifications:VapidPublicKey"];
 
-            return Results.Content(GeneratePushPageHtml(feedId, feed.Title, env, progressSmoothing, pwaEnabled, iconETag), "text/html");
+            return Results.Content(GeneratePushPageHtml(feedId, feed.Title, env, progressSmoothing, iconETag, vapidPublicKey), "text/html");
         })
     .WithName("GetPushPage")
     .Produces(200, contentType: "text/html")
@@ -255,6 +260,7 @@ app.MapGet("/{feedId}/push/manifest.json", async (string feedId, EpisodeService 
         var shortName = feed.Title.Length <= 12 ? feed.Title : feed.Title[..12];
         var manifest = new
         {
+            id = $"/{feedId}/push",
             name = $"Push to {feed.Title}",
             short_name = shortName,
             start_url = $"/{feedId}/push",
@@ -296,87 +302,96 @@ app.MapGet("/{feedId}/push/manifest.json", async (string feedId, EpisodeService 
     .Produces(400)
     .Produces(404);
 
-// Service worker for PWA share target interception
+// Push page static assets (JS, CSS) — served from disk in dev (hot-reload), embedded resources in prod
 app.MapGet("/{feedId}/push/sw.js", (string feedId, IWebHostEnvironment env, HttpContext context) =>
     {
-        if (!InputValidation.IsValidFeedId(feedId))
-        {
-            return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
-        }
-
-        string js;
-        if (env.IsDevelopment())
-        {
-            var pushDir = Path.Combine(env.ContentRootPath, "Pages", "Push");
-            js = File.ReadAllText(Path.Combine(pushDir, "push-sw.js"));
-        }
-        else
-        {
-            var assembly = typeof(Program).Assembly;
-            js = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push-sw.js");
-        }
-
-        context.Response.Headers.CacheControl = "no-cache";
         context.Response.Headers["Service-Worker-Allowed"] = "/";
 
-        return Results.Content(js, "application/javascript");
+        return ServePushAsset(feedId, "push-sw.js", "application/javascript", env, context);
     })
     .WithName("GetPushServiceWorker")
     .Produces(200, contentType: "application/javascript")
     .Produces(400);
 
 app.MapGet("/{feedId}/push/app.js", (string feedId, IWebHostEnvironment env, HttpContext context) =>
-    {
-        if (!InputValidation.IsValidFeedId(feedId))
-        {
-            return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
-        }
-
-        string js;
-        if (env.IsDevelopment())
-        {
-            var pushDir = Path.Combine(env.ContentRootPath, "Pages", "Push");
-            js = File.ReadAllText(Path.Combine(pushDir, "push.js"));
-        }
-        else
-        {
-            var assembly = typeof(Program).Assembly;
-            js = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.js");
-        }
-
-        context.Response.Headers.CacheControl = "no-cache";
-
-        return Results.Content(js, "application/javascript");
-    })
+        ServePushAsset(feedId, "push.js", "application/javascript", env, context))
     .WithName("GetPushAppJs")
     .Produces(200, contentType: "application/javascript")
     .Produces(400);
 
 app.MapGet("/{feedId}/push/app.css", (string feedId, IWebHostEnvironment env, HttpContext context) =>
-    {
-        if (!InputValidation.IsValidFeedId(feedId))
-        {
-            return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
-        }
-
-        string css;
-        if (env.IsDevelopment())
-        {
-            var pushDir = Path.Combine(env.ContentRootPath, "Pages", "Push");
-            css = File.ReadAllText(Path.Combine(pushDir, "push.css"));
-        }
-        else
-        {
-            var assembly = typeof(Program).Assembly;
-            css = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.css");
-        }
-
-        context.Response.Headers.CacheControl = "no-cache";
-
-        return Results.Content(css, "text/css");
-    })
+        ServePushAsset(feedId, "push.css", "text/css", env, context))
     .WithName("GetPushAppCss")
     .Produces(200, contentType: "text/css")
+    .Produces(400);
+
+// Push notification subscription management
+app.MapPost("/api/feeds/{feedId}/push-subscriptions",
+        async (string feedId, [Microsoft.AspNetCore.Mvc.FromBody] PushSubscriptionRequest body, PushNotificationService pushService) =>
+        {
+            if (!InputValidation.IsValidFeedId(feedId))
+            {
+                return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+            }
+
+            if (!pushService.IsEnabled)
+            {
+                return Results.BadRequest(new { error = "Push notifications are not configured" });
+            }
+
+            if (!Uri.TryCreate(body.Endpoint, UriKind.Absolute, out var endpointUri) || endpointUri.Scheme != "https")
+            {
+                return Results.BadRequest(new { error = "Endpoint must be an absolute HTTPS URL" });
+            }
+
+            await pushService.SubscribeAsync(feedId, body);
+
+            return Results.Ok(new { message = "Subscribed" });
+        })
+    .WithName("SubscribePushNotifications")
+    .Produces(200)
+    .Produces(400);
+
+app.MapDelete("/api/feeds/{feedId}/push-subscriptions",
+        async (string feedId, [Microsoft.AspNetCore.Mvc.FromBody] PushUnsubscribeRequest body, PushNotificationService pushService) =>
+        {
+            if (!InputValidation.IsValidFeedId(feedId))
+            {
+                return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+            }
+
+            await pushService.UnsubscribeAsync(feedId, body.Endpoint);
+
+            return Results.Ok(new { message = "Unsubscribed" });
+        })
+    .WithName("UnsubscribePushNotifications")
+    .Produces(200)
+    .Produces(400);
+
+app.MapPost("/api/feeds/{feedId}/push-sessions",
+        async (string feedId, [Microsoft.AspNetCore.Mvc.FromBody] PushSessionRequest body, PushNotificationService pushService) =>
+        {
+            if (!InputValidation.IsValidFeedId(feedId))
+            {
+                return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+            }
+
+            if (!pushService.IsEnabled)
+            {
+                return Results.BadRequest(new { error = "Push notifications are not configured" });
+            }
+
+            if (body.JobIds.Count == 0 && body.UploadsRemaining == 0)
+            {
+                return Results.BadRequest(new { error = "At least one jobId or uploadsRemaining > 0 is required" });
+            }
+
+            await pushService.TrackJobsAsync(feedId, body.JobIds, body.UploadsRemaining);
+
+            return Results.Ok(new { tracked = body.JobIds.Count, uploadsRemaining = body.UploadsRemaining });
+        })
+    .WithName("TrackPushSession")
+    .Produces(200)
     .Produces(400);
 
 // Audio file streaming with range support
@@ -490,7 +505,7 @@ app.Run();
 // PUSH PAGE HTML GENERATION
 // ============================================================================
 
-static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvironment env, bool progressSmoothing, bool pwaEnabled, string? iconETag)
+static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvironment env, bool progressSmoothing, string? iconETag, string? vapidPublicKey)
 {
     var escapedTitle = System.Net.WebUtility.HtmlEncode(feedTitle);
     var hasArtwork = iconETag != null;
@@ -511,7 +526,7 @@ static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvi
         html = ReadResource(assembly, "FeatherPod.Server.Pages.Push.push.html");
     }
 
-    var pwaHead = pwaEnabled
+    var pwaHead = hasArtwork
         ? $$"""
             <link rel="manifest" href="/{{feedId}}/push/manifest.json">
             <script>
@@ -531,10 +546,35 @@ static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvi
         .Replace("{{BACKDROP_SRC}}", hasArtwork ? $" src=\"/{feedId}/icon.png{iconCacheBuster}\"" : "")
         .Replace("{{ICON_ETAG}}", iconETag ?? "")
         .Replace("{{IS_DEV}}", env.IsDevelopment().ToString().ToLowerInvariant())
-        .Replace("{{PROGRESS_SMOOTHING}}", progressSmoothing.ToString().ToLowerInvariant());
+        .Replace("{{PROGRESS_SMOOTHING}}", progressSmoothing.ToString().ToLowerInvariant())
+        .Replace("{{VAPID_PUBLIC_KEY}}", vapidPublicKey ?? "");
 }
 
 static string IconCacheBuster(string? iconETag) => iconETag != null ? $"?v={Uri.EscapeDataString(iconETag)}" : "";
+
+static IResult ServePushAsset(string feedId, string fileName, string contentType, IWebHostEnvironment env, HttpContext context)
+{
+    if (!InputValidation.IsValidFeedId(feedId))
+    {
+        return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+    }
+
+    string content;
+    if (env.IsDevelopment())
+    {
+        var pushDir = Path.Combine(env.ContentRootPath, "Pages", "Push");
+        content = File.ReadAllText(Path.Combine(pushDir, fileName));
+    }
+    else
+    {
+        var assembly = typeof(Program).Assembly;
+        content = ReadResource(assembly, $"FeatherPod.Server.Pages.Push.{fileName}");
+    }
+
+    context.Response.Headers.CacheControl = "no-cache";
+
+    return Results.Content(content, contentType);
+}
 
 static string ReadResource(System.Reflection.Assembly assembly, string name)
 {

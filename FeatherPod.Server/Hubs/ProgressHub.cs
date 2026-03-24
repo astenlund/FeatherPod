@@ -14,11 +14,13 @@ namespace FeatherPod.Server.Hubs;
 public class ProgressHub : Hub
 {
     private readonly IJobProgressChannel _progressChannel;
+    private readonly PushNotificationService _pushNotificationService;
     private readonly string? _internalKey;
 
-    public ProgressHub(IJobProgressChannel progressChannel, IConfiguration configuration)
+    public ProgressHub(IJobProgressChannel progressChannel, PushNotificationService pushNotificationService, IConfiguration configuration)
     {
         _progressChannel = progressChannel;
+        _pushNotificationService = pushNotificationService;
         _internalKey = configuration["Internal:Key"];
     }
 
@@ -41,5 +43,6 @@ public class ProgressHub : Hub
     public void SendProgress(string jobId, JobStatusResponse progress)
     {
         _progressChannel.Publish(jobId, progress);
+        _pushNotificationService.TryNotifyJobTerminal(progress);
     }
 }

@@ -2108,6 +2108,14 @@ h1 {
         padding-top: calc(10svh + 5.5rem);
     }
 
+    .notif-toggle {
+        position: fixed;
+        top: 1rem;
+        right: 1rem;
+        margin: 0;
+        z-index: 10;
+    }
+
     /* No drag-and-drop on mobile — fix add-more button above history toggle */
     .queue-drop-zone {
         border: none;
@@ -2119,6 +2127,7 @@ h1 {
         left: 1rem;
         right: 1rem;
         width: auto;
+        max-width: none;
         z-index: 101;
     }
 
@@ -2432,5 +2441,84 @@ h1 {
 
     .episode-info {
         font-size: 0.95rem;
+    }
+}
+
+/* ============================================================================
+   NOTIFICATION TOGGLE
+   ============================================================================ */
+
+.notif-toggle[hidden] {
+    display: none;
+}
+
+.notif-toggle {
+    display: flex;
+    width: fit-content;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    margin-bottom: 0.75rem;
+    background: var(--primary-a8);
+    border: 1px solid var(--border-subtle);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-family: var(--font-body);
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.notif-toggle:disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.notif-toggle:hover {
+    background: var(--primary-a15);
+    color: var(--text-secondary);
+}
+
+.notif-toggle[aria-pressed="true"] {
+    background: var(--primary-a15);
+    border-color: var(--border-muted);
+    color: var(--text-secondary);
+}
+
+.notif-toggle[aria-pressed="true"] .notif-toggle-icon {
+    fill: currentColor;
+    stroke: currentColor;
+}
+
+.notif-toggle-icon {
+    flex-shrink: 0;
+}
+
+.notif-toggle-label {
+    white-space: nowrap;
+}
+
+.notif-hint {
+    position: fixed;
+    bottom: calc(7rem + env(safe-area-inset-bottom, 0px));
+    left: 1rem;
+    right: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    color: var(--text-secondary);
+    font-family: var(--font-body);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    text-align: center;
+    z-index: 200;
+    animation: blur-fade-in 0.3s ease both;
+}
+
+@media (min-width: 769px) {
+    .notif-toggle {
+        display: none !important;
     }
 }

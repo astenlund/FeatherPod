@@ -19,6 +19,7 @@
  */
 const SHOW_GHOST = IS_DEV && window.location.search.includes('ghost');
 const DEBUG_TITLE_ANIMATION = IS_DEV && window.location.search.includes('alive');
+const FAKE_PWA = IS_DEV && window.location.search.includes('pwa');
 const VELOCITY_OVERRIDES = IS_DEV ? parseVelocityOverrides() : {};
 /**
  * @typedef {Object} Episode
@@ -159,9 +160,20 @@ const API_KEY_LOCAL_KEY = 'featherpod_api_key_local_' + FEED_ID;
 const API_KEY_COOKIE_KEY = 'featherpod_key_' + FEED_ID;
 const DISMISSED_STORAGE_KEY = 'featherpod_dismissed_' + FEED_ID;
 const THEME_CACHE_KEY = 'featherpod_theme_' + FEED_ID;
+const NOTIF_ENABLED_KEY = 'featherpod_notif_' + FEED_ID;
+const NOTIF_HINT_SHOWN_KEY = 'featherpod_notif_hint_shown';
 const MAX_LOCAL_HISTORY = 50;
 /** @type {number} - Max ms to wait for server job sync before showing the initial state (avoids blank page on slow networks) */
 const QUEUE_SYNC_TIMEOUT = 3000;
+
+/**
+ * Whether a queue entry has active work (not yet finished).
+ * @param {{status: string}} entry
+ * @returns {boolean}
+ */
+function isActiveWork(entry) {
+    return entry.status === 'queued' || entry.status === 'uploading' || entry.status === 'normalizing';
+}
 
 // No-key state UI strings
 const STR_PASTE_KEY_BELOW = 'Paste key below';
@@ -358,6 +370,10 @@ function showState(stateName) {
 
     states.forEach(s => document.getElementById(s).style.display = s === stateName ? '' : 'none');
 
+    // Show notification toggle only in queue state with active work
+    const hasActive = stateName === 'queue' && uploadQueue.some(e => isActiveWork(e));
+    setNotificationToggleVisible(hasActive);
+
     // Update container state class for CSS styling
     const container = document.querySelector('.container');
     if (container) {
@@ -368,9 +384,6 @@ function showState(stateName) {
     // Update page title based on state (animate first word only)
     let targetWord;
     if (stateName === 'queue') {
-        const hasActive = uploadQueue.some(e =>
-            e.status === 'queued' || e.status === 'uploading' || e.status === 'normalizing'
-        );
         targetWord = hasActive ? 'Pushing' : 'Pushed';
     } else {
         targetWord = 'Push';
@@ -452,9 +465,7 @@ function updateQueueTitle() {
     if (getCurrentState() !== 'queue') {
         return;
     }
-    const hasActive = uploadQueue.some(e =>
-        e.status === 'queued' || e.status === 'uploading' || e.status === 'normalizing'
-    );
+    const hasActive = uploadQueue.some(e => isActiveWork(e));
     animateTitle(hasActive ? 'Pushing' : 'Pushed');
 }
 
@@ -1360,6 +1371,7 @@ async function init() {
             }
         }
         await initHistorySection();
+        initNotificationToggle();
         serverJobsPromise.then(mergeServerJobs).catch(() => {});
 
         return;
@@ -1369,6 +1381,7 @@ async function init() {
     // because it overwrites uploadQueue and would discard the shared files.
     if (await consumeSharedFiles()) {
         await initHistorySection();
+        initNotificationToggle();
         serverJobsPromise.then(mergeServerJobs).catch(() => {});
 
         return;
@@ -1399,6 +1412,7 @@ async function init() {
         document.getElementById('select-file').focus();
     }
     await initHistorySection();
+    initNotificationToggle();
 
     // If the sync timed out, merge the late response when it arrives
     serverJobsPromise.then(mergeServerJobs).catch(() => {});
@@ -1844,7 +1858,7 @@ function addFilesToQueue(files) {
         const isDuplicate = uploadQueue.some(e =>
             e.fileName === file.name &&
             e.fileSize === file.size &&
-            (e.status === 'queued' || e.status === 'uploading' || e.status === 'normalizing' || e.status === 'completed')
+            (isActiveWork(e) || e.status === 'completed')
         );
         if (isDuplicate) continue;
 
@@ -1874,6 +1888,12 @@ function addFilesToQueue(files) {
 
     if (newEntries.length === 0) {
         return;
+    }
+
+    // Reset notification toggle when starting a new queue or adding items with no active work
+    const hadActiveWork = uploadQueue.some(e => !newEntries.includes(e) && isActiveWork(e));
+    if (!hadActiveWork) {
+        resetNotificationToggle();
     }
 
     const previousState = getCurrentState();
@@ -2018,14 +2038,15 @@ function checkAllComplete() {
         return;
     }
 
-    const hasActiveWork = uploadQueue.some(e =>
-        e.status === 'queued' || e.status === 'uploading' || e.status === 'normalizing'
-    );
+    const hasActiveWork = uploadQueue.some(e => isActiveWork(e));
     if (!hasActiveWork) {
         isUploading = false;
         activeUploadId = null;
         updateQueueTitle();
         saveQueueState();
+        notifyQueueComplete();
+        resetNotificationToggle();
+        setNotificationToggleVisible(false);
     }
 }
 
@@ -2117,6 +2138,7 @@ async function processEntry(entry) {
             entry.progress = 0;
             updateQueueItemInDOM(entry);
             saveQueueState();
+            syncPushSession([entry.jobId]);
             monitorEntryNormalizationInBackground(entry);
             advanceQueue();
 
@@ -4338,18 +4360,13 @@ async function pollEntryNormalization(entry) {
             });
 
             if (!response.ok) {
-                // Transient server errors (5xx) - retry with backoff
-                if (response.status >= 500) {
-                    consecutiveErrors++;
-                    if (consecutiveErrors < maxAttempts) {
-                        await new Promise(r => setTimeout(r, baseRetryDelay * Math.pow(2, consecutiveErrors - 1)));
-                        continue;
-                    }
+                consecutiveErrors++;
+                if (consecutiveErrors < maxAttempts) {
+                    await new Promise(r => setTimeout(r, baseRetryDelay * Math.pow(2, consecutiveErrors - 1)));
+                    continue;
                 }
-                entry.status = 'failed';
-                entry.error = 'Failed to check job status';
-                updateQueueItemInDOM(entry);
-
+                // Stop polling but don't mark as failed - mergeServerJobs on
+                // visibility change will resolve the actual status from the server
                 return;
             }
 
@@ -4398,10 +4415,8 @@ async function pollEntryNormalization(entry) {
                 await new Promise(r => setTimeout(r, baseRetryDelay * Math.pow(2, consecutiveErrors - 1)));
                 continue;
             }
-            entry.status = 'failed';
-            entry.error = 'Failed to check job status';
-            updateQueueItemInDOM(entry);
-
+            // Stop polling but don't mark as failed - mergeServerJobs on
+            // visibility change will resolve the actual status from the server
             return;
         }
     }
@@ -5345,6 +5360,12 @@ function mergeServerJobs(serverJobs) {
 
     uploadQueue.push(...newEntries);
 
+    // Sync newly discovered active jobs with the server's push session
+    const newActiveJobIds = newEntries.filter(e => isActiveWork(e) && e.jobId).map(e => e.jobId);
+    if (newActiveJobIds.length > 0) {
+        syncPushSession(newActiveJobIds);
+    }
+
     const currentState = getCurrentState();
 
     if (newEntries.length > 0 && currentState === 'ready') {
@@ -5380,6 +5401,338 @@ function mergeServerJobs(serverJobs) {
     saveQueueState();
     checkAllComplete();
 }
+
+// ============================================================================
+// PUSH NOTIFICATIONS
+// ============================================================================
+
+/**
+ * Whether the page is running as an installed PWA (standalone display mode).
+ * @returns {boolean}
+ */
+function isInstalledPwa() {
+    return FAKE_PWA || window.matchMedia('(display-mode: standalone)').matches;
+}
+
+/**
+ * Whether Push API and service workers are available in this browser.
+ * @returns {boolean}
+ */
+function isPushSupported() {
+    return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+/**
+ * Whether the notification toggle is available (VAPID configured, Push API supported, installed PWA).
+ * Cached on first call. Use this to guard notification-related logic.
+ * @returns {boolean}
+ */
+function isNotificationToggleAvailable() {
+    if (isNotificationToggleAvailable._cached !== undefined) {
+        return isNotificationToggleAvailable._cached;
+    }
+    const toggle = document.getElementById('notif-toggle');
+    isNotificationToggleAvailable._cached = !!(toggle && VAPID_PUBLIC_KEY && isPushSupported() && isInstalledPwa());
+
+    return isNotificationToggleAvailable._cached;
+}
+
+/**
+ * Initialize the push notification toggle button.
+ * The toggle starts hidden and disabled — it becomes visible only when entering queue state.
+ * If the page reloads while a queue is active and notifications were enabled, restores that state.
+ */
+function initNotificationToggle() {
+    if (!isNotificationToggleAvailable()) {
+        return;
+    }
+    const toggle = document.getElementById('notif-toggle');
+
+    const hasActiveQueue = uploadQueue.some(e => isActiveWork(e));
+    const wasEnabled = localStorage.getItem(NOTIF_ENABLED_KEY) === 'true';
+    if (hasActiveQueue && wasEnabled && Notification.permission === 'granted') {
+        toggle.setAttribute('aria-pressed', 'true');
+        // Re-register subscription to refresh LastActiveAt on the server
+        refreshPushSubscription();
+        syncPushSession();
+    } else {
+        localStorage.removeItem(NOTIF_ENABLED_KEY);
+        deleteServerSubscription();
+    }
+
+    toggle.addEventListener('click', handleNotificationToggle);
+}
+
+/**
+ * POST a push subscription's keys to the server for registration.
+ * @param {PushSubscription} subscription
+ * @returns {Promise<Response>}
+ */
+function postSubscriptionToServer(subscription) {
+    const key = subscription.getKey('p256dh');
+    const auth = subscription.getKey('auth');
+
+    return fetch(`/api/feeds/${FEED_ID}/push-subscriptions`, {
+        method: 'POST',
+        headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            endpoint: subscription.endpoint,
+            p256dh: btoa(String.fromCharCode(...new Uint8Array(key))),
+            auth: btoa(String.fromCharCode(...new Uint8Array(auth))),
+        }),
+    });
+}
+
+/**
+ * Re-register the existing push subscription with the server to refresh LastActiveAt.
+ * Called on page reload when the toggle was previously enabled. Fire-and-forget.
+ */
+function refreshPushSubscription() {
+    navigator.serviceWorker.ready.then(reg => reg.pushManager.getSubscription()).then(subscription => {
+        if (!subscription) {
+            return;
+        }
+        postSubscriptionToServer(subscription);
+    }).catch(() => {});
+}
+
+/**
+ * Remove the server-side push subscription without unsubscribing the browser.
+ * Keeps the browser PushSubscription intact so re-enabling the bell is fast (just re-registers).
+ * Fire-and-forget -- errors are silently caught.
+ */
+function deleteServerSubscription() {
+    navigator.serviceWorker.ready.then(reg => reg.pushManager.getSubscription()).then(subscription => {
+        if (!subscription) {
+            return;
+        }
+        fetch(`/api/feeds/${FEED_ID}/push-subscriptions`, {
+            method: 'DELETE',
+            headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint: subscription.endpoint }),
+        });
+    }).catch(() => {});
+}
+
+/**
+ * Sync active jobIds with the server's push session. Called when the bell is enabled or when new
+ * jobs are discovered while the bell is on. Sends the current uploadsRemaining count so the server
+ * knows not to fire until all uploads have received jobIds. Fire-and-forget.
+ * @param {string[]} [jobIds] - specific jobIds to track (if omitted, collects all active from uploadQueue)
+ */
+function syncPushSession(jobIds) {
+    if (!isNotificationToggleEnabled()) {
+        return;
+    }
+    const ids = jobIds || uploadQueue.filter(e => e.jobId && isActiveWork(e)).map(e => e.jobId);
+    const uploadsRemaining = uploadQueue.filter(e => (e.status === 'queued' || e.status === 'uploading') && !e.validationError).length;
+    if (ids.length === 0 && uploadsRemaining === 0) {
+        return;
+    }
+    fetch(`/api/feeds/${FEED_ID}/push-sessions`, {
+        method: 'POST',
+        headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobIds: ids, uploadsRemaining }),
+    }).catch(() => {});
+}
+
+/**
+ * Show or hide the notification toggle. Only visible during active queue state.
+ * @param {boolean} visible
+ */
+function setNotificationToggleVisible(visible) {
+    if (!isNotificationToggleAvailable()) {
+        return;
+    }
+    document.getElementById('notif-toggle').hidden = !visible;
+}
+
+/**
+ * Reset the notification toggle to its default disabled state and clear persisted preference.
+ * If the bell was enabled, also removes the server-side subscription to prevent stale
+ * subscriptions from triggering per-job fallback notifications on subsequent uploads.
+ * Called when a new queue starts, items are added with no active jobs, or the queue finishes.
+ */
+function resetNotificationToggle() {
+    if (!isNotificationToggleAvailable()) {
+        return;
+    }
+    const toggle = document.getElementById('notif-toggle');
+    const wasEnabled = toggle.getAttribute('aria-pressed') === 'true';
+    toggle.setAttribute('aria-pressed', 'false');
+    localStorage.removeItem(NOTIF_ENABLED_KEY);
+    if (wasEnabled) {
+        deleteServerSubscription();
+    }
+}
+
+/**
+ * Whether the notification toggle is currently enabled.
+ * @returns {boolean}
+ */
+function isNotificationToggleEnabled() {
+    if (!isNotificationToggleAvailable()) {
+        return false;
+    }
+
+    return document.getElementById('notif-toggle').getAttribute('aria-pressed') === 'true';
+}
+
+/**
+ * Convert a base64url-encoded VAPID public key to a Uint8Array for pushManager.subscribe().
+ * @param {string} base64String
+ * @returns {Uint8Array}
+ */
+function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - base64String.length % 4) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    const array = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) {
+        array[i] = raw.charCodeAt(i);
+    }
+
+    return array;
+}
+
+/**
+ * Handle notification toggle click.
+ * Updates UI optimistically and disables the button during the async operation.
+ * On failure, reverts the visual state.
+ */
+async function handleNotificationToggle() {
+    const toggle = document.getElementById('notif-toggle');
+    const isEnabled = toggle.getAttribute('aria-pressed') === 'true';
+
+    toggle.disabled = true;
+
+    if (isEnabled) {
+        toggle.setAttribute('aria-pressed', 'false');
+        localStorage.removeItem(NOTIF_ENABLED_KEY);
+        if (FAKE_PWA) {
+            toggle.disabled = false;
+        } else {
+            try {
+                const reg = await navigator.serviceWorker.ready;
+                const subscription = await reg.pushManager.getSubscription();
+                if (subscription) {
+                    await fetch(`/api/feeds/${FEED_ID}/push-subscriptions`, {
+                        method: 'DELETE',
+                        headers: { 'X-API-Key': apiKey, 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ endpoint: subscription.endpoint }),
+                    });
+                    await subscription.unsubscribe();
+                }
+            } catch (e) {
+                console.warn('Failed to unsubscribe from push notifications:', e);
+                toggle.setAttribute('aria-pressed', 'true');
+                localStorage.setItem(NOTIF_ENABLED_KEY, 'true');
+            } finally {
+                toggle.disabled = false;
+            }
+        }
+    } else {
+        // Permission prompt must be synchronous (user gesture required)
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+            toggle.disabled = false;
+
+            return;
+        }
+
+        toggle.setAttribute('aria-pressed', 'true');
+        localStorage.setItem(NOTIF_ENABLED_KEY, 'true');
+        if (FAKE_PWA) {
+            showBatteryOptimizationHint();
+            toggle.disabled = false;
+        } else {
+            try {
+                await subscribeToPush();
+                syncPushSession();
+                showBatteryOptimizationHint();
+            } catch (e) {
+                console.warn('Failed to subscribe to push notifications:', e);
+                toggle.setAttribute('aria-pressed', 'false');
+                localStorage.removeItem(NOTIF_ENABLED_KEY);
+            } finally {
+                toggle.disabled = false;
+            }
+        }
+    }
+}
+
+/**
+ * Create a Web Push subscription and register it with the server.
+ * Extracted so it can be called as a background task from the toggle handler.
+ */
+async function subscribeToPush() {
+    const reg = await navigator.serviceWorker.ready;
+    const subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+    });
+    const response = await postSubscriptionToServer(subscription);
+    if (!response.ok) {
+        await subscription.unsubscribe();
+        throw new Error(`Server rejected subscription: ${response.status}`);
+    }
+}
+
+/**
+ * Show a one-time hint about disabling battery optimization for reliable push notifications.
+ * Only shown on Android (where battery optimization can prevent the service worker from waking).
+ */
+function showBatteryOptimizationHint() {
+    if (localStorage.getItem(NOTIF_HINT_SHOWN_KEY)) {
+        return;
+    }
+    if (!FAKE_PWA && !/android/i.test(navigator.userAgent)) {
+        return;
+    }
+    localStorage.setItem(NOTIF_HINT_SHOWN_KEY, 'true');
+
+    const hint = document.createElement('div');
+    hint.className = 'notif-hint';
+    hint.textContent = 'Tip: disable battery optimization for reliable notifications';
+    hint.addEventListener('click', () => hint.remove());
+    document.body.appendChild(hint);
+    setTimeout(() => hint.remove(), 10000);
+}
+
+/**
+ * Fire a single local notification when the entire queue has finished, if the toggle was enabled.
+ * Only used in FAKE_PWA dev mode -- production notifications are handled server-side via Web Push
+ * sessions (PushNotificationService.TrackJobsAsync).
+ */
+function notifyQueueComplete() {
+    if (!isNotificationToggleEnabled() || !FAKE_PWA) {
+        return;
+    }
+
+    const completed = uploadQueue.filter(e => e.status === 'completed').length;
+    const failed = uploadQueue.filter(e => e.status === 'failed' && !e.validationError).length;
+
+    let body;
+    if (completed > 0 && failed > 0) {
+        body = `${completed} pushed, ${failed} failed`;
+    } else if (completed > 0) {
+        body = completed === 1 ? '1 episode pushed' : `${completed} episodes pushed`;
+    } else if (failed > 0) {
+        body = failed === 1 ? '1 episode failed' : `${failed} episodes failed`;
+    } else {
+        return;
+    }
+
+    const iconUrl = document.getElementById('feed-artwork')?.src;
+    const title = document.getElementById('feed-name')?.textContent?.trim() || 'FeatherPod';
+
+    if (Notification.permission === 'granted') {
+        new Notification(title, { body, icon: iconUrl || undefined, data: { feedId: FEED_ID } });
+    }
+
+    resetNotificationToggle();
+}
+
 
 window.addEventListener('DOMContentLoaded', init);
 window.addEventListener('hashchange', init);
