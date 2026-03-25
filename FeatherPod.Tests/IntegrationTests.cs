@@ -1508,6 +1508,91 @@ public sealed class IntegrationTests : IDisposable
         Assert.Contains("New Title", titleContent);
         Assert.Contains("Important context", titleContent);
     }
+
+    // Conditional GET (304 Not Modified) tests
+
+    [AzuriteFact]
+    public async Task GetFeed_ReturnsETagAndLastModifiedAndCacheControlHeaders()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+
+        // Act
+        var response = await _client.GetAsync($"/{TestFeedId}/feed.xml");
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.NotNull(response.Headers.ETag);
+        Assert.NotEmpty(response.Headers.ETag.Tag);
+        Assert.NotNull(response.Content.Headers.LastModified);
+        Assert.Equal("public, max-age=60", response.Headers.CacheControl?.ToString());
+    }
+
+    [AzuriteFact]
+    public async Task GetFeed_Returns304_WhenETagMatches()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+        var response1 = await _client.GetAsync($"/{TestFeedId}/feed.xml");
+        var etag = response1.Headers.ETag!;
+
+        // Act
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/{TestFeedId}/feed.xml");
+        request.Headers.IfNoneMatch.Add(etag);
+        var response2 = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotModified, response2.StatusCode);
+        Assert.NotNull(response2.Headers.ETag);
+    }
+
+    [AzuriteFact]
+    public async Task GetFeed_Returns200_WithNewETag_AfterEpisodeAdded()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+        var response1 = await _client.GetAsync($"/{TestFeedId}/feed.xml");
+        var etag1 = response1.Headers.ETag!;
+
+        // Add an episode
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent("fake audio data"u8.ToArray());
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", "new-episode.mp3");
+        content.Add(new StringContent("New Episode"), "title");
+
+        var uploadRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes");
+        uploadRequest.Content = content;
+        uploadRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var uploadResponse = await _client.SendAsync(uploadRequest);
+        uploadResponse.EnsureSuccessStatusCode();
+
+        // Act
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/{TestFeedId}/feed.xml");
+        request.Headers.IfNoneMatch.Add(etag1);
+        var response2 = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response2.StatusCode);
+        Assert.NotEqual(etag1.Tag, response2.Headers.ETag!.Tag);
+    }
+
+    [AzuriteFact]
+    public async Task GetFeed_Returns304_WhenIfModifiedSinceIsCurrent()
+    {
+        // Arrange
+        await CreateTestFeedAsync();
+        var response1 = await _client.GetAsync($"/{TestFeedId}/feed.xml");
+        var lastModified = response1.Content.Headers.LastModified!.Value;
+
+        // Act
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/{TestFeedId}/feed.xml");
+        request.Headers.IfModifiedSince = lastModified;
+        var response2 = await _client.SendAsync(request);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotModified, response2.StatusCode);
+    }
 }
 
 internal class FeatherPodWebApplicationFactory : WebApplicationFactory<FeatherPod.Server.ServerAssemblyMarker>

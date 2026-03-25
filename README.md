@@ -217,7 +217,7 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 
 | Endpoint | Method | Auth | Description |
 |----------|--------|------|-------------|
-| `/{feedId}/feed.xml` | GET | Public | RSS podcast feed |
+| `/{feedId}/feed.xml` | GET | Public | RSS podcast feed (conditional GET: ETag, 304) |
 | `/{feedId}/icon.png` | GET | Public | Feed icon (immutable cache, 1 year) |
 | `/{feedId}/icon-{size}.png` | GET | Public | Resized icon (192 or 512px, for PWA manifest) |
 | `/{feedId}/audio/{filename}` | GET | Public | Stream audio (RFC 7233 range requests) |

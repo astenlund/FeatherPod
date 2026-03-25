@@ -7,7 +7,7 @@ namespace FeatherPod.Server.Services;
 
 public static class RssFeedGenerator
 {
-    public static string GenerateFeed(FeedConfig feedConfig, string baseUrl, List<Episode> episodes)
+    public static string GenerateFeed(FeedConfig feedConfig, string baseUrl, List<Episode> episodes, DateTime lastBuildDate)
     {
         var settings = new XmlWriterSettings
         {
@@ -32,7 +32,7 @@ public static class RssFeedGenerator
         writer.WriteElementString("description", feedConfig.Description ?? string.Empty);
         writer.WriteElementString("link", $"{baseUrl}/{feedConfig.Id}/feed.xml");
         writer.WriteElementString("language", feedConfig.Language);
-        writer.WriteElementString("lastBuildDate", DateTime.UtcNow.ToString("R"));
+        writer.WriteElementString("lastBuildDate", lastBuildDate.ToString("R"));
 
         // iTunes specific tags
         writer.WriteStartElement("itunes", "author", null);
@@ -74,7 +74,7 @@ public static class RssFeedGenerator
         writer.WriteEndElement();
 
         // Episodes
-        foreach (var episode in episodes.OrderByDescending(e => e.PublishedDate))
+        foreach (var episode in episodes)
         {
             WriteEpisode(writer, episode, feedConfig, baseUrl);
         }

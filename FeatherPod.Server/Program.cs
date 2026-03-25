@@ -129,26 +129,57 @@ app.MapGet("/health", async (EpisodeService episodeService) =>
 // ============================================================================
 
 // RSS feed for specific feed
-app.MapGet("/{feedId}/feed.xml", async (string feedId, EpisodeService service) =>
+app.MapGet("/{feedId}/feed.xml", async (string feedId, EpisodeService service, HttpContext context) =>
     {
         if (!InputValidation.IsValidFeedId(feedId))
         {
             return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
         }
 
-        var feed = await service.GetFeedAsync(feedId);
-        if (feed == null)
+        var snapshot = await service.GetFeedSnapshotAsync(feedId);
+        if (snapshot == null)
         {
             return Results.NotFound($"Feed '{feedId}' not found");
         }
 
-        var episodes = await service.GetAllEpisodesAsync(feedId);
-        var xml = RssFeedGenerator.GenerateFeed(feed, baseUrl, episodes);
+        var (feed, episodes, version, lastModified) = snapshot.Value;
+        var etag = $"\"{feedId}-{version}\"";
+
+        // Truncate to second precision for HTTP date comparison
+        var lastModifiedTruncated = new DateTime(lastModified.Year, lastModified.Month, lastModified.Day, lastModified.Hour, lastModified.Minute, lastModified.Second, DateTimeKind.Utc);
+
+        void SetCacheHeaders()
+        {
+            context.Response.Headers.ETag = etag;
+            context.Response.Headers.LastModified = lastModifiedTruncated.ToString("R");
+            context.Response.Headers.CacheControl = "public, max-age=60";
+        }
+
+        // Check If-None-Match (strip W/ weak prefix per RFC 9110)
+        var ifNoneMatch = context.Request.Headers.IfNoneMatch.ToString().Trim();
+        if (ifNoneMatch == "*" || string.Equals(ifNoneMatch, etag, StringComparison.Ordinal) || string.Equals(ifNoneMatch, $"W/{etag}", StringComparison.Ordinal))
+        {
+            SetCacheHeaders();
+
+            return Results.StatusCode(304);
+        }
+
+        // Check If-Modified-Since
+        if (DateTimeOffset.TryParseExact(context.Request.Headers.IfModifiedSince.ToString(), "R", null, System.Globalization.DateTimeStyles.None, out var ifModifiedSince) && lastModifiedTruncated <= ifModifiedSince.UtcDateTime)
+        {
+            SetCacheHeaders();
+
+            return Results.StatusCode(304);
+        }
+
+        var xml = RssFeedGenerator.GenerateFeed(feed, baseUrl, episodes, lastModifiedTruncated);
+        SetCacheHeaders();
 
         return Results.Content(xml, "application/xml");
     })
     .WithName("GetRssFeed")
     .Produces(200, contentType: "application/xml")
+    .Produces(304)
     .Produces(404);
 
 // Icon for specific feed (streams from blob storage)

@@ -13,6 +13,10 @@ public sealed partial class EpisodeService : IDisposable
 
     // Feed ID → List of Episodes
     private readonly Dictionary<string, List<Episode>> _episodesByFeed = new();
+    private readonly Dictionary<string, FeedVersionState> _feedVersionByFeed = new();
+    private static readonly DateTime ServerStartTime = DateTime.UtcNow;
+
+    private record FeedVersionState(long Version, DateTime ModifiedAt, string? LastSyncJson);
     private FeedsMetadata _feedsMetadata = new();
     private readonly JsonSerializerOptions _jsonSerializerOptions = new() { WriteIndented = true };
 
@@ -76,6 +80,7 @@ public sealed partial class EpisodeService : IDisposable
             };
 
             _episodesByFeed[feedConfig.Id] = new List<Episode>();
+            BumpFeedVersion(feedConfig.Id);
 
             await SaveFeedsAsync();
             _logger.LogInformation("Created feed: {FeedId}", feedConfig.Id);
@@ -109,6 +114,7 @@ public sealed partial class EpisodeService : IDisposable
             var feeds = _feedsMetadata.Feeds.ToList();
             feeds[existingIndex] = updatedConfig;
             _feedsMetadata = new() { Feeds = feeds };
+            BumpFeedVersion(feedId);
 
             await SaveFeedsAsync();
             _logger.LogInformation("Updated feed: {FeedId}", feedId);
@@ -155,6 +161,9 @@ public sealed partial class EpisodeService : IDisposable
                 _episodesByFeed[newFeedId] = updatedEpisodes;
             }
 
+            RemoveFeedVersionTracking(oldFeedId);
+            BumpFeedVersion(newFeedId);
+
             await SaveFeedsAsync();
 
             _logger.LogInformation("Renamed feed: {OldId} → {NewId}", oldFeedId, newFeedId);
@@ -188,6 +197,7 @@ public sealed partial class EpisodeService : IDisposable
 
             // Remove episodes from memory
             _episodesByFeed.Remove(feedId);
+            RemoveFeedVersionTracking(feedId);
 
             await SaveFeedsAsync();
 
@@ -210,6 +220,30 @@ public sealed partial class EpisodeService : IDisposable
             return !_episodesByFeed.TryGetValue(feedId, out var value)
                 ? []
                 : value.OrderByDescending(e => e.PublishedDate).ToList();
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    public async Task<(FeedConfig Feed, List<Episode> Episodes, long Version, DateTime LastModified)?> GetFeedSnapshotAsync(string feedId)
+    {
+        await _lock.WaitAsync();
+
+        try
+        {
+            var feed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == feedId);
+            if (feed == null || !_episodesByFeed.TryGetValue(feedId, out var episodes))
+            {
+                return null;
+            }
+
+            var state = _feedVersionByFeed.GetValueOrDefault(feedId);
+            var version = state?.Version ?? 0;
+            var lastModified = state?.ModifiedAt ?? ServerStartTime;
+
+            return (feed, episodes.OrderByDescending(e => e.PublishedDate).ToList(), version, lastModified);
         }
         finally
         {
@@ -338,6 +372,44 @@ public sealed partial class EpisodeService : IDisposable
         var fileName = fileInfo.Name;
         var id = episodeId ?? Episode.GenerateId(feedId, fileName, fileInfo.Length);
 
+        // Do all I/O outside the lock to avoid blocking other operations
+        var duration = GetAudioDuration(filePath);
+
+        DateTime finalPublishedDate;
+        if (publishedDate.HasValue)
+        {
+            finalPublishedDate = publishedDate.Value;
+            _logger.LogDebug("Using explicitly provided published date for {File}: {Date}", fileName, finalPublishedDate);
+        }
+        else if (feed.UseFileMetadataForPublishDate)
+        {
+            finalPublishedDate = GetPublishedDate(filePath);
+            _logger.LogDebug("Using file metadata (config) for published date for {File}: {Date}", fileName, finalPublishedDate);
+        }
+        else
+        {
+            finalPublishedDate = DateTime.UtcNow;
+            _logger.LogDebug("Using current time for published date for {File}: {Date}", fileName, finalPublishedDate);
+        }
+
+        await _blobStorage.UploadAudioAsync(feedId, fileName, filePath);
+
+        var episode = new Episode
+        {
+            Id = id,
+            FeedId = feedId,
+            Title = title ?? ParseTitleFromFilename(fileName),
+            Description = description,
+            Summary = summary,
+            FileName = fileName,
+            FileSize = fileInfo.Length,
+            Duration = duration,
+            PublishedDate = finalPublishedDate,
+            Source = source,
+            UploadedAt = DateTime.UtcNow
+        };
+
+        // Acquire lock only for in-memory state mutation
         await _lock.WaitAsync(cancellationToken);
         try
         {
@@ -354,43 +426,8 @@ public sealed partial class EpisodeService : IDisposable
                 episodes.Remove(existingEpisode);
             }
 
-            var duration = GetAudioDuration(filePath);
-
-            DateTime finalPublishedDate;
-            if (publishedDate.HasValue)
-            {
-                finalPublishedDate = publishedDate.Value;
-                _logger.LogDebug("Using explicitly provided published date for {File}: {Date}", fileName, finalPublishedDate);
-            }
-            else if (feed.UseFileMetadataForPublishDate)
-            {
-                finalPublishedDate = GetPublishedDate(filePath);
-                _logger.LogDebug("Using file metadata (config) for published date for {File}: {Date}", fileName, finalPublishedDate);
-            }
-            else
-            {
-                finalPublishedDate = DateTime.UtcNow;
-                _logger.LogDebug("Using current time for published date for {File}: {Date}", fileName, finalPublishedDate);
-            }
-
-            await _blobStorage.UploadAudioAsync(feedId, fileName, filePath);
-
-            var episode = new Episode
-            {
-                Id = id,
-                FeedId = feedId,
-                Title = title ?? ParseTitleFromFilename(fileName),
-                Description = description,
-                Summary = summary,
-                FileName = fileName,
-                FileSize = fileInfo.Length,
-                Duration = duration,
-                PublishedDate = finalPublishedDate,
-                Source = source,
-                UploadedAt = DateTime.UtcNow
-            };
-
             episodes.Add(episode);
+            BumpFeedVersion(feedId);
             await SaveEpisodesAsync(feedId);
 
             _logger.LogInformation("Added episode to feed {FeedId}: {Title} ({FileName})", feedId, episode.Title, fileName);
@@ -433,6 +470,7 @@ public sealed partial class EpisodeService : IDisposable
 
             // Remove from list
             _episodesByFeed[feedId].Remove(episode);
+            BumpFeedVersion(feedId);
             await SaveEpisodesAsync(feedId);
 
             _logger.LogInformation("Deleted episode from feed {FeedId}: {Title}", feedId, episode.Title);
@@ -474,6 +512,7 @@ public sealed partial class EpisodeService : IDisposable
                 Note = note ?? existing.Note,
             };
             episodes[index] = updated;
+            BumpFeedVersion(feedId);
             await SaveEpisodesAsync(feedId);
 
             if (title != null)
@@ -496,11 +535,11 @@ public sealed partial class EpisodeService : IDisposable
 
     public async Task<Episode> MoveEpisodeAsync(string episodeId, string sourceFeedId, string targetFeedId)
     {
+        // Snapshot episode info under lock for blob I/O
+        Episode episode;
         await _lock.WaitAsync();
-
         try
         {
-            // Verify both feeds exist
             var sourceFeed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == sourceFeedId);
             var targetFeed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == targetFeedId);
             if (sourceFeed == null || targetFeed == null)
@@ -508,33 +547,39 @@ public sealed partial class EpisodeService : IDisposable
                 throw new InvalidOperationException("Source or target feed not found");
             }
 
-            // Find episode in source feed
-            var episode = _episodesByFeed[sourceFeedId].FirstOrDefault(e => e.Id == episodeId);
-            if (episode == null)
-            {
-                throw new InvalidOperationException($"Episode '{episodeId}' not found in feed '{sourceFeedId}'");
-            }
+            episode = _episodesByFeed[sourceFeedId].FirstOrDefault(e => e.Id == episodeId)
+                ?? throw new InvalidOperationException($"Episode '{episodeId}' not found in feed '{sourceFeedId}'");
+        }
+        finally
+        {
+            _lock.Release();
+        }
 
-            // Move blob in storage
-            var tempPath = await _blobStorage.DownloadAudioToTempAsync(sourceFeedId, episode.FileName);
-            await _blobStorage.UploadAudioAsync(targetFeedId, episode.FileName, tempPath);
-            await _blobStorage.DeleteAudioAsync(sourceFeedId, episode.FileName);
-            File.Delete(tempPath);
+        // Do blob I/O outside the lock
+        var tempPath = await _blobStorage.DownloadAudioToTempAsync(sourceFeedId, episode.FileName);
+        await _blobStorage.UploadAudioAsync(targetFeedId, episode.FileName, tempPath);
+        await _blobStorage.DeleteAudioAsync(sourceFeedId, episode.FileName);
+        File.Delete(tempPath);
 
-            // Update episode and move to target feed
-            var newId = Episode.GenerateId(targetFeedId, episode.FileName, episode.FileSize);
-            var movedEpisode = episode with
-            {
-                Id = newId,
-                FeedId = targetFeedId
-            };
+        var newId = Episode.GenerateId(targetFeedId, episode.FileName, episode.FileSize);
+        var movedEpisode = episode with
+        {
+            Id = newId,
+            FeedId = targetFeedId
+        };
 
+        // Acquire lock for in-memory state mutation
+        await _lock.WaitAsync();
+        try
+        {
             _episodesByFeed[sourceFeedId].Remove(episode);
             if (!_episodesByFeed.ContainsKey(targetFeedId))
             {
                 _episodesByFeed[targetFeedId] = [];
             }
             _episodesByFeed[targetFeedId].Add(movedEpisode);
+            BumpFeedVersion(sourceFeedId);
+            BumpFeedVersion(targetFeedId);
 
             await SaveEpisodesAsync(sourceFeedId);
             await SaveEpisodesAsync(targetFeedId);
@@ -551,11 +596,11 @@ public sealed partial class EpisodeService : IDisposable
 
     public async Task<Episode> CopyEpisodeAsync(string episodeId, string sourceFeedId, string targetFeedId)
     {
+        // Snapshot episode info under lock for blob I/O
+        Episode episode;
         await _lock.WaitAsync();
-
         try
         {
-            // Verify both feeds exist
             var sourceFeed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == sourceFeedId);
             var targetFeed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == targetFeedId);
             if (sourceFeed == null || targetFeed == null)
@@ -563,31 +608,36 @@ public sealed partial class EpisodeService : IDisposable
                 throw new InvalidOperationException("Source or target feed not found");
             }
 
-            // Find episode in source feed
-            var episode = _episodesByFeed[sourceFeedId].FirstOrDefault(e => e.Id == episodeId);
-            if (episode == null)
-            {
-                throw new InvalidOperationException($"Episode '{episodeId}' not found in feed '{sourceFeedId}'");
-            }
+            episode = _episodesByFeed[sourceFeedId].FirstOrDefault(e => e.Id == episodeId)
+                ?? throw new InvalidOperationException($"Episode '{episodeId}' not found in feed '{sourceFeedId}'");
+        }
+        finally
+        {
+            _lock.Release();
+        }
 
-            // Copy blob in storage
-            var tempPath = await _blobStorage.DownloadAudioToTempAsync(sourceFeedId, episode.FileName);
-            await _blobStorage.UploadAudioAsync(targetFeedId, episode.FileName, tempPath);
-            File.Delete(tempPath);
+        // Do blob I/O outside the lock
+        var tempPath = await _blobStorage.DownloadAudioToTempAsync(sourceFeedId, episode.FileName);
+        await _blobStorage.UploadAudioAsync(targetFeedId, episode.FileName, tempPath);
+        File.Delete(tempPath);
 
-            // Create copied episode with new ID
-            var newId = Episode.GenerateId(targetFeedId, episode.FileName, episode.FileSize);
-            var copiedEpisode = episode with
-            {
-                Id = newId,
-                FeedId = targetFeedId
-            };
+        var newId = Episode.GenerateId(targetFeedId, episode.FileName, episode.FileSize);
+        var copiedEpisode = episode with
+        {
+            Id = newId,
+            FeedId = targetFeedId
+        };
 
+        // Acquire lock for in-memory state mutation
+        await _lock.WaitAsync();
+        try
+        {
             if (!_episodesByFeed.ContainsKey(targetFeedId))
             {
-                _episodesByFeed[targetFeedId] = new List<Episode>();
+                _episodesByFeed[targetFeedId] = [];
             }
             _episodesByFeed[targetFeedId].Add(copiedEpisode);
+            BumpFeedVersion(targetFeedId);
 
             await SaveEpisodesAsync(targetFeedId);
 
@@ -615,6 +665,19 @@ public sealed partial class EpisodeService : IDisposable
         try
         {
             _episodesByFeed[feedId] = episodes;
+
+            var currentState = _feedVersionByFeed.GetValueOrDefault(feedId);
+            if (!string.Equals(metadataJson, currentState?.LastSyncJson, StringComparison.Ordinal))
+            {
+                BumpFeedVersion(feedId);
+            }
+
+            // Update LastSyncJson to current blob content (preserve version/modifiedAt from BumpFeedVersion if it ran)
+            var updatedState = _feedVersionByFeed.GetValueOrDefault(feedId);
+            if (updatedState != null)
+            {
+                _feedVersionByFeed[feedId] = updatedState with { LastSyncJson = metadataJson };
+            }
         }
         finally
         {
@@ -674,7 +737,22 @@ public sealed partial class EpisodeService : IDisposable
             {
                 _episodesByFeed[feed.Id] = [];
             }
+
+            _feedVersionByFeed[feed.Id] = new FeedVersionState(0, ServerStartTime, metadataJson);
         }
+    }
+
+    private void BumpFeedVersion(string feedId)
+    {
+        var current = _feedVersionByFeed.GetValueOrDefault(feedId);
+        var lastSyncJson = current?.LastSyncJson;
+
+        _feedVersionByFeed[feedId] = new FeedVersionState((current?.Version ?? 0) + 1, DateTime.UtcNow, lastSyncJson);
+    }
+
+    private void RemoveFeedVersionTracking(string feedId)
+    {
+        _feedVersionByFeed.Remove(feedId);
     }
 
     private async Task SaveEpisodesAsync(string feedId)

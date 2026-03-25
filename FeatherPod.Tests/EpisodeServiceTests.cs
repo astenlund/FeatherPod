@@ -587,6 +587,137 @@ public class EpisodeServiceTests : IDisposable
         Assert.Single(result);
     }
 
+    // Feed version tracking tests
+
+    [Fact]
+    public async Task GetFeedSnapshot_ReturnsNullForNonexistentFeed()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+
+        // Act
+        var snapshot = await service.GetFeedSnapshotAsync("nonexistent");
+
+        // Assert
+        Assert.Null(snapshot);
+    }
+
+    [Fact]
+    public async Task FeedVersion_IncreasesOnEpisodeAdd()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var snapshot1 = await service.GetFeedSnapshotAsync(TestFeedId);
+        var versionAfterCreate = snapshot1!.Value.Version;
+
+        var testFile = Path.Combine(_testDirectory, "test.mp3");
+        await File.WriteAllTextAsync(testFile, "audio data");
+
+        // Act
+        await service.AddEpisodeAsync(TestFeedId, testFile, "Episode 1");
+        var snapshot2 = await service.GetFeedSnapshotAsync(TestFeedId);
+
+        // Assert
+        Assert.True(snapshot2!.Value.Version > versionAfterCreate);
+    }
+
+    [Fact]
+    public async Task FeedVersion_IncreasesOnEpisodeDelete()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var testFile = Path.Combine(_testDirectory, "test.mp3");
+        await File.WriteAllTextAsync(testFile, "audio data");
+        var episode = await service.AddEpisodeAsync(TestFeedId, testFile, "Episode 1");
+
+        var snapshot1 = await service.GetFeedSnapshotAsync(TestFeedId);
+        var versionBeforeDelete = snapshot1!.Value.Version;
+
+        // Act
+        await service.DeleteEpisodeAsync(TestFeedId, episode.Id);
+        var snapshot2 = await service.GetFeedSnapshotAsync(TestFeedId);
+
+        // Assert
+        Assert.True(snapshot2!.Value.Version > versionBeforeDelete);
+    }
+
+    [Fact]
+    public async Task FeedVersion_IncreasesOnMetadataUpdate()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var testFile = Path.Combine(_testDirectory, "test.mp3");
+        await File.WriteAllTextAsync(testFile, "audio data");
+        var episode = await service.AddEpisodeAsync(TestFeedId, testFile, "Episode 1");
+
+        var snapshot1 = await service.GetFeedSnapshotAsync(TestFeedId);
+        var versionBeforeUpdate = snapshot1!.Value.Version;
+
+        // Act
+        await service.UpdateEpisodeMetadataAsync(TestFeedId, episode.Id, title: "New Title");
+        var snapshot2 = await service.GetFeedSnapshotAsync(TestFeedId);
+
+        // Assert
+        Assert.True(snapshot2!.Value.Version > versionBeforeUpdate);
+    }
+
+    [Fact]
+    public async Task FeedVersion_IncreasesOnFeedConfigUpdate()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var snapshot1 = await service.GetFeedSnapshotAsync(TestFeedId);
+        var versionBeforeUpdate = snapshot1!.Value.Version;
+
+        // Act
+        var updatedConfig = new FeedConfig
+        {
+            Id = TestFeedId,
+            Title = "Updated Podcast",
+            Description = "Updated Description",
+            Author = "Test Author"
+        };
+        await service.UpdateFeedAsync(TestFeedId, updatedConfig);
+        var snapshot2 = await service.GetFeedSnapshotAsync(TestFeedId);
+
+        // Assert
+        Assert.True(snapshot2!.Value.Version > versionBeforeUpdate);
+    }
+
+    [Fact]
+    public async Task FeedVersion_SnapshotIncludesEpisodes()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var testFile = Path.Combine(_testDirectory, "test.mp3");
+        await File.WriteAllTextAsync(testFile, "audio data");
+        await service.AddEpisodeAsync(TestFeedId, testFile, "Episode 1");
+
+        // Act
+        var snapshot = await service.GetFeedSnapshotAsync(TestFeedId);
+
+        // Assert
+        Assert.NotNull(snapshot);
+        Assert.Single(snapshot.Value.Episodes);
+        Assert.Equal("Episode 1", snapshot.Value.Episodes[0].Title);
+    }
+
     public void Dispose()
     {
         // Dispose all services first to release file handles
