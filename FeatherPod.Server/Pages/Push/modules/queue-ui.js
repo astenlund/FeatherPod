@@ -39,7 +39,7 @@ export function renderQueueList(animateNew) {
     }
 }
 
-function createQueueItemElement(entry) {
+export function createQueueItemElement(entry) {
     const item = document.createElement('div');
     item.className = 'queue-item queue-item--' + entry.status;
     item.id = 'queue-item-' + entry.id;

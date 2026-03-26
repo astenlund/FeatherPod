@@ -9,6 +9,10 @@ import './modules/notifications.js';
 import './modules/progress.js';
 import './modules/state.js';
 import './modules/queue-ui.js';
+import './modules/queue.js';
+import './modules/history.js';
+import './modules/editing.js';
+import './modules/server-sync.js';
 
 // FEED_ID, ICON_ETAG, IS_DEV, PROGRESS_SMOOTHING are set as globals by the HTML page
 

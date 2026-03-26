@@ -16,6 +16,10 @@ self.addEventListener('install', (event) => {
             `${scope}/modules/progress.js`,
             `${scope}/modules/state.js`,
             `${scope}/modules/queue-ui.js`,
+            `${scope}/modules/queue.js`,
+            `${scope}/modules/history.js`,
+            `${scope}/modules/editing.js`,
+            `${scope}/modules/server-sync.js`,
         ];
         for (const url of urls) {
             try {
