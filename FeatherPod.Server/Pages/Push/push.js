@@ -6,6 +6,9 @@ import './modules/auth.js';
 import './modules/artwork.js';
 import './modules/wake-lock.js';
 import './modules/notifications.js';
+import './modules/progress.js';
+import './modules/state.js';
+import './modules/queue-ui.js';
 
 // FEED_ID, ICON_ETAG, IS_DEV, PROGRESS_SMOOTHING are set as globals by the HTML page
 

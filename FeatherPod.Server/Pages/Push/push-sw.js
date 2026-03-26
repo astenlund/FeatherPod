@@ -13,6 +13,9 @@ self.addEventListener('install', (event) => {
             `${scope}/modules/artwork.js`,
             `${scope}/modules/wake-lock.js`,
             `${scope}/modules/notifications.js`,
+            `${scope}/modules/progress.js`,
+            `${scope}/modules/state.js`,
+            `${scope}/modules/queue-ui.js`,
         ];
         for (const url of urls) {
             try {
