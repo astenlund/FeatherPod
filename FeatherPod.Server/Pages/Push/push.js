@@ -2173,7 +2173,7 @@ async function processEntry(entry) {
         if (err.name === 'AbortError') {
             removeQueueItemFromDOM(entry.id);
             uploadQueue.splice(uploadQueue.indexOf(entry), 1);
-        
+
             saveQueueState();
             advanceQueue();
 
@@ -4270,7 +4270,7 @@ function monitorEntryNormalization(entry) {
                     entry.status = 'cancelled';
                     removeQueueItemFromDOM(entry.id);
                     uploadQueue.splice(uploadQueue.indexOf(entry), 1);
-                
+
                     saveQueueState();
                     finishMonitoring();
 
@@ -4290,7 +4290,7 @@ function monitorEntryNormalization(entry) {
                 entry.status = 'cancelled';
                 removeQueueItemFromDOM(entry.id);
                 uploadQueue.splice(uploadQueue.indexOf(entry), 1);
-            
+
                 saveQueueState();
                 finishMonitoring();
 
@@ -4945,7 +4945,6 @@ function clearQueueState() {
         // Ignore
     }
 }
-
 
 /**
  * Connect to a local file server SSE and fetch initial files.
@@ -6206,4 +6205,3 @@ document.getElementById('delete-confirm-overlay')?.addEventListener('keydown', (
         trapFocus(e, modal);
     }
 });
-

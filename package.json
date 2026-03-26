@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "eslint FeatherPod.Server/Pages/Push/",
+    "lint:fix": "eslint --fix FeatherPod.Server/Pages/Push/"
+  },
+  "devDependencies": {
+    "eslint": "^9.39.4",
+    "eslint-plugin-import": "^2.32.0"
+  }
+}

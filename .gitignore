@@ -47,6 +47,9 @@ artifacts/
 # VS Code
 .vscode/
 
+# Node.js (ESLint tooling)
+node_modules/
+
 # Mac
 .DS_Store
 

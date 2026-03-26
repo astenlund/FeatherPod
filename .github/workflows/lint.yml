@@ -1,0 +1,30 @@
+name: Lint JS
+
+on:
+  push:
+    paths:
+      - 'FeatherPod.Server/Pages/Push/**/*.js'
+      - 'eslint.config.js'
+
+permissions:
+  contents: write
+
+jobs:
+  eslint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - run: npx eslint --fix FeatherPod.Server/Pages/Push/
+
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: 'style: auto-fix lint'
+          file_pattern: '*.js'
