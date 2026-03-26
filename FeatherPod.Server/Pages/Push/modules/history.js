@@ -562,7 +562,7 @@ async function fetchHistoryByFilter() {
  * Get the appropriate empty state message for the current filter.
  * @returns {string}
  */
-function getHistoryEmptyMessage() {
+export function getHistoryEmptyMessage() {
     switch (historyFilter) {
         case 'local':
             return 'No uploads from this browser yet';

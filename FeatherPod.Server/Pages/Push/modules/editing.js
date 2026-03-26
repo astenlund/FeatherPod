@@ -1,6 +1,6 @@
 import { FEED_ID } from './config.js';
 import { getApiKey } from './auth.js';
-import { removeFromLocalHistory, updateLocalHistoryTitle, getHistoryData, getHistorySelectedId, selectHistoryUpload, updateHistoryInfoCard, updateHistoryListScrollState, invalidateBrowserUploadsCache, invalidateAllUploadsCache } from './history.js';
+import { removeFromLocalHistory, updateLocalHistoryTitle, getHistoryData, getHistorySelectedId, selectHistoryUpload, updateHistoryInfoCard, updateHistoryListScrollState, invalidateBrowserUploadsCache, invalidateAllUploadsCache, getHistoryEmptyMessage } from './history.js';
 
 /** @type {string|null} */
 let contextMenuTargetId = null;
@@ -168,16 +168,6 @@ export async function deleteEpisode(episodeId) {
     }
 
     hideDeleteConfirm();
-}
-
-// getHistoryEmptyMessage is private to history.js. In the original code, deleteEpisode
-// accessed it as a module-level function. For the extraction, we replicate the logic
-// inline since it's a simple switch. However, looking at the original code more carefully,
-// deleteEpisode calls getHistoryEmptyMessage() which reads historyFilter from history.js.
-// We need to import it or replicate. Let's just use a generic message here since the
-// empty message will be refreshed when the history section re-renders.
-function getHistoryEmptyMessage() {
-    return 'No uploads yet';
 }
 
 /**

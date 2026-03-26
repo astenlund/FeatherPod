@@ -876,7 +876,7 @@ public sealed class IntegrationTests : IDisposable
         var content = await response.Content.ReadAsStringAsync();
         Assert.Contains("<!DOCTYPE html>", content);
         Assert.Contains($"/{TestFeedId}/icon.png", content);
-        Assert.Contains($"const FEED_ID = '{TestFeedId}'", content);
+        Assert.Contains($"window.FEED_ID = '{TestFeedId}'", content);
         Assert.Contains("Push to Test Podcast", content);
     }
 

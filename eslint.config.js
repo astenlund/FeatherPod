@@ -97,7 +97,7 @@ export default [
         rules: sharedRules,
     },
 
-    // Push page ES modules (future: modules/ directory)
+    // Push page ES modules (modules/ directory)
     {
         files: [`${pushDir}modules/**/*.js`],
         plugins: {

@@ -1,7 +1,10 @@
+const CACHE_NAME = 'push-page';
+const SHARE_CACHE_NAME = 'share-target';
+
 self.addEventListener('install', (event) => {
     event.waitUntil((async () => {
         const scope = new URL(self.registration.scope).pathname;
-        const cache = await caches.open('push-page');
+        const cache = await caches.open(CACHE_NAME);
         const urls = [
             scope,
             `${scope}/app.js`,
@@ -77,7 +80,7 @@ self.addEventListener('fetch', (event) => {
                 const files = formData.getAll('audio');
 
                 if (files.length > 0) {
-                    const cache = await caches.open('share-target');
+                    const cache = await caches.open(SHARE_CACHE_NAME);
                     for (const file of files) {
                         const key = `/shared/${Date.now()}-${Math.random().toString(36).slice(2)}-${file.name}`;
                         await cache.put(key, new Response(file));
@@ -99,7 +102,7 @@ self.addEventListener('fetch', (event) => {
 
         if (isNavigation || isAsset) {
             event.respondWith((async () => {
-                const cache = await caches.open('push-page');
+                const cache = await caches.open(CACHE_NAME);
                 const cached = await cache.match(event.request);
 
                 const networkFetch = fetch(event.request).then(response => {

@@ -85,6 +85,8 @@ import { loadDismissedJobIds, connectFeedEvents, fetchRecentJobs, mergeServerJob
 // Wire up queue-ui callbacks
 initQueue();
 
+const API_KEY_REGEX = /fp_[a-zA-Z0-9-]+_[A-Za-z0-9_-]{22}(?=[^A-Za-z0-9_-]|$)/;
+
 /** Whether initNoKeyState has already been called (prevents duplicate listeners) */
 let noKeyStateInitialized = false;
 
@@ -443,7 +445,7 @@ function initNoKeyState() {
             return;
         }
 
-        const fpKeyMatch = key.match(/fp_[a-zA-Z0-9-]+_[A-Za-z0-9_-]{22}(?=[^A-Za-z0-9_-]|$)/);
+        const fpKeyMatch = key.match(API_KEY_REGEX);
         if (fpKeyMatch) {
             key = fpKeyMatch[0];
         }
@@ -492,7 +494,7 @@ function initNoKeyState() {
 
             const clipboardText = await navigator.clipboard.readText();
             const trimmed = clipboardText ? clipboardText.trim() : '';
-            const fpKeyMatch = trimmed.match(/fp_[a-zA-Z0-9-]+_[A-Za-z0-9_-]{22}(?=[^A-Za-z0-9_-]|$)/);
+            const fpKeyMatch = trimmed.match(API_KEY_REGEX);
 
             if (!fpKeyMatch) {
                 pasteBtn.disabled = false;
