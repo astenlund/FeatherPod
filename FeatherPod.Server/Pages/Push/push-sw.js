@@ -9,6 +9,10 @@ self.addEventListener('install', (event) => {
             `${scope}/modules/config.js`,
             `${scope}/modules/events.js`,
             `${scope}/modules/utils.js`,
+            `${scope}/modules/auth.js`,
+            `${scope}/modules/artwork.js`,
+            `${scope}/modules/wake-lock.js`,
+            `${scope}/modules/notifications.js`,
         ];
         for (const url of urls) {
             try {

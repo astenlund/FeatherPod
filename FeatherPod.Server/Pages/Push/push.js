@@ -2,6 +2,10 @@
 import './modules/config.js';
 import './modules/events.js';
 import './modules/utils.js';
+import './modules/auth.js';
+import './modules/artwork.js';
+import './modules/wake-lock.js';
+import './modules/notifications.js';
 
 // FEED_ID, ICON_ETAG, IS_DEV, PROGRESS_SMOOTHING are set as globals by the HTML page
 
