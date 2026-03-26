@@ -54,6 +54,7 @@
     <EmbeddedResource Include="Pages\Push\push.css" />
     <EmbeddedResource Include="Pages\Push\push.js" />
     <EmbeddedResource Include="Pages\Push\push-sw.js" />
+    <EmbeddedResource Include="Pages\Push\modules\*.js" />
   </ItemGroup>
 
 </Project>

@@ -2,10 +2,20 @@ self.addEventListener('install', (event) => {
     event.waitUntil((async () => {
         const scope = new URL(self.registration.scope).pathname;
         const cache = await caches.open('push-page');
-        try {
-            await cache.addAll([scope, `${scope}/app.js`, `${scope}/app.css`]);
-        } catch (e) {
-            // Best-effort — don't prevent installation if pre-caching fails
+        const urls = [
+            scope,
+            `${scope}/app.js`,
+            `${scope}/app.css`,
+            `${scope}/modules/config.js`,
+            `${scope}/modules/events.js`,
+            `${scope}/modules/utils.js`,
+        ];
+        for (const url of urls) {
+            try {
+                await cache.add(url);
+            } catch (e) {
+                // Best-effort — don't prevent installation if pre-caching fails
+            }
         }
         self.skipWaiting();
     })());
@@ -74,7 +84,7 @@ self.addEventListener('fetch', (event) => {
     // Stale-while-revalidate for push page navigation and assets (JS, CSS)
     if (event.request.method === 'GET') {
         const isNavigation = url.pathname.endsWith('/push') && event.request.mode === 'navigate';
-        const isAsset = url.pathname.endsWith('/push/app.js') || url.pathname.endsWith('/push/app.css');
+        const isAsset = url.pathname.endsWith('/push/app.js') || url.pathname.endsWith('/push/app.css') || url.pathname.includes('/push/modules/');
 
         if (isNavigation || isAsset) {
             event.respondWith((async () => {

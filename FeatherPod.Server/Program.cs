@@ -356,6 +356,13 @@ app.MapGet("/{feedId}/push/app.css", (string feedId, IWebHostEnvironment env, Ht
     .Produces(200, contentType: "text/css")
     .Produces(400);
 
+app.MapGet("/{feedId}/push/modules/{fileName}", (string feedId, string fileName, IWebHostEnvironment env, HttpContext context) =>
+        ServePushModuleAsset(feedId, fileName, env, context))
+    .WithName("GetPushModule")
+    .Produces(200, contentType: "application/javascript")
+    .Produces(400)
+    .Produces(404);
+
 // Push notification subscription management
 app.MapPost("/api/feeds/{feedId}/push-subscriptions",
         async (string feedId, [Microsoft.AspNetCore.Mvc.FromBody] PushSubscriptionRequest body, PushNotificationService pushService) =>
@@ -605,6 +612,48 @@ static IResult ServePushAsset(string feedId, string fileName, string contentType
     context.Response.Headers.CacheControl = "no-cache";
 
     return Results.Content(content, contentType);
+}
+
+static IResult ServePushModuleAsset(string feedId, string fileName, IWebHostEnvironment env, HttpContext context)
+{
+    if (!InputValidation.IsValidFeedId(feedId))
+    {
+        return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+    }
+
+    if (!fileName.EndsWith(".js", StringComparison.Ordinal) || fileName.Contains("..") || fileName.Contains('/') || fileName.Contains('\\'))
+    {
+        return Results.NotFound();
+    }
+
+    string content;
+    if (env.IsDevelopment())
+    {
+        var modulePath = Path.Combine(env.ContentRootPath, "Pages", "Push", "modules", fileName);
+        if (!File.Exists(modulePath))
+        {
+            return Results.NotFound();
+        }
+
+        content = File.ReadAllText(modulePath);
+    }
+    else
+    {
+        var assembly = typeof(Program).Assembly;
+        var resourceName = $"FeatherPod.Server.Pages.Push.modules.{fileName}";
+        using var stream = assembly.GetManifestResourceStream(resourceName);
+        if (stream is null)
+        {
+            return Results.NotFound();
+        }
+
+        using var reader = new StreamReader(stream);
+        content = reader.ReadToEnd();
+    }
+
+    context.Response.Headers.CacheControl = "no-cache";
+
+    return Results.Content(content, "application/javascript");
 }
 
 static string ReadResource(System.Reflection.Assembly assembly, string name)

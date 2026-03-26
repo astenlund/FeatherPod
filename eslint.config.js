@@ -75,13 +75,24 @@ export default [
         ignores: ['node_modules/**'],
     },
 
-    // Push page scripts (non-module: push.js and push-sw.js)
+    // Push page main module (push.js served as app.js)
     {
-        files: [`${pushDir}push.js`, `${pushDir}push-sw.js`],
+        files: [`${pushDir}push.js`],
+        languageOptions: {
+            ecmaVersion: 'latest',
+            sourceType: 'module',
+            globals: { ...browserGlobals, ...templateGlobals },
+        },
+        rules: sharedRules,
+    },
+
+    // Service worker (non-module script)
+    {
+        files: [`${pushDir}push-sw.js`],
         languageOptions: {
             ecmaVersion: 'latest',
             sourceType: 'script',
-            globals: { ...browserGlobals, ...templateGlobals },
+            globals: browserGlobals,
         },
         rules: sharedRules,
     },

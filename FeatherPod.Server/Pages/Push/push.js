@@ -1,3 +1,8 @@
+// ES module imports (modules will progressively absorb logic from this file)
+import './modules/config.js';
+import './modules/events.js';
+import './modules/utils.js';
+
 // FEED_ID, ICON_ETAG, IS_DEV, PROGRESS_SMOOTHING are set as globals by the HTML page
 
 /**
@@ -5887,7 +5892,8 @@ function resetWakeLockToggle() {
     releaseWakeLock();
 }
 
-window.addEventListener('DOMContentLoaded', init);
+// ES modules are deferred -- DOM is already parsed when this runs
+init();
 window.addEventListener('hashchange', init);
 window.addEventListener('beforeunload', () => {
     if (localSourceEvents) {

@@ -6,6 +6,9 @@
     <title>Push to {{FEED_TITLE}}</title>
     <link rel="icon" type="image/png" href="/{{FEED_ID}}/icon.png{{ICON_CACHE_BUSTER}}">
     {{PWA_HEAD}}
+    <link rel="modulepreload" href="/{{FEED_ID}}/push/modules/config.js">
+    <link rel="modulepreload" href="/{{FEED_ID}}/push/modules/events.js">
+    <link rel="modulepreload" href="/{{FEED_ID}}/push/modules/utils.js">
     <link rel="stylesheet" href="/{{FEED_ID}}/push/app.css">
 </head>
 <body>
@@ -157,12 +160,12 @@
     <div id="frosted-overlay" class="frosted-overlay"></div>
 
     <script>
-    const FEED_ID = '{{FEED_ID}}';
-    const ICON_ETAG = '{{ICON_ETAG}}';
-    const IS_DEV = {{IS_DEV}};
-    const PROGRESS_SMOOTHING = {{PROGRESS_SMOOTHING}};
-    const VAPID_PUBLIC_KEY = '{{VAPID_PUBLIC_KEY}}';
+    window.FEED_ID = '{{FEED_ID}}';
+    window.ICON_ETAG = '{{ICON_ETAG}}';
+    window.IS_DEV = {{IS_DEV}};
+    window.PROGRESS_SMOOTHING = {{PROGRESS_SMOOTHING}};
+    window.VAPID_PUBLIC_KEY = '{{VAPID_PUBLIC_KEY}}';
     </script>
-    <script src="/{{FEED_ID}}/push/app.js"></script>
+    <script type="module" src="/{{FEED_ID}}/push/app.js"></script>
 </body>
 </html>
