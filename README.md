@@ -13,7 +13,7 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 - **RSS podcast feeds** - iTunes spec compatible with per-feed configuration
 - **CLI tool** - Command-line interface for episode, icon, feed, and user management
 - **REST API** - REST API for management (consumed by CLI tool)
-- **Browser push page** - PWA at `/{feedId}/push#API_KEY` with multi-file upload, server-side normalization, real-time progress, upload history, episode context menus (rename, delete), cross-device sync via SSE, and push notifications via Web Push API
+- **Browser push page** - PWA at `/{feedId}/push#API_KEY` with multi-file upload, server-side normalization, real-time progress, upload history, episode context menus (rename, delete), cross-device sync via SSE, push notifications via Web Push API, and screen wake lock
 - **Android Share Target** - Install the push page as a PWA to share audio files directly from Android
 - **Windows context menu** - Right-click audio files in Explorer to push to a feed
 - **Real-time progress** - SSE and SignalR-based progress streaming for normalization jobs

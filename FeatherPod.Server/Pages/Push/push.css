@@ -2116,6 +2116,14 @@ h1 {
         z-index: 10;
     }
 
+    .wake-lock-toggle {
+        position: fixed;
+        top: 1rem;
+        left: 1rem;
+        margin: 0;
+        z-index: 10;
+    }
+
     /* No drag-and-drop on mobile — fix add-more button above history toggle */
     .queue-drop-zone {
         border: none;
@@ -2445,14 +2453,14 @@ h1 {
 }
 
 /* ============================================================================
-   NOTIFICATION TOGGLE
+   ICON TOGGLES (shared base for notification bell + wake lock sun)
    ============================================================================ */
 
-.notif-toggle[hidden] {
+.icon-toggle[hidden] {
     display: none;
 }
 
-.notif-toggle {
+.icon-toggle {
     display: flex;
     width: fit-content;
     align-items: center;
@@ -2470,30 +2478,38 @@ h1 {
     -webkit-tap-highlight-color: transparent;
 }
 
-.notif-toggle:disabled {
+.icon-toggle:disabled {
     opacity: 0.5;
     pointer-events: none;
 }
 
-.notif-toggle:hover {
+.icon-toggle:hover {
     background: var(--primary-a15);
     color: var(--text-secondary);
 }
 
-.notif-toggle[aria-pressed="true"] {
+.icon-toggle[aria-pressed="true"] {
     background: var(--primary-a15);
     border-color: var(--border-muted);
     color: var(--text-secondary);
 }
 
-.notif-toggle[aria-pressed="true"] .notif-toggle-icon {
+.icon-toggle[aria-pressed="true"] svg {
     fill: currentColor;
     stroke: currentColor;
 }
 
-.notif-toggle-icon {
+.icon-toggle svg {
     flex-shrink: 0;
 }
+
+@media (min-width: 769px) {
+    .icon-toggle {
+        display: none !important;
+    }
+}
+
+/* Notification toggle — specific rules */
 
 .notif-toggle-label {
     white-space: nowrap;
@@ -2515,10 +2531,4 @@ h1 {
     text-align: center;
     z-index: 200;
     animation: blur-fade-in 0.3s ease both;
-}
-
-@media (min-width: 769px) {
-    .notif-toggle {
-        display: none !important;
-    }
 }

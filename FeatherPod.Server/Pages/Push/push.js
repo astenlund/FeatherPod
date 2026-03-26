@@ -162,6 +162,7 @@ const DISMISSED_STORAGE_KEY = 'featherpod_dismissed_' + FEED_ID;
 const THEME_CACHE_KEY = 'featherpod_theme_' + FEED_ID;
 const NOTIF_ENABLED_KEY = 'featherpod_notif_' + FEED_ID;
 const NOTIF_HINT_SHOWN_KEY = 'featherpod_notif_hint_shown';
+const WAKE_LOCK_KEY = 'featherpod_wake_' + FEED_ID;
 const MAX_LOCAL_HISTORY = 50;
 /** @type {number} - Max ms to wait for server job sync before showing the initial state (avoids blank page on slow networks) */
 const QUEUE_SYNC_TIMEOUT = 3000;
@@ -223,6 +224,10 @@ let cachedAllUploads = null;
 
 /** @type {string|null} - Episode ID targeted by the open context menu */
 let contextMenuTargetId = null;
+/** @type {WakeLockSentinel|null} - Active wake lock sentinel */
+let wakeLockSentinel = null;
+/** @type {number} - Generation counter to invalidate in-flight wake lock acquires on release */
+let wakeLockGeneration = 0;
 
 /** @type {boolean} - Whether the note panel is currently open in the rename modal */
 let notePanelOpen = false;
@@ -373,6 +378,7 @@ function showState(stateName) {
     // Show notification toggle only in queue state with active work
     const hasActive = stateName === 'queue' && uploadQueue.some(e => isActiveWork(e));
     setNotificationToggleVisible(hasActive);
+    setWakeLockToggleVisible(hasActive);
 
     // Update container state class for CSS styling
     const container = document.querySelector('.container');
@@ -1372,6 +1378,7 @@ async function init() {
         }
         await initHistorySection();
         initNotificationToggle();
+        initWakeLockToggle();
         serverJobsPromise.then(mergeServerJobs).catch(() => {});
 
         return;
@@ -1382,6 +1389,7 @@ async function init() {
     if (await consumeSharedFiles()) {
         await initHistorySection();
         initNotificationToggle();
+        initWakeLockToggle();
         serverJobsPromise.then(mergeServerJobs).catch(() => {});
 
         return;
@@ -1413,6 +1421,7 @@ async function init() {
     }
     await initHistorySection();
     initNotificationToggle();
+    initWakeLockToggle();
 
     // If the sync timed out, merge the late response when it arrives
     serverJobsPromise.then(mergeServerJobs).catch(() => {});
@@ -2031,6 +2040,7 @@ function checkAllComplete() {
         const queueDZHeight = document.getElementById('queue-drop-zone')?.getBoundingClientRect().height || 0;
         if (queueDZHeight > 0) prepareReadyDropZoneMorph(queueDZHeight);
         clearQueueState();
+        resetWakeLockToggle();
         showState('ready');
         if (queueDZHeight > 0) animateReadyDropZoneMorph();
         void initHistorySection();
@@ -2047,6 +2057,8 @@ function checkAllComplete() {
         notifyQueueComplete();
         resetNotificationToggle();
         setNotificationToggleVisible(false);
+        resetWakeLockToggle();
+        setWakeLockToggleVisible(false);
     }
 }
 
@@ -5733,6 +5745,148 @@ function notifyQueueComplete() {
     resetNotificationToggle();
 }
 
+// ─── Wake Lock Toggle ──────────────────────────────────────────────────────────
+
+/**
+ * Whether the Screen Wake Lock API is available.
+ * Requires a secure context (HTTPS or localhost). Cached on first call.
+ * @returns {boolean}
+ */
+function isWakeLockAvailable() {
+    if (isWakeLockAvailable._cached !== undefined) {
+        return isWakeLockAvailable._cached;
+    }
+    isWakeLockAvailable._cached = !!navigator.wakeLock;
+
+    return isWakeLockAvailable._cached;
+}
+
+/**
+ * Whether the wake lock toggle is currently pressed (aria-pressed="true").
+ * @returns {boolean}
+ */
+function isWakeLockTogglePressed() {
+    const toggle = document.getElementById('wake-lock-toggle');
+
+    return toggle?.getAttribute('aria-pressed') === 'true';
+}
+
+/**
+ * Initialize the wake lock toggle button.
+ * Restores aria-pressed from localStorage preference and registers the click handler.
+ * Does NOT acquire the wake lock here -- that is deferred to setWakeLockToggleVisible
+ * when the toggle becomes visible with active work.
+ */
+function initWakeLockToggle() {
+    if (!isWakeLockAvailable()) {
+        return;
+    }
+    const toggle = document.getElementById('wake-lock-toggle');
+    if (localStorage.getItem(WAKE_LOCK_KEY) === 'true') {
+        toggle.setAttribute('aria-pressed', 'true');
+    }
+    toggle.addEventListener('click', handleWakeLockToggle);
+}
+
+/**
+ * Acquire a screen wake lock. Stores the sentinel for later release.
+ * Silently fails if the API rejects (e.g. low battery, background tab).
+ */
+async function acquireWakeLock() {
+    const gen = ++wakeLockGeneration;
+    try {
+        const sentinel = await navigator.wakeLock.request('screen');
+        if (gen !== wakeLockGeneration) {
+            // A release happened while we were acquiring -- discard the orphaned sentinel
+            await sentinel.release();
+
+            return;
+        }
+        wakeLockSentinel = sentinel;
+        wakeLockSentinel.addEventListener('release', () => {
+            if (wakeLockSentinel === sentinel) {
+                wakeLockSentinel = null;
+            }
+        });
+    } catch {
+        // Silently fail -- browser may reject for low battery, hidden tab, etc.
+    }
+}
+
+/**
+ * Release the current wake lock sentinel, if any.
+ * Also invalidates any in-flight acquire so it releases on completion.
+ */
+async function releaseWakeLock() {
+    wakeLockGeneration++;
+    const sentinel = wakeLockSentinel;
+    wakeLockSentinel = null;
+    if (sentinel) {
+        try {
+            await sentinel.release();
+        } catch {
+            // Already released
+        }
+    }
+}
+
+/**
+ * Handle wake lock toggle click.
+ * Flips aria-pressed and acquires/releases the wake lock accordingly.
+ */
+async function handleWakeLockToggle() {
+    const toggle = document.getElementById('wake-lock-toggle');
+    const isEnabled = toggle.getAttribute('aria-pressed') === 'true';
+
+    if (isEnabled) {
+        toggle.setAttribute('aria-pressed', 'false');
+        localStorage.removeItem(WAKE_LOCK_KEY);
+        await releaseWakeLock();
+    } else {
+        toggle.setAttribute('aria-pressed', 'true');
+        // Persist preference before acquire -- kept even if acquire fails (transient rejection)
+        localStorage.setItem(WAKE_LOCK_KEY, 'true');
+        await acquireWakeLock();
+        if (!wakeLockSentinel) {
+            // Acquire silently failed -- revert visual state but keep preference
+            toggle.setAttribute('aria-pressed', 'false');
+        }
+    }
+}
+
+/**
+ * Show or hide the wake lock toggle. When becoming visible with a remembered preference
+ * (checked via localStorage, not aria-pressed), restores aria-pressed and acquires the lock.
+ * When hiding, releases the lock but preserves the localStorage preference.
+ * @param {boolean} visible
+ */
+function setWakeLockToggleVisible(visible) {
+    if (!isWakeLockAvailable()) {
+        return;
+    }
+    const toggle = document.getElementById('wake-lock-toggle');
+    toggle.hidden = !visible;
+
+    if (visible && localStorage.getItem(WAKE_LOCK_KEY) === 'true') {
+        toggle.setAttribute('aria-pressed', 'true');
+        acquireWakeLock();
+    } else if (!visible) {
+        releaseWakeLock();
+    }
+}
+
+/**
+ * Reset the wake lock toggle to its default visual state and release the lock.
+ * Does NOT clear localStorage -- the preference survives across batches.
+ * Called when the queue finishes (all entries terminal).
+ */
+function resetWakeLockToggle() {
+    if (!isWakeLockAvailable()) {
+        return;
+    }
+    document.getElementById('wake-lock-toggle').setAttribute('aria-pressed', 'false');
+    releaseWakeLock();
+}
 
 window.addEventListener('DOMContentLoaded', init);
 window.addEventListener('hashchange', init);
@@ -5752,6 +5906,10 @@ document.addEventListener('visibilitychange', () => {
         if (progressAnimator.currentStage) {
             progressAnimator.awaitingFirstUpdate = true;
             progressAnimator.isRestoring = true;
+        }
+        // Re-acquire wake lock if it was released when tab was hidden
+        if (isWakeLockTogglePressed()) {
+            acquireWakeLock();
         }
         // Reconnect feed events SSE if it was permanently closed while tab was inactive
         if (apiKey && !feedEventsSource) {
