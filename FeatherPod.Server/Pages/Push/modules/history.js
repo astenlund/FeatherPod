@@ -25,6 +25,10 @@ const H_PAUSE = 100;
 const H_MORPH = 400;
 const HISTORY_TRANSITION_DURATION = H_BLUR_DELAY + H_PAUSE + H_MORPH;
 
+export function getHistoryFilter() {
+    return historyFilter;
+}
+
 export function getHistoryPanelPushedState() {
     return historyPanelPushedState;
 }

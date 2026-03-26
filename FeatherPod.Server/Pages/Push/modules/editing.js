@@ -19,6 +19,10 @@ export function getContextMenuTargetId() {
     return contextMenuTargetId;
 }
 
+export function isNotePanelOpen() {
+    return notePanelOpen;
+}
+
 /**
  * Show the context menu at the given position, clamped to the viewport.
  * @param {string} episodeId
@@ -499,6 +503,25 @@ function updateNoteButtonState(hasNote) {
         noteBtn.title = hasNote ? 'Edit note' : 'Add note';
         noteBtn.setAttribute('aria-label', hasNote ? 'Edit note' : 'Add note');
     }
+}
+
+/**
+ * Handle note textarea input event: auto-grow, update button state, update save state,
+ * and debounce a note save + suggestion re-fetch after 2s idle.
+ * @param {HTMLTextAreaElement} textarea
+ */
+export function handleNoteInput(textarea) {
+    autoGrowTextarea(textarea);
+    updateNoteButtonState(!!textarea.value.trim());
+    updateRenameSaveState();
+
+    if (noteDebounceTimer) {
+        clearTimeout(noteDebounceTimer);
+    }
+    noteDebounceTimer = setTimeout(() => {
+        noteDebounceTimer = null;
+        commitNoteAndRefreshSuggestion();
+    }, 2000);
 }
 
 /**
