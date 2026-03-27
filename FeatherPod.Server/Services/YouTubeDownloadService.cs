@@ -1,5 +1,4 @@
 using System.Threading.Channels;
-using Azure.Data.Tables;
 using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
 
@@ -19,9 +18,8 @@ public class YouTubeDownloadService : BackgroundService
     private readonly IFeedEventChannel _feedEventChannel;
     private readonly EpisodeService _episodeService;
     private readonly PushNotificationService _pushNotificationService;
-    private readonly IConfiguration _configuration;
+    private readonly int _throttleMs;
     private readonly ILogger<YouTubeDownloadService> _logger;
-    private readonly TableClient _tableClient;
 
     public YouTubeDownloadService(
         Channel<YouTubeDownloadJob> channel,
@@ -33,8 +31,7 @@ public class YouTubeDownloadService : BackgroundService
         EpisodeService episodeService,
         PushNotificationService pushNotificationService,
         IConfiguration configuration,
-        ILogger<YouTubeDownloadService> logger,
-        TableServiceClient tableServiceClient)
+        ILogger<YouTubeDownloadService> logger)
     {
         _channel = channel;
         _binaryManager = binaryManager;
@@ -44,12 +41,9 @@ public class YouTubeDownloadService : BackgroundService
         _feedEventChannel = feedEventChannel;
         _episodeService = episodeService;
         _pushNotificationService = pushNotificationService;
-        _configuration = configuration;
+        _throttleMs = configuration.GetValue("PushPage:ProgressIntervalMs", 250);
         _logger = logger;
-        _tableClient = tableServiceClient.GetTableClient("normalizationjobs");
     }
-
-    public ChannelWriter<YouTubeDownloadJob> Writer => _channel.Writer;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -77,7 +71,6 @@ public class YouTubeDownloadService : BackgroundService
         }
         finally
         {
-            // Drain remaining queued jobs on shutdown
             while (_channel.Reader.TryRead(out var remainingJob))
             {
                 await MarkJobFailedAsync(remainingJob, "Server restarting");
@@ -89,8 +82,6 @@ public class YouTubeDownloadService : BackgroundService
 
     private async Task ProcessJobAsync(YouTubeDownloadJob job, CancellationToken stoppingToken)
     {
-        var throttleMs = _configuration.GetValue("PushPage:ProgressIntervalMs", 250);
-
         // Step 1: Preparing - ensure yt-dlp is available
         await UpdateProgressAsync(job, NormalizationStage.Preparing, 0, "Preparing...", stoppingToken);
 
@@ -102,7 +93,6 @@ public class YouTubeDownloadService : BackgroundService
             return;
         }
 
-        // Check cancellation before download
         if (await IsJobCancelledAsync(job.JobId, stoppingToken))
         {
             return;
@@ -113,23 +103,24 @@ public class YouTubeDownloadService : BackgroundService
 
         var outputDir = Path.Combine(Path.GetTempPath(), "FeatherPod", job.JobId);
         string? outputPath = null;
+        string? lastStderr = null;
         var retried = false;
 
         try
         {
-            outputPath = await AttemptDownloadAsync(job, outputDir, throttleMs, stoppingToken);
+            (outputPath, lastStderr) = await AttemptDownloadAsync(job, outputDir, stoppingToken);
 
-            // Update-then-retry on extractor error
-            if (outputPath == null && !retried)
+            // Update-then-retry only on extractor errors (YouTube-side changes)
+            if (outputPath == null && lastStderr != null && YtDlpService.IsExtractorError(lastStderr))
             {
                 retried = true;
-                _logger.LogInformation("Download failed for job {JobId}, attempting yt-dlp update...", job.JobId);
+                _logger.LogInformation("Extractor error for job {JobId}, attempting yt-dlp update...", job.JobId);
 
                 var updated = await _binaryManager.TryUpdateAsync(stoppingToken);
                 if (updated)
                 {
                     _logger.LogInformation("yt-dlp updated, retrying download for job {JobId}", job.JobId);
-                    outputPath = await AttemptDownloadAsync(job, outputDir, throttleMs, stoppingToken);
+                    (outputPath, lastStderr) = await AttemptDownloadAsync(job, outputDir, stoppingToken);
                 }
             }
 
@@ -142,7 +133,6 @@ public class YouTubeDownloadService : BackgroundService
                 return;
             }
 
-            // Check cancellation before upload
             if (await IsJobCancelledAsync(job.JobId, stoppingToken))
             {
                 return;
@@ -162,7 +152,7 @@ public class YouTubeDownloadService : BackgroundService
                 description: description,
                 publishedDate: job.UploadDate,
                 episodeId: job.EpisodeId,
-                source: UploadSource.YouTube,
+                source: UploadSource.Browser,
                 cancellationToken: stoppingToken);
 
             // Step 4: Completed
@@ -171,27 +161,25 @@ public class YouTubeDownloadService : BackgroundService
         }
         finally
         {
-            // Clean up temp directory
             CleanupTempDirectory(outputDir);
         }
     }
 
-    private async Task<string?> AttemptDownloadAsync(
+    private async Task<(string? OutputPath, string? Stderr)> AttemptDownloadAsync(
         YouTubeDownloadJob job,
         string outputDir,
-        int throttleMs,
         CancellationToken stoppingToken)
     {
         var lastUpdate = DateTime.MinValue;
 
-        var outputPath = await _ytDlpService.DownloadAsync(
-            job.Url,
+        var result = await _ytDlpService.DownloadAsync(
+            YtDlpService.GetCanonicalUrl(job.VideoId),
             job.VideoId,
             job.Format,
             outputDir,
             progressCallback: percent =>
             {
-                if ((DateTime.UtcNow - lastUpdate).TotalMilliseconds < throttleMs)
+                if ((DateTime.UtcNow - lastUpdate).TotalMilliseconds < _throttleMs)
                 {
                     return;
                 }
@@ -216,7 +204,7 @@ public class YouTubeDownloadService : BackgroundService
             },
             cancellationToken: stoppingToken);
 
-        return outputPath;
+        return result;
     }
 
     private async Task UpdateProgressAsync(
@@ -229,35 +217,39 @@ public class YouTubeDownloadService : BackgroundService
     {
         try
         {
-            // Update Table Storage
-            var entity = await _tableClient.GetEntityAsync<JobStatusEntity>("job", job.JobId, cancellationToken: cancellationToken);
-            var jobEntity = entity.Value;
-
-            jobEntity.Stage = stage.ToString();
-            jobEntity.ProgressPercent = progressPercent;
-            jobEntity.ProgressMessage = message;
-
-            if (stage == NormalizationStage.Completed)
+            var entity = await _jobService.UpdateJobStatusAsync(job.JobId, e =>
             {
-                jobEntity.Status = nameof(JobStatus.Completed);
-                jobEntity.EpisodeId = job.EpisodeId;
-                jobEntity.CompletedAt = DateTimeOffset.UtcNow;
-            }
-            else
+                // Don't overwrite terminal states
+                if (e.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+                {
+                    return;
+                }
+
+                e.Stage = stage.ToString();
+                e.ProgressPercent = progressPercent;
+                e.ProgressMessage = message;
+
+                if (stage == NormalizationStage.Completed)
+                {
+                    e.Status = nameof(JobStatus.Completed);
+                    e.EpisodeId = job.EpisodeId;
+                    e.CompletedAt = DateTimeOffset.UtcNow;
+                }
+                else
+                {
+                    e.Status = nameof(JobStatus.Processing);
+                }
+            }, cancellationToken);
+
+            if (entity != null)
             {
-                jobEntity.Status = nameof(JobStatus.Processing);
-            }
+                var response = JobStatusResponse.FromEntity(entity);
+                _progressChannel.Publish(job.JobId, response);
 
-            await _tableClient.UpdateEntityAsync(jobEntity, jobEntity.ETag, Azure.Data.Tables.TableUpdateMode.Replace, cancellationToken);
-
-            // Publish to in-memory channel for SSE/SignalR clients
-            var response = JobStatusResponse.FromEntity(jobEntity);
-            _progressChannel.Publish(job.JobId, response);
-
-            // Notify on terminal status
-            if (isTerminal)
-            {
-                _pushNotificationService.TryNotifyJobTerminal(response);
+                if (isTerminal)
+                {
+                    _pushNotificationService.TryNotifyJobTerminal(response);
+                }
             }
         }
         catch (Exception ex) when (!isTerminal)
@@ -270,19 +262,26 @@ public class YouTubeDownloadService : BackgroundService
     {
         try
         {
-            var entity = await _tableClient.GetEntityAsync<JobStatusEntity>("job", job.JobId);
-            var jobEntity = entity.Value;
+            var entity = await _jobService.UpdateJobStatusAsync(job.JobId, e =>
+            {
+                // Don't overwrite terminal states (e.g., already Cancelled or Completed)
+                if (e.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+                {
+                    return;
+                }
 
-            jobEntity.Status = nameof(JobStatus.Failed);
-            jobEntity.Stage = nameof(NormalizationStage.Failed);
-            jobEntity.Error = error;
-            jobEntity.CompletedAt = DateTimeOffset.UtcNow;
+                e.Status = nameof(JobStatus.Failed);
+                e.Stage = nameof(NormalizationStage.Failed);
+                e.Error = error;
+                e.CompletedAt = DateTimeOffset.UtcNow;
+            });
 
-            await _tableClient.UpdateEntityAsync(jobEntity, jobEntity.ETag, Azure.Data.Tables.TableUpdateMode.Replace);
-
-            var response = JobStatusResponse.FromEntity(jobEntity);
-            _progressChannel.Publish(job.JobId, response);
-            _pushNotificationService.TryNotifyJobTerminal(response);
+            if (entity != null)
+            {
+                var response = JobStatusResponse.FromEntity(entity);
+                _progressChannel.Publish(job.JobId, response);
+                _pushNotificationService.TryNotifyJobTerminal(response);
+            }
         }
         catch (Exception ex)
         {
@@ -292,16 +291,9 @@ public class YouTubeDownloadService : BackgroundService
 
     private async Task<bool> IsJobCancelledAsync(string jobId, CancellationToken cancellationToken)
     {
-        try
-        {
-            var entity = await _tableClient.GetEntityAsync<JobStatusEntity>("job", jobId, cancellationToken: cancellationToken);
+        var entity = await _jobService.GetJobStatusAsync(jobId, cancellationToken);
 
-            return string.Equals(entity.Value.Status, nameof(JobStatus.Cancelled), StringComparison.Ordinal);
-        }
-        catch
-        {
-            return false;
-        }
+        return entity?.GetJobStatus() == JobStatus.Cancelled;
     }
 
     private void CleanupTempDirectory(string outputDir)

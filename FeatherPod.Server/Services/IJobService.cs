@@ -41,4 +41,11 @@ public interface IJobService
     /// Cancel a job. Returns updated entity, or null if the job is already in a terminal state.
     /// </summary>
     Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Update a job's status fields atomically (read-modify-write with ETag).
+    /// The <paramref name="mutate"/> action modifies the entity in place.
+    /// Returns the updated entity, or null if the job was not found.
+    /// </summary>
+    Task<JobStatusEntity?> UpdateJobStatusAsync(string jobId, Action<JobStatusEntity> mutate, CancellationToken cancellationToken = default);
 }

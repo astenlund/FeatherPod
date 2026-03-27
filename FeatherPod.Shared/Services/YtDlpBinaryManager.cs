@@ -18,6 +18,8 @@ public class YtDlpBinaryManager
     private readonly ILogger<YtDlpBinaryManager>? _logger;
     private readonly HttpClient _httpClient;
     private readonly SemaphoreSlim _updateLock = new(1, 1);
+    private readonly string _binaryDirectory;
+    private readonly string _binaryPath;
 
     private bool? _isAvailable;
     private DateTime _lastUpdateCheck = DateTime.MinValue;
@@ -26,9 +28,13 @@ public class YtDlpBinaryManager
     {
         _logger = logger;
         _httpClient = httpClient ?? CreateDefaultHttpClient();
+        _binaryDirectory = ResolveBinaryDirectory();
+        _binaryPath = Path.Combine(_binaryDirectory, OperatingSystem.IsWindows() ? "yt-dlp.exe" : "yt-dlp");
     }
 
-    public static string GetBinaryDirectory()
+    public static string GetBinaryDirectory() => ResolveBinaryDirectory();
+
+    private static string ResolveBinaryDirectory()
     {
         var websiteName = Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME");
         if (websiteName != null)
@@ -58,12 +64,7 @@ public class YtDlpBinaryManager
         return Path.Combine(userHome, ".local", "share", "FeatherPod", "yt-dlp");
     }
 
-    public string GetBinaryPath()
-    {
-        var binaryName = OperatingSystem.IsWindows() ? "yt-dlp.exe" : "yt-dlp";
-
-        return Path.Combine(GetBinaryDirectory(), binaryName);
-    }
+    public string GetBinaryPath() => _binaryPath;
 
     public bool IsAvailable()
     {
@@ -72,8 +73,7 @@ public class YtDlpBinaryManager
             return _isAvailable.Value;
         }
 
-        var binaryPath = GetBinaryPath();
-        _isAvailable = File.Exists(binaryPath);
+        _isAvailable = File.Exists(_binaryPath);
 
         return _isAvailable.Value;
     }
@@ -129,7 +129,7 @@ public class YtDlpBinaryManager
 
     public async Task<string?> GetCurrentVersionAsync()
     {
-        var versionFile = Path.Combine(GetBinaryDirectory(), VersionFileName);
+        var versionFile = Path.Combine(_binaryDirectory, VersionFileName);
         if (!File.Exists(versionFile))
         {
             return null;
@@ -169,7 +169,7 @@ public class YtDlpBinaryManager
 
     private async Task<bool> DownloadBinaryAsync(string version, CancellationToken cancellationToken)
     {
-        var binDir = GetBinaryDirectory();
+        var binDir = _binaryDirectory;
         Directory.CreateDirectory(binDir);
 
         var assetName = GetPlatformAssetName();
@@ -179,10 +179,10 @@ public class YtDlpBinaryManager
 
         try
         {
-            var response = await _httpClient.GetAsync(downloadUrl, cancellationToken);
+            using var response = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
 
-            var binaryPath = GetBinaryPath();
+            var binaryPath = _binaryPath;
             await using (var fileStream = File.Create(binaryPath))
             {
                 await response.Content.CopyToAsync(fileStream, cancellationToken);

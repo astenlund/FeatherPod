@@ -15,6 +15,7 @@ import { FEED_ID } from './config.js';
 import { getApiKey } from './auth.js';
 import { getCurrentState } from './state.js';
 
+const YT_FORMAT_PREFS_KEY = 'featherpod_yt_format_prefs';
 const YT_VIDEO_REGEX = /(?:youtube\.com\/watch\?v=|youtu\.be\/|m\.youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{11})/;
 const YT_REJECT_PATTERNS = [
     /[?&]list=/,
@@ -82,7 +83,8 @@ export function handlePaste(e) {
     }
 
     e.preventDefault();
-    showImportDialog(url);
+    const metaPromise = fetchVideoMeta(url);
+    showImportDialog(url, metaPromise);
 
     return true;
 }
@@ -99,7 +101,8 @@ export function handleDrop(e) {
         return false;
     }
 
-    showImportDialog(url);
+    const metaPromise = fetchVideoMeta(url);
+    showImportDialog(url, metaPromise);
 
     return true;
 }
@@ -121,8 +124,37 @@ export function checkSharedUrl() {
 
     const url = extractYouTubeUrl(sharedUrl);
     if (url) {
-        // Delay to let the page finish initializing
-        setTimeout(() => showImportDialog(url), 500);
+        // Start fetch immediately, show dialog after page init
+        const metaPromise = fetchVideoMeta(url);
+        setTimeout(() => showImportDialog(url, metaPromise), 500);
+    }
+}
+
+// ============================================================================
+// Per-channel format preference
+// ============================================================================
+
+function getChannelFormatPref(channel) {
+    try {
+        const prefs = JSON.parse(localStorage.getItem(YT_FORMAT_PREFS_KEY) || '{}');
+
+        return prefs[channel] || null;
+    } catch {
+        return null;
+    }
+}
+
+function saveChannelFormatPref(channel, format) {
+    if (!channel) {
+        return;
+    }
+
+    try {
+        const prefs = JSON.parse(localStorage.getItem(YT_FORMAT_PREFS_KEY) || '{}');
+        prefs[channel] = format;
+        localStorage.setItem(YT_FORMAT_PREFS_KEY, JSON.stringify(prefs));
+    } catch {
+        // Best-effort
     }
 }
 
@@ -132,13 +164,17 @@ export function checkSharedUrl() {
 
 /** @type {string|null} URL currently shown in the dialog */
 let pendingUrl = null;
+/** @type {string|null} Channel name from oEmbed (for format pref) */
+let pendingChannel = null;
 
 /**
  * Show the YouTube import confirmation dialog.
  * @param {string} url
+ * @param {Promise<{title?: string, author_name?: string}|null>} [metaPromise] - Pre-started oEmbed fetch
  */
-function showImportDialog(url) {
+function showImportDialog(url, metaPromise) {
     pendingUrl = url;
+    pendingChannel = null;
 
     const overlay = document.getElementById('youtube-modal-overlay');
     if (!overlay) {
@@ -152,8 +188,12 @@ function showImportDialog(url) {
     const importBtn = overlay.querySelector('.yt-modal-import');
     const spinner = overlay.querySelector('.yt-modal-spinner');
 
+    // Show video ID as placeholder, then fetch title via oEmbed
+    const vidMatch = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+    const displayId = vidMatch ? vidMatch[1] : url;
+
     if (titleEl) {
-        titleEl.textContent = 'Loading...';
+        titleEl.textContent = displayId;
     }
     if (metaEl) {
         metaEl.textContent = '';
@@ -165,20 +205,61 @@ function showImportDialog(url) {
         importBtn.disabled = true;
     }
     if (spinner) {
-        spinner.hidden = false;
+        spinner.hidden = true;
     }
 
-    // Default to audio
-    const audioBtn = overlay.querySelector('[data-format="audio"]');
-    const videoBtn = overlay.querySelector('[data-format="video"]');
-    if (audioBtn) {
-        audioBtn.classList.add('active');
-    }
-    if (videoBtn) {
-        videoBtn.classList.remove('active');
+    // Start with both radios unselected until we know the channel
+    overlay.querySelectorAll('input[name="yt-format"]').forEach(r => { r.checked = false; });
+
+    // Apply pre-fetched oEmbed metadata when it arrives
+    if (metaPromise) {
+        metaPromise.then(data => {
+            if (!data || pendingUrl !== url) {
+                return;
+            }
+            if (titleEl && data.title) {
+                titleEl.textContent = data.title;
+            }
+            if (metaEl && data.author_name) {
+                metaEl.textContent = data.author_name;
+                pendingChannel = data.author_name;
+            }
+
+            // Select remembered format for this channel (if any)
+            const pref = data?.author_name ? getChannelFormatPref(data.author_name) : null;
+            if (pref) {
+                const radio = overlay.querySelector(`input[name="yt-format"][value="${pref}"]`);
+                if (radio) {
+                    radio.checked = true;
+                }
+            }
+            updateImportButtonState(overlay);
+        });
     }
 
     overlay.hidden = false;
+}
+
+function updateImportButtonState(overlay) {
+    const importBtn = overlay?.querySelector('.yt-modal-import');
+    const checked = overlay?.querySelector('input[name="yt-format"]:checked');
+    if (importBtn) {
+        importBtn.disabled = !checked;
+    }
+}
+
+/**
+ * Fetch video title and channel via YouTube oEmbed API.
+ * Returns { title, author_name } or null on failure.
+ * @param {string} url
+ * @returns {Promise<{title?: string, author_name?: string}|null>}
+ */
+function fetchVideoMeta(url) {
+    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+
+    return fetch(oembedUrl)
+        .then(r => r.ok ? r.json() : null)
+        .catch(() => null);
 }
 
 /**
@@ -193,14 +274,14 @@ export function hideImportDialog() {
 }
 
 /**
- * Get the currently selected format from the toggle.
+ * Get the currently selected format from the radio buttons.
  * @returns {'audio'|'video'}
  */
 function getSelectedFormat() {
     const overlay = document.getElementById('youtube-modal-overlay');
-    const active = overlay?.querySelector('.yt-format-toggle .active');
+    const checked = overlay?.querySelector('input[name="yt-format"]:checked');
 
-    return active?.dataset.format === 'video' ? 'video' : 'audio';
+    return checked?.value === 'video' ? 'video' : 'audio';
 }
 
 /**
@@ -246,6 +327,7 @@ async function submitImport() {
 
         const jobResponse = await response.json();
 
+        saveChannelFormatPref(pendingChannel, format);
         hideImportDialog();
 
         if (onYouTubeJobCreated) {
@@ -279,12 +361,9 @@ export function initYouTubeImport() {
         return;
     }
 
-    // Format toggle buttons
-    overlay.querySelectorAll('.yt-format-toggle button').forEach(btn => {
-        btn.addEventListener('click', () => {
-            overlay.querySelectorAll('.yt-format-toggle button').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-        });
+    // Enable Import button when a format is selected
+    overlay.querySelectorAll('input[name="yt-format"]').forEach(r => {
+        r.addEventListener('change', () => updateImportButtonState(overlay));
     });
 
     // Import button

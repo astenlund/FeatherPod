@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using FeatherPod.Shared.Models;
 using Microsoft.Extensions.Logging;
 
 namespace FeatherPod.Shared.Services;
@@ -26,6 +27,8 @@ public partial class YtDlpService
         _binaryManager = binaryManager;
         _logger = logger;
     }
+
+    public static string GetCanonicalUrl(string videoId) => $"https://www.youtube.com/watch?v={videoId}";
 
     /// <summary>
     /// Validates a URL is an acceptable single YouTube video URL.
@@ -69,8 +72,9 @@ public partial class YtDlpService
 
     /// <summary>
     /// Fetches metadata for a YouTube video without downloading.
+    /// Returns (metadata, error). On failure, metadata is null and error contains yt-dlp's stderr.
     /// </summary>
-    public async Task<YtDlpMetadata?> GetMetadataAsync(string url, CancellationToken cancellationToken = default)
+    public async Task<(YtDlpMetadata? Metadata, string? Error)> GetMetadataAsync(string url, CancellationToken cancellationToken = default)
     {
         var binaryPath = _binaryManager.GetBinaryPath();
 
@@ -84,30 +88,37 @@ public partial class YtDlpService
         {
             _logger?.LogWarning("yt-dlp metadata fetch failed (exit {ExitCode}): {Stderr}", exitCode, stderr);
 
-            return null;
+            // Extract the user-facing error line from yt-dlp stderr (usually "ERROR: ...")
+            var errorLine = stderr?.Split('\n')
+                .Select(l => l.Trim())
+                .LastOrDefault(l => l.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase));
+            var friendlyError = errorLine?.Length > 7 ? errorLine[7..].Trim() : null;
+
+            return (null, friendlyError ?? "Video is unavailable");
         }
 
         try
         {
             var metadata = JsonSerializer.Deserialize<YtDlpMetadata>(stdout);
 
-            return metadata;
+            return (metadata, null);
         }
         catch (JsonException ex)
         {
             _logger?.LogError(ex, "Failed to parse yt-dlp metadata JSON");
 
-            return null;
+            return (null, "Failed to read video metadata");
         }
     }
 
     /// <summary>
-    /// Downloads a YouTube video. Returns the output file path on success.
+    /// Downloads a YouTube video. Returns (outputFilePath, stderr).
+    /// outputFilePath is null on failure; stderr is available for error classification.
     /// </summary>
-    public async Task<string?> DownloadAsync(
+    public async Task<(string? OutputPath, string? Stderr)> DownloadAsync(
         string url,
         string videoId,
-        string format,
+        YouTubeFormat format,
         string outputDir,
         Action<double>? progressCallback = null,
         CancellationToken cancellationToken = default)
@@ -118,7 +129,7 @@ public partial class YtDlpService
 
         var outputTemplate = Path.Combine(outputDir, $"{videoId}.%(ext)s");
 
-        var formatArgs = string.Equals(format, "video", StringComparison.OrdinalIgnoreCase)
+        var formatArgs = format == YouTubeFormat.Video
             ? "-f \"bestvideo[height<=1080]+bestaudio/best[height<=1080]\" --merge-output-format mp4"
             : "--extract-audio --audio-format m4a --audio-quality 0";
 
@@ -139,21 +150,19 @@ public partial class YtDlpService
         {
             _logger?.LogWarning("yt-dlp download failed (exit {ExitCode}): {Stderr}", exitCode, stderr);
 
-            return null;
+            return (null, stderr);
         }
 
-        // Find the output file (yt-dlp may have changed the extension)
-        var expectedExtension = string.Equals(format, "video", StringComparison.OrdinalIgnoreCase) ? ".mp4" : ".m4a";
-        var expectedPath = Path.Combine(outputDir, $"{videoId}{expectedExtension}");
+        var expectedPath = Path.Combine(outputDir, $"{videoId}{format.GetExtension()}");
         if (File.Exists(expectedPath))
         {
-            return expectedPath;
+            return (expectedPath, null);
         }
 
         // Fallback: find any file matching the videoId prefix
         var files = Directory.GetFiles(outputDir, $"{videoId}.*");
 
-        return files.Length > 0 ? files[0] : null;
+        return files.Length > 0 ? (files[0], null) : (null, stderr);
     }
 
     /// <summary>
@@ -185,22 +194,23 @@ public partial class YtDlpService
 
         process.Start();
 
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-
-        var stdoutBuilder = new System.Text.StringBuilder();
-        string? line;
-        while ((line = await process.StandardOutput.ReadLineAsync(cancellationToken)) != null)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            stdoutBuilder.AppendLine(line);
-            stdoutLineCallback?.Invoke(line);
-        }
-
-        var stderr = await stderrTask;
-
         try
         {
+            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            var captureStdout = stdoutLineCallback == null;
+
+            var stdoutBuilder = captureStdout ? new System.Text.StringBuilder() : null;
+            string? line;
+            while ((line = await process.StandardOutput.ReadLineAsync(cancellationToken)) != null)
+            {
+                stdoutBuilder?.AppendLine(line);
+                stdoutLineCallback?.Invoke(line);
+            }
+
+            var stderr = await stderrTask;
             await process.WaitForExitAsync(cancellationToken);
+
+            return (process.ExitCode, stdoutBuilder?.ToString() ?? string.Empty, stderr);
         }
         catch (OperationCanceledException)
         {
@@ -211,8 +221,6 @@ public partial class YtDlpService
 
             throw;
         }
-
-        return (process.ExitCode, stdoutBuilder.ToString(), stderr);
     }
 
     [GeneratedRegex(@"(?:youtube\.com/watch\?v=|youtu\.be/|m\.youtube\.com/watch\?v=)([a-zA-Z0-9_-]{11})")]

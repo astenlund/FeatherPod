@@ -1777,6 +1777,51 @@ h1 {
     margin-bottom: 1.25rem;
 }
 
+.modal--youtube {
+    max-width: 420px;
+}
+
+.yt-modal-video-title {
+    padding-top: 0.5rem;
+    margin: 0 0 0.25rem;
+    font-weight: 500;
+}
+
+.yt-modal-video-meta {
+    margin: 0 0 1.25rem;
+    font-size: 0.85rem;
+    opacity: 0.7;
+}
+
+.yt-modal-error {
+    font-size: 0.85rem;
+}
+
+.yt-modal-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+}
+
+.yt-format-toggle {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.yt-format-radio {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+    opacity: 0.8;
+}
+
+.yt-format-radio input[type="radio"] {
+    accent-color: var(--accent);
+}
+
 .modal-input {
     width: 100%;
     background: var(--bg-surface);

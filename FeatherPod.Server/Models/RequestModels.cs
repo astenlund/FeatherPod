@@ -36,8 +36,5 @@ public record YouTubeImportRequest
     /// </summary>
     required public string Url { get; init; }
 
-    /// <summary>
-    /// "audio" or "video".
-    /// </summary>
-    required public string Format { get; init; }
+    required public FeatherPod.Shared.Models.YouTubeFormat Format { get; init; }
 }

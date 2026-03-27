@@ -175,4 +175,37 @@ public class JobService : IJobService
 
         return null;
     }
+
+    public async Task<JobStatusEntity?> UpdateJobStatusAsync(string jobId, Action<JobStatusEntity> mutate, CancellationToken cancellationToken = default)
+    {
+        const int maxRetries = 3;
+        for (var attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                var response = await _tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+                var entity = response.Value;
+
+                mutate(entity);
+
+                await _tableClient.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace, cancellationToken);
+
+                return entity;
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+            {
+                _logger.LogWarning("Job {JobId} not found for update", jobId);
+
+                return null;
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 412 && attempt <= maxRetries)
+            {
+                _logger.LogDebug("ETag conflict updating job {JobId}, attempt {Attempt}", jobId, attempt);
+            }
+        }
+
+        _logger.LogWarning("Failed to update job {JobId} after {MaxRetries} ETag conflicts", jobId, maxRetries);
+
+        return null;
+    }
 }

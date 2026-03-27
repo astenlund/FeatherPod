@@ -170,7 +170,7 @@
 
     <!-- YouTube import modal -->
     <div id="youtube-modal-overlay" class="modal-overlay" hidden>
-        <div class="modal modal--narrow" role="dialog" aria-labelledby="youtube-modal-title" aria-modal="true">
+        <div class="modal modal--youtube" role="dialog" aria-labelledby="youtube-modal-title" aria-modal="true">
             <h3 id="youtube-modal-title" class="modal-title">Import from YouTube</h3>
             <div class="modal-body">
                 <div class="yt-modal-spinner" hidden>
@@ -178,15 +178,17 @@
                 </div>
                 <p class="yt-modal-video-title"></p>
                 <p class="yt-modal-video-meta secondary-text"></p>
-                <div class="yt-format-toggle">
-                    <button data-format="audio" class="btn-modal btn-modal--secondary active">Audio</button>
-                    <button data-format="video" class="btn-modal btn-modal--secondary">Video</button>
-                </div>
                 <p class="yt-modal-error error-text" hidden></p>
             </div>
-            <div class="modal-actions">
-                <button class="btn-modal btn-modal--secondary yt-modal-cancel">Cancel</button>
-                <button class="btn-modal btn-modal--primary yt-modal-import" disabled>Import</button>
+            <div class="yt-modal-footer">
+                <div class="yt-format-toggle">
+                    <label class="yt-format-radio"><input type="radio" name="yt-format" value="audio" checked> Audio</label>
+                    <label class="yt-format-radio"><input type="radio" name="yt-format" value="video"> Video</label>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn-modal btn-modal--secondary yt-modal-cancel">Cancel</button>
+                    <button class="btn-modal btn-modal--primary yt-modal-import" disabled>Import</button>
+                </div>
             </div>
         </div>
     </div>
