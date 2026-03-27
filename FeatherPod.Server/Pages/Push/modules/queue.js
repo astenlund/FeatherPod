@@ -472,7 +472,7 @@ export function updateEntryFromJobStatus(entry, job) {
     }
 
     entry.stage = job.stage;
-    const stagesWithProgress = ['Analyzing', 'Normalizing'];
+    const stagesWithProgress = ['Analyzing', 'Normalizing', 'Downloading'];
     const isProgressStage = stagesWithProgress.includes(job.stage);
     const progressBar = getEntryProgressBar(entry.id);
 

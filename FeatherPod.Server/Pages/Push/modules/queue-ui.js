@@ -70,7 +70,7 @@ export function createQueueItemElement(entry) {
     if (entry.status === 'uploading') {
         progressBar.style.width = entry.progress + '%';
     } else if (entry.status === 'normalizing') {
-        if (entry.stage && !['Analyzing', 'Normalizing'].includes(entry.stage)) {
+        if (entry.stage && !['Analyzing', 'Normalizing', 'Downloading'].includes(entry.stage)) {
             progressBar.classList.add('indeterminate');
         } else {
             progressBar.style.width = entry.progress + '%';
