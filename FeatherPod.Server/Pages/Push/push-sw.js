@@ -23,6 +23,7 @@ self.addEventListener('install', (event) => {
             `${scope}/modules/history.js`,
             `${scope}/modules/editing.js`,
             `${scope}/modules/server-sync.js`,
+            `${scope}/modules/youtube.js`,
         ];
         for (const url of urls) {
             try {

@@ -28,10 +28,11 @@ import { initNotificationToggle } from './modules/notifications.js';
 import { progressAnimator } from './modules/progress.js';
 import { showState, getCurrentState, updateQueueTitle, showError, showWarningBanner, setNoKeyError, cacheLayoutDimensions } from './modules/state.js';
 import { renderQueueList } from './modules/queue-ui.js';
-import { getQueue, initQueue, restoreQueueState, addFilesToQueue, clearQueueState, clearTerminalEntries } from './modules/queue.js';
+import { getQueue, initQueue, restoreQueueState, addFilesToQueue, clearQueueState, clearTerminalEntries, monitorEntryNormalizationInBackground } from './modules/queue.js';
 import { initHistorySection, collapseHistoryImmediate, toggleHistorySection, changeHistoryFilter, selectHistoryUpload, updateHistoryListScrollState, getHistoryFilter, getHistoryPanelPushedState, setHistoryPanelPushedState, getHistoryData, getHistorySelectedId, refreshHistoryList } from './modules/history.js';
 import { getContextMenuTargetId, hideContextMenu, showRenameModal, hideRenameModal, showDeleteConfirm, hideDeleteConfirm, deleteEpisode, saveEpisodeChanges, updateRenameSaveState, toggleNotePanel, closeNotePanel, commitNoteAndRefreshSuggestion, handleNoteInput, isNotePanelOpen } from './modules/editing.js';
 import { loadDismissedJobIds, connectFeedEvents, fetchRecentJobs, mergeServerJobs, connectLocalSource, consumeSharedFiles, getLocalSourceConfig, setLocalSourceConfig, getFeedEventsSource, getLocalSourceEvents, setLocalSourceEvents } from './modules/server-sync.js';
+import { handlePaste as handleYouTubePaste, handleDrop as handleYouTubeDrop, initYouTubeImport, registerYouTubeJobCallback } from './modules/youtube.js';
 
 /**
  * @typedef {Object} Episode
@@ -84,6 +85,49 @@ import { loadDismissedJobIds, connectFeedEvents, fetchRecentJobs, mergeServerJob
 
 // Wire up queue-ui callbacks
 initQueue();
+
+// Wire up YouTube import
+initYouTubeImport();
+registerYouTubeJobCallback((jobResponse) => {
+    // Create a queue entry from the YouTube job 202 response
+    const entry = {
+        id: 'yt_' + jobResponse.jobId,
+        file: null,
+        status: 'normalizing',
+        progress: 0,
+        stage: 'Queued',
+        jobId: jobResponse.jobId,
+        episodeId: jobResponse.episodeId,
+        episode: null,
+        error: null,
+        xhr: null,
+        eventSource: null,
+        fileSize: 0,
+        fileName: jobResponse.fileName || 'YouTube import',
+        validationError: false,
+        backgroundMonitoring: false,
+        startedAt: Date.now(),
+        _resolveMonitor: null,
+        source: 'youtube'
+    };
+    const queue = getQueue();
+    queue.push(entry);
+
+    const hasActive = queue.some(e => isActiveWork(e));
+    if (getCurrentState() !== 'queue') {
+        showState('queue', hasActive, collapseHistoryImmediate);
+    } else {
+        updateQueueTitle(hasActive);
+    }
+
+    renderQueueList(queue);
+    monitorEntryNormalizationInBackground(entry);
+});
+
+// Document-level paste listener for YouTube URLs (runs before API key paste detection)
+document.addEventListener('paste', (e) => {
+    handleYouTubePaste(e);
+});
 
 const API_KEY_REGEX = /fp_[a-zA-Z0-9-]+_[A-Za-z0-9_-]{22}(?=[^A-Za-z0-9_-]|$)/;
 
@@ -651,10 +695,13 @@ dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
     const files = Array.from(e.dataTransfer.files);
-    if (files.length === 0) {
+    if (files.length > 0) {
+        addFilesToQueue(files);
+
         return;
     }
-    addFilesToQueue(files);
+    // No files -- check for YouTube URL (e.g. dragged from address bar)
+    handleYouTubeDrop(e);
 });
 
 // Queue state file inputs
@@ -684,10 +731,12 @@ if (queueDropZone) {
         e.preventDefault();
         queueDropZone.classList.remove('drag-over');
         const files = Array.from(e.dataTransfer.files);
-        if (files.length === 0) {
+        if (files.length > 0) {
+            addFilesToQueue(files);
+
             return;
         }
-        addFilesToQueue(files);
+        handleYouTubeDrop(e);
     });
 }
 
