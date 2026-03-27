@@ -1,0 +1,26 @@
+#!/bin/sh
+
+# Auto-fix formatting on staged JS files in the push page directory.
+# Unfixable errors (logic issues) will block the commit.
+# Setup: git config core.hooksPath hooks
+
+PUSH_DIR="FeatherPod.Server/Pages/Push"
+STAGED=$(git diff --cached --name-only --diff-filter=ACM -- "$PUSH_DIR/**/*.js" "$PUSH_DIR/*.js")
+
+if [ -z "$STAGED" ]; then
+    exit 0
+fi
+
+if ! command -v npx >/dev/null 2>&1; then
+    echo "warning: npx not found, skipping JS lint (install Node.js to enable)"
+    exit 0
+fi
+
+# Auto-fix formatting
+npx eslint --fix $STAGED
+
+# Re-stage any auto-fixed files
+echo "$STAGED" | xargs git add
+
+# Final check — fail on unfixable errors
+npx eslint $STAGED
