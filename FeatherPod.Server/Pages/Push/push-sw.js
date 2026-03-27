@@ -78,8 +78,17 @@ self.addEventListener('fetch', (event) => {
         event.respondWith((async () => {
             try {
                 const formData = await event.request.formData();
-                const files = formData.getAll('audio');
 
+                // Check for shared text/URL (e.g., YouTube share from Android)
+                const sharedText = formData.get('shared_text');
+                if (sharedText) {
+                    const redirectUrl = new URL(event.request.url);
+                    redirectUrl.searchParams.set('yt', sharedText);
+                    return Response.redirect(redirectUrl.href, 303);
+                }
+
+                // File sharing (existing flow)
+                const files = formData.getAll('audio');
                 if (files.length > 0) {
                     const cache = await caches.open(SHARE_CACHE_NAME);
                     for (const file of files) {

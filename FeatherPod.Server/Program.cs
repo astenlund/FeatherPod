@@ -322,6 +322,7 @@ app.MapGet("/{feedId}/push/manifest.json", async (string feedId, EpisodeService 
                 enctype = "multipart/form-data",
                 @params = new
                 {
+                    text = "shared_text",
                     files = new[]
                     {
                         new
