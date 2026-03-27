@@ -1,6 +1,7 @@
 import { FEED_ID, VAPID_PUBLIC_KEY, NOTIF_ENABLED_KEY, NOTIF_HINT_SHOWN_KEY, FAKE_PWA } from './config.js';
 import { isActiveWork } from './utils.js';
 import { getApiKey } from './auth.js';
+import { getQueue } from './queue.js';
 
 export function isInstalledPwa() {
     return FAKE_PWA || window.matchMedia('(display-mode: standalone)').matches;
@@ -22,20 +23,20 @@ export function isNotificationToggleAvailable() {
 
 /**
  * Initialize the push notification toggle button.
- * @param {Array} uploadQueue - Current upload queue for active-work check
  */
-export function initNotificationToggle(uploadQueue) {
+export function initNotificationToggle() {
     if (!isNotificationToggleAvailable()) {
         return;
     }
     const toggle = document.getElementById('notif-toggle');
 
-    const hasActiveQueue = uploadQueue.some(e => isActiveWork(e));
+    const queue = getQueue();
+    const hasActiveQueue = queue.some(e => isActiveWork(e));
     const wasEnabled = localStorage.getItem(NOTIF_ENABLED_KEY) === 'true';
     if (hasActiveQueue && wasEnabled && Notification.permission === 'granted') {
         toggle.setAttribute('aria-pressed', 'true');
         refreshPushSubscription();
-        syncPushSession(undefined, uploadQueue);
+        syncPushSession(undefined, queue);
     } else {
         localStorage.removeItem(NOTIF_ENABLED_KEY);
         deleteServerSubscription();
@@ -189,7 +190,7 @@ async function handleNotificationToggle() {
         } else {
             try {
                 await subscribeToPush();
-                // syncPushSession needs uploadQueue -- callers handle this
+                syncPushSession(undefined, getQueue());
                 showBatteryOptimizationHint();
             } catch (e) {
                 console.warn('Failed to subscribe to push notifications:', e);

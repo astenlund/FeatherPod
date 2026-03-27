@@ -322,7 +322,7 @@ async function init() {
             }
         }
         await initHistorySection();
-        initNotificationToggle(getQueue());
+        initNotificationToggle();
         initWakeLockToggle();
         serverJobsPromise.then(mergeServerJobs).catch(() => {});
 
@@ -332,7 +332,7 @@ async function init() {
     // Consume any files shared via PWA Share Target
     if (await consumeSharedFiles()) {
         await initHistorySection();
-        initNotificationToggle(getQueue());
+        initNotificationToggle();
         initWakeLockToggle();
         serverJobsPromise.then(mergeServerJobs).catch(() => {});
 
@@ -364,7 +364,7 @@ async function init() {
         document.getElementById('select-file').focus();
     }
     await initHistorySection();
-    initNotificationToggle(getQueue());
+    initNotificationToggle();
     initWakeLockToggle();
 
     // If the sync timed out, merge the late response when it arrives
