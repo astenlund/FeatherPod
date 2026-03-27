@@ -13,5 +13,10 @@ public enum UploadSource
     /// <summary>
     /// Uploaded via browser push page.
     /// </summary>
-    Browser
+    Browser,
+
+    /// <summary>
+    /// Imported from YouTube via yt-dlp.
+    /// </summary>
+    YouTube
 }

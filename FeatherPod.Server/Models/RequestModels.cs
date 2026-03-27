@@ -28,3 +28,16 @@ public record GrantFeedOwnershipRequest
 {
     public string? FeedId { get; init; }
 }
+
+public record YouTubeImportRequest
+{
+    /// <summary>
+    /// YouTube video URL.
+    /// </summary>
+    required public string Url { get; init; }
+
+    /// <summary>
+    /// "audio" or "video".
+    /// </summary>
+    required public string Format { get; init; }
+}

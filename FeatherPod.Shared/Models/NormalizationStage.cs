@@ -11,6 +11,13 @@ public enum NormalizationStage
     Analyzing,
     Normalizing,
     Finishing,
+
+    /// <summary>
+    /// Downloading media from external source (e.g., YouTube via yt-dlp).
+    /// Explicit value to avoid shifting existing ordinals.
+    /// </summary>
+    Downloading = 10,
+
     Completed,
     Failed,
     Cancelled

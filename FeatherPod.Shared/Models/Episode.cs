@@ -23,6 +23,15 @@ public record Episode
     {
         var input = $"{feedId}:{fileName}:{fileSize}";
         var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+
+        return Convert.ToHexString(hashBytes)[..12].ToLowerInvariant();
+    }
+
+    public static string GenerateYouTubeId(string feedId, string videoId, string format)
+    {
+        var input = $"{feedId}:{videoId}:{format}";
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+
         return Convert.ToHexString(hashBytes)[..12].ToLowerInvariant();
     }
 
