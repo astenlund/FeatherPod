@@ -188,15 +188,12 @@ public partial class YtDlpService
         var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
 
         var stdoutBuilder = new System.Text.StringBuilder();
-        while (!process.StandardOutput.EndOfStream)
+        string? line;
+        while ((line = await process.StandardOutput.ReadLineAsync(cancellationToken)) != null)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var line = await process.StandardOutput.ReadLineAsync(cancellationToken);
-            if (line != null)
-            {
-                stdoutBuilder.AppendLine(line);
-                stdoutLineCallback?.Invoke(line);
-            }
+            stdoutBuilder.AppendLine(line);
+            stdoutLineCallback?.Invoke(line);
         }
 
         var stderr = await stderrTask;

@@ -1,10 +1,12 @@
 using System.Text.Json.Serialization;
+using System.Threading.Channels;
 using FeatherPod.Server.Hubs;
 using FeatherPod.Server.Middleware;
 using FeatherPod.Server.Services;
 using FeatherPod.Server.Models;
 using FeatherPod.Server.Validation;
 using FeatherPod.Shared;
+using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
 
 const long MaxUploadSizeBytes = 500 * 1024 * 1024; // 500 MB
@@ -53,6 +55,12 @@ else
 {
     builder.Services.AddSingleton<IAiService, AiService>();
 }
+
+// YouTube import services
+builder.Services.AddSingleton<YtDlpBinaryManager>();
+builder.Services.AddSingleton<YtDlpService>();
+builder.Services.AddSingleton(Channel.CreateUnbounded<YouTubeDownloadJob>());
+builder.Services.AddHostedService<YouTubeDownloadService>();
 
 // Add background services
 builder.Services.AddHostedService<BlobSyncBackgroundService>();
