@@ -2091,6 +2091,9 @@ h1 {
     }
     body {
         padding: 1rem 1rem 2rem;
+        height: 100svh;
+        min-height: 0;
+        overflow: hidden;
     }
 
     .container {
@@ -2148,9 +2151,21 @@ h1 {
         margin-bottom: 1.5rem;
     }
 
-    /* Queue state on mobile: add top padding to clear fixed h1/h2 */
+    /* Queue state on mobile: fixed container between header and footer */
     #queue {
-        padding-top: calc(10svh + 5.5rem);
+        position: fixed;
+        top: calc(10svh + 5.5rem);
+        bottom: calc(7rem + env(safe-area-inset-bottom, 0px));
+        left: 1rem;
+        right: 1rem;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .queue-list {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
     }
 
     .notif-toggle {
