@@ -12,6 +12,7 @@ public class YouTubeDownloadService : BackgroundService
 {
     private readonly Channel<YouTubeDownloadJob> _channel;
     private readonly YtDlpBinaryManager _binaryManager;
+    private readonly FFmpegBinaryManager _ffmpegBinaryManager;
     private readonly YtDlpService _ytDlpService;
     private readonly IJobService _jobService;
     private readonly IJobProgressChannel _progressChannel;
@@ -25,6 +26,7 @@ public class YouTubeDownloadService : BackgroundService
     public YouTubeDownloadService(
         Channel<YouTubeDownloadJob> channel,
         YtDlpBinaryManager binaryManager,
+        FFmpegBinaryManager ffmpegBinaryManager,
         YtDlpService ytDlpService,
         IJobService jobService,
         IJobProgressChannel progressChannel,
@@ -37,6 +39,7 @@ public class YouTubeDownloadService : BackgroundService
     {
         _channel = channel;
         _binaryManager = binaryManager;
+        _ffmpegBinaryManager = ffmpegBinaryManager;
         _ytDlpService = ytDlpService;
         _jobService = jobService;
         _progressChannel = progressChannel;
@@ -96,6 +99,18 @@ public class YouTubeDownloadService : BackgroundService
             return;
         }
 
+        // Ensure ffmpeg is available (needed for muxing video+audio DASH streams and opus-to-m4a conversion)
+        var ffmpegAvailable = await _ffmpegBinaryManager.EnsureFFmpegAvailableAsync(stoppingToken);
+        if (!ffmpegAvailable)
+        {
+            await MarkJobFailedAsync(job, "Failed to download ffmpeg");
+
+            return;
+        }
+
+        // Only pass --ffmpeg-location when local binaries exist; if ffmpeg is on PATH, yt-dlp finds it naturally
+        var ffmpegDir = GetLocalFfmpegDir();
+
         if (await IsJobCancelledAsync(job.JobId, stoppingToken))
         {
             return;
@@ -122,7 +137,7 @@ public class YouTubeDownloadService : BackgroundService
 
         try
         {
-            (outputPath, lastStderr) = await AttemptDownloadAsync(job, outputDir, cookiePath, stoppingToken);
+            (outputPath, lastStderr) = await AttemptDownloadAsync(job, outputDir, cookiePath, ffmpegDir, stoppingToken);
 
             // Check bot detection BEFORE extractor error - auth errors should not trigger yt-dlp update
             if (outputPath == null && lastStderr != null && YtDlpService.IsBotDetectionError(lastStderr))
@@ -151,7 +166,7 @@ public class YouTubeDownloadService : BackgroundService
                 if (updated)
                 {
                     _logger.LogInformation("yt-dlp updated, retrying download for job {JobId}", job.JobId);
-                    (outputPath, lastStderr) = await AttemptDownloadAsync(job, outputDir, cookiePath, stoppingToken);
+                    (outputPath, lastStderr) = await AttemptDownloadAsync(job, outputDir, cookiePath, ffmpegDir, stoppingToken);
                 }
             }
 
@@ -201,6 +216,7 @@ public class YouTubeDownloadService : BackgroundService
         YouTubeDownloadJob job,
         string outputDir,
         string? cookiePath,
+        string? ffmpegDir,
         CancellationToken stoppingToken)
     {
         var lastUpdate = DateTime.MinValue;
@@ -236,6 +252,7 @@ public class YouTubeDownloadService : BackgroundService
                 });
             },
             cookieFilePath: cookiePath,
+            ffmpegDir: ffmpegDir,
             cancellationToken: stoppingToken);
 
         return result;
@@ -328,6 +345,14 @@ public class YouTubeDownloadService : BackgroundService
         var entity = await _jobService.GetJobStatusAsync(jobId, cancellationToken);
 
         return entity?.GetJobStatus() == JobStatus.Cancelled;
+    }
+
+    private static string? GetLocalFfmpegDir()
+    {
+        var dir = FFmpegBinaryManager.GetBinaryDirectory();
+        var ffmpegName = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
+
+        return File.Exists(Path.Combine(dir, ffmpegName)) ? dir : null;
     }
 
     private void CleanupTempDirectory(string outputDir)

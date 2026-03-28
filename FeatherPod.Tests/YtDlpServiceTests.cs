@@ -1,9 +1,137 @@
+using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
 
 namespace FeatherPod.Tests;
 
 public class YtDlpServiceTests
 {
+    public class DownloadArgsBuilding
+    {
+        [Fact]
+        public void Video_WithFfmpegDir_IncludesFfmpegLocation()
+        {
+            // Arrange
+            var ffmpegDir = "/home/user/.featherpod/ffmpeg";
+
+            // Act
+            var args = YtDlpService.BuildDownloadArgs(
+                url: "https://www.youtube.com/watch?v=abc123",
+                outputTemplate: "/tmp/abc123.%(ext)s",
+                format: YouTubeFormat.Video,
+                cookieFilePath: null,
+                denoArgs: "",
+                ffmpegDir: ffmpegDir);
+
+            // Assert
+            Assert.Contains($"--ffmpeg-location \"{ffmpegDir}\"", args);
+        }
+
+        [Fact]
+        public void Audio_WithFfmpegDir_IncludesFfmpegLocation()
+        {
+            // Arrange
+            var ffmpegDir = "/home/user/.featherpod/ffmpeg";
+
+            // Act
+            var args = YtDlpService.BuildDownloadArgs(
+                url: "https://www.youtube.com/watch?v=abc123",
+                outputTemplate: "/tmp/abc123.%(ext)s",
+                format: YouTubeFormat.Audio,
+                cookieFilePath: null,
+                denoArgs: "",
+                ffmpegDir: ffmpegDir);
+
+            // Assert
+            Assert.Contains($"--ffmpeg-location \"{ffmpegDir}\"", args);
+        }
+
+        [Fact]
+        public void WithoutFfmpegDir_OmitsFfmpegLocation()
+        {
+            // Act
+            var args = YtDlpService.BuildDownloadArgs(
+                url: "https://www.youtube.com/watch?v=abc123",
+                outputTemplate: "/tmp/abc123.%(ext)s",
+                format: YouTubeFormat.Video,
+                cookieFilePath: null,
+                denoArgs: "",
+                ffmpegDir: null);
+
+            // Assert
+            Assert.DoesNotContain("--ffmpeg-location", args);
+        }
+
+        [Fact]
+        public void Video_IncludesMergeOutputFormat()
+        {
+            // Act
+            var args = YtDlpService.BuildDownloadArgs(
+                url: "https://www.youtube.com/watch?v=abc123",
+                outputTemplate: "/tmp/abc123.%(ext)s",
+                format: YouTubeFormat.Video,
+                cookieFilePath: null,
+                denoArgs: "",
+                ffmpegDir: null);
+
+            // Assert
+            Assert.Contains("--merge-output-format mp4", args);
+        }
+
+        [Fact]
+        public void Audio_IncludesExtractAudio()
+        {
+            // Act
+            var args = YtDlpService.BuildDownloadArgs(
+                url: "https://www.youtube.com/watch?v=abc123",
+                outputTemplate: "/tmp/abc123.%(ext)s",
+                format: YouTubeFormat.Audio,
+                cookieFilePath: null,
+                denoArgs: "",
+                ffmpegDir: null);
+
+            // Assert
+            Assert.Contains("--extract-audio --audio-format m4a", args);
+        }
+
+        [Fact]
+        public void WithCookies_IncludesCookieArgs()
+        {
+            // Arrange
+            var cookiePath = "/tmp/cookies.txt";
+
+            // Act
+            var args = YtDlpService.BuildDownloadArgs(
+                url: "https://www.youtube.com/watch?v=abc123",
+                outputTemplate: "/tmp/abc123.%(ext)s",
+                format: YouTubeFormat.Audio,
+                cookieFilePath: cookiePath,
+                denoArgs: "",
+                ffmpegDir: null);
+
+            // Assert
+            Assert.Contains($"--cookies \"{cookiePath}\"", args);
+        }
+
+        [Fact]
+        public void WithDenoArgs_IncludesDenoArgs()
+        {
+            // Arrange
+            var denoArgs = "--js-runtimes deno:\"/usr/bin/deno\" ";
+
+            // Act
+            var args = YtDlpService.BuildDownloadArgs(
+                url: "https://www.youtube.com/watch?v=abc123",
+                outputTemplate: "/tmp/abc123.%(ext)s",
+                format: YouTubeFormat.Audio,
+                cookieFilePath: null,
+                denoArgs: denoArgs,
+                ffmpegDir: null);
+
+            // Assert
+            Assert.StartsWith(denoArgs, args);
+        }
+    }
+
     public class UrlValidation
     {
         [Theory]

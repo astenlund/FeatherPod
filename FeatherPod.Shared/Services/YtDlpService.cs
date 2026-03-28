@@ -124,6 +124,7 @@ public partial class YtDlpService
         string outputDir,
         Action<double>? progressCallback = null,
         string? cookieFilePath = null,
+        string? ffmpegDir = null,
         CancellationToken cancellationToken = default)
     {
         var binaryPath = _binaryManager.GetBinaryPath();
@@ -131,14 +132,8 @@ public partial class YtDlpService
         Directory.CreateDirectory(outputDir);
 
         var outputTemplate = Path.Combine(outputDir, $"{videoId}.%(ext)s");
-
-        var formatArgs = format == YouTubeFormat.Video
-            ? "-f \"bestvideo[height<=1080]+bestaudio/best[height<=1080]\" --merge-output-format mp4"
-            : "--extract-audio --audio-format m4a --audio-quality 0";
-
-        var cookieArgs = cookieFilePath != null ? $"--cookies \"{cookieFilePath}\" " : "";
         var denoArgs = GetDenoArgs();
-        var args = $"{denoArgs}{cookieArgs}{formatArgs} --no-playlist --no-overwrites --newline -o \"{outputTemplate}\" \"{url}\"";
+        var args = BuildDownloadArgs(url, outputTemplate, format, cookieFilePath, denoArgs, ffmpegDir);
 
         _logger?.LogInformation("Downloading YouTube {Format} for {VideoId} to {OutputDir}", format, videoId, outputDir);
 
@@ -202,6 +197,18 @@ public partial class YtDlpService
     public static bool IsBotDetectionError(string text)
     {
         return text.Contains("Sign in to confirm", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static string BuildDownloadArgs(string url, string outputTemplate, YouTubeFormat format, string? cookieFilePath, string denoArgs, string? ffmpegDir)
+    {
+        var formatArgs = format == YouTubeFormat.Video
+            ? "-f \"bestvideo[height<=1080]+bestaudio/best[height<=1080]\" --merge-output-format mp4"
+            : "--extract-audio --audio-format m4a --audio-quality 0";
+
+        var cookieArgs = cookieFilePath != null ? $"--cookies \"{cookieFilePath}\" " : "";
+        var ffmpegArgs = ffmpegDir != null ? $"--ffmpeg-location \"{ffmpegDir}\" " : "";
+
+        return $"{denoArgs}{cookieArgs}{ffmpegArgs}{formatArgs} --no-playlist --no-overwrites --newline -o \"{outputTemplate}\" \"{url}\"";
     }
 
     private string GetDenoArgs()

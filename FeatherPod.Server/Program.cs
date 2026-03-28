@@ -57,6 +57,7 @@ else
 }
 
 // YouTube import services
+builder.Services.AddSingleton<FFmpegBinaryManager>();
 builder.Services.AddSingleton<YtDlpBinaryManager>();
 builder.Services.AddSingleton<YtDlpService>();
 builder.Services.AddSingleton<YouTubeCookieService>();
