@@ -177,6 +177,8 @@ export function addFilesToQueue(files) {
         showState('queue', hasActive, collapseHistoryImmediate);
     } else {
         updateQueueTitle(hasActive);
+        setNotificationToggleVisible(hasActive);
+        setWakeLockToggleVisible(hasActive);
     }
 
     if (previousState === 'ready') {
@@ -869,6 +871,8 @@ export function retryEntry(entryId) {
     updateQueueItemInDOM(entry);
     const hasActive = uploadQueue.some(e => isActiveWork(e));
     updateQueueTitle(hasActive);
+    setNotificationToggleVisible(hasActive);
+    setWakeLockToggleVisible(hasActive);
 
     saveQueueState();
 
