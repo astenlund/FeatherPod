@@ -7,8 +7,8 @@
  * - ?yt= query param (from PWA share target redirect)
  *
  * On detection, shows an import dialog with audio/video toggle, then POSTs to
- * /api/feeds/{feedId}/youtube. On 202, creates a queue entry and hands off to
- * existing queue monitoring.
+ * /api/feeds/{feedId}/youtube with the oEmbed title for instant queue display.
+ * On 202, creates a queue entry and hands off to existing queue monitoring.
  */
 
 import { FEED_ID } from './config.js';
@@ -166,6 +166,8 @@ function saveChannelFormatPref(channel, format) {
 let pendingUrl = null;
 /** @type {string|null} Channel name from oEmbed (for format pref) */
 let pendingChannel = null;
+/** @type {string|null} Video title from oEmbed (sent to server for instant queue display) */
+let pendingTitle = null;
 
 /**
  * Show the YouTube import confirmation dialog.
@@ -175,6 +177,7 @@ let pendingChannel = null;
 function showImportDialog(url, metaPromise) {
     pendingUrl = url;
     pendingChannel = null;
+    pendingTitle = null;
 
     const overlay = document.getElementById('youtube-modal-overlay');
     if (!overlay) {
@@ -219,6 +222,7 @@ function showImportDialog(url, metaPromise) {
             }
             if (titleEl && data.title) {
                 titleEl.textContent = data.title;
+                pendingTitle = data.title;
             }
             if (metaEl && data.author_name) {
                 metaEl.textContent = data.author_name;
@@ -317,16 +321,11 @@ async function submitImport() {
                 'Content-Type': 'application/json',
                 'X-API-Key': apiKey
             },
-            body: JSON.stringify({ url: pendingUrl, format })
+            body: JSON.stringify({ url: pendingUrl, format, title: pendingTitle })
         });
 
         if (!response.ok) {
             const data = await response.json().catch(() => ({}));
-            if (data.authRequired) {
-                showCookieDialog();
-
-                return;
-            }
             throw new Error(data.error || `Server returned ${response.status}`);
         }
 

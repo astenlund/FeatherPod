@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FeatherPod.Server.Models;
 using FeatherPod.Shared.Models;
 
 namespace FeatherPod.Tests;
@@ -200,6 +201,38 @@ public class YouTubeImportTests
 
             // Assert
             Assert.Equal(MediaSource.YouTube, deserialized.MediaSource);
+        }
+    }
+
+    public class ImportRequestTitle
+    {
+        [Fact]
+        public void Title_DefaultsToNull_WhenNotProvided()
+        {
+            // Arrange & Act
+            var request = new YouTubeImportRequest
+            {
+                Url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                Format = YouTubeFormat.Audio
+            };
+
+            // Assert
+            Assert.Null(request.Title);
+        }
+
+        [Fact]
+        public void Title_PreservesValue_WhenProvided()
+        {
+            // Arrange & Act
+            var request = new YouTubeImportRequest
+            {
+                Url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                Format = YouTubeFormat.Audio,
+                Title = "Never Gonna Give You Up"
+            };
+
+            // Assert
+            Assert.Equal("Never Gonna Give You Up", request.Title);
         }
     }
 

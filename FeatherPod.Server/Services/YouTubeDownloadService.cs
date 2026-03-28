@@ -88,7 +88,7 @@ public class YouTubeDownloadService : BackgroundService
 
     private async Task ProcessJobAsync(YouTubeDownloadJob job, CancellationToken stoppingToken)
     {
-        // Step 1: Preparing - ensure yt-dlp is available
+        // Step 1: Preparing - ensure binaries and fetch metadata
         await UpdateProgressAsync(job, NormalizationStage.Preparing, 0, "Preparing...", stoppingToken);
 
         var available = await _binaryManager.EnsureAvailableAsync(stoppingToken);
@@ -99,7 +99,6 @@ public class YouTubeDownloadService : BackgroundService
             return;
         }
 
-        // Ensure ffmpeg is available (needed for muxing video+audio DASH streams and opus-to-m4a conversion)
         var ffmpegAvailable = await _ffmpegBinaryManager.EnsureFFmpegAvailableAsync(stoppingToken);
         if (!ffmpegAvailable)
         {
@@ -108,38 +107,76 @@ public class YouTubeDownloadService : BackgroundService
             return;
         }
 
-        // Only pass --ffmpeg-location when local binaries exist; if ffmpeg is on PATH, yt-dlp finds it naturally
         var ffmpegDir = GetLocalFfmpegDir();
 
-        if (await IsJobCancelledAsync(job.JobId, stoppingToken))
-        {
-            return;
-        }
-
-        // Step 2: Downloading
-        await UpdateProgressAsync(job, NormalizationStage.Downloading, 5, "Downloading...", stoppingToken);
-
+        // Create output directory early -- also used as cookie temp dir
         var outputDir = Path.Combine(Path.GetTempPath(), "FeatherPod", job.JobId);
-        string? outputPath = null;
-        string? lastStderr = null;
-        var retried = false;
-
-        // Get cookie file for yt-dlp if available
-        string? cookiePath = null;
-        try
-        {
-            cookiePath = await _cookieService.GetCookieFilePathAsync(outputDir, stoppingToken);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to get cookie file for job {JobId}, proceeding without cookies", job.JobId);
-        }
 
         try
         {
+            string? cookiePath = null;
+            try
+            {
+                cookiePath = await _cookieService.GetCookieFilePathAsync(outputDir, stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to get cookie file for job {JobId}, proceeding without cookies", job.JobId);
+            }
+
+            // Fetch metadata via yt-dlp (title, description, channel, duration, upload date)
+            await UpdateProgressAsync(job, NormalizationStage.Preparing, 0, "Fetching video info...", stoppingToken);
+
+            var canonicalUrl = YtDlpService.GetCanonicalUrl(job.VideoId);
+            var (metadata, metaError) = await _ytDlpService.GetMetadataAsync(canonicalUrl, cookiePath, stoppingToken);
+            if (metadata == null)
+            {
+                if (metaError != null && YtDlpService.IsBotDetectionError(metaError))
+                {
+                    await MarkJobFailedAsync(job, YtDlpService.BotDetectionErrorMessage);
+
+                    return;
+                }
+
+                await MarkJobFailedAsync(job, metaError ?? "Video is unavailable");
+
+                return;
+            }
+
+            // Extract metadata into local variables for use in episode creation
+            var title = metadata.Title ?? job.Title;
+            var channel = metadata.Channel;
+            var description = !string.IsNullOrEmpty(channel)
+                ? $"By {channel}\n\n{metadata.Description}"
+                : metadata.Description;
+            var uploadDate = metadata.GetUploadDateTime();
+
+            // Update queue UI with authoritative yt-dlp title if it differs from oEmbed title
+            if (title != job.Title)
+            {
+                await _jobService.UpdateJobStatusAsync(job.JobId, e =>
+                {
+                    if (e.GetJobStatus() is not (JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled))
+                    {
+                        e.Title = title;
+                    }
+                }, stoppingToken);
+            }
+
+            if (await IsJobCancelledAsync(job.JobId, stoppingToken))
+            {
+                return;
+            }
+
+            // Step 2: Downloading
+            await UpdateProgressAsync(job, NormalizationStage.Downloading, 5, "Downloading...", stoppingToken);
+
+            string? outputPath = null;
+            string? lastStderr = null;
+            var retried = false;
+
             (outputPath, lastStderr) = await AttemptDownloadAsync(job, outputDir, cookiePath, ffmpegDir, stoppingToken);
 
-            // Check bot detection BEFORE extractor error - auth errors should not trigger yt-dlp update
             if (outputPath == null && lastStderr != null && YtDlpService.IsBotDetectionError(lastStderr))
             {
                 await MarkJobFailedAsync(job, YtDlpService.BotDetectionErrorMessage);
@@ -147,7 +184,6 @@ public class YouTubeDownloadService : BackgroundService
                 return;
             }
 
-            // Format unavailable - usually means yt-dlp's JS runtime is missing and format list is incomplete
             if (outputPath == null && lastStderr != null && YtDlpService.IsFormatUnavailableError(lastStderr))
             {
                 _logger.LogError("Format unavailable for job {JobId} ({Format}). Ensure deno is installed on the server for full format support.", job.JobId, job.Format);
@@ -156,7 +192,6 @@ public class YouTubeDownloadService : BackgroundService
                 return;
             }
 
-            // Update-then-retry only on extractor errors (YouTube-side changes)
             if (outputPath == null && lastStderr != null && YtDlpService.IsExtractorError(lastStderr))
             {
                 retried = true;
@@ -187,16 +222,12 @@ public class YouTubeDownloadService : BackgroundService
             // Step 3: Finishing - upload and create episode
             await UpdateProgressAsync(job, NormalizationStage.Finishing, 90, "Uploading to feed...", stoppingToken);
 
-            var description = !string.IsNullOrEmpty(job.Channel)
-                ? $"By {job.Channel}\n\n{job.Description}"
-                : job.Description;
-
             await _episodeService.AddEpisodeAsync(
                 job.FeedId,
                 outputPath,
-                title: job.Title,
+                title: title,
                 description: description,
-                publishedDate: job.UploadDate,
+                publishedDate: uploadDate,
                 episodeId: job.EpisodeId,
                 source: UploadSource.Browser,
                 mediaSource: MediaSource.YouTube,

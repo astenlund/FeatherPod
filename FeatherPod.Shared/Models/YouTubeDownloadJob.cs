@@ -17,7 +17,7 @@ public static class YouTubeFormatExtensions
 
 /// <summary>
 /// Represents a YouTube download job processed by the in-process BackgroundService.
-/// Metadata is fetched via yt-dlp before queueing.
+/// Contains only enqueue-time data; full metadata is fetched by the background worker during the Preparing stage.
 /// </summary>
 public record YouTubeDownloadJob
 {
@@ -31,15 +31,10 @@ public record YouTubeDownloadJob
 
     required public string EpisodeId { get; init; }
 
+    /// <summary>
+    /// Display title from oEmbed (or videoId fallback). The authoritative yt-dlp title is fetched by the background worker.
+    /// </summary>
     required public string Title { get; init; }
-
-    public string? Channel { get; init; }
-
-    public string? Description { get; init; }
-
-    public TimeSpan Duration { get; init; }
-
-    public DateTime? UploadDate { get; init; }
 
     required public DateTime QueuedAt { get; init; }
 }

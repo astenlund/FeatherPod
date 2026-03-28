@@ -37,4 +37,9 @@ public record YouTubeImportRequest
     required public string Url { get; init; }
 
     required public FeatherPod.Shared.Models.YouTubeFormat Format { get; init; }
+
+    /// <summary>
+    /// Optional display title from oEmbed (used for queue display before yt-dlp metadata is available).
+    /// </summary>
+    public string? Title { get; init; }
 }

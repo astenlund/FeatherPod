@@ -474,7 +474,7 @@ export function updateEntryFromJobStatus(entry, job) {
         return;
     }
 
-    if (job.title && !entry.title) {
+    if (job.title && job.title !== entry.title) {
         entry.title = job.title;
     }
 
