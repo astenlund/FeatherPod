@@ -413,7 +413,7 @@ async function processEntry(entry) {
             entry.episode = episode;
             entry.progress = 100;
             saveToLocalHistory(episode);
-            refreshHistoryList();
+            refreshHistoryList(episode?.id);
         } else if (response.status === 202) {
             const jobResponse = JSON.parse(response.body);
             entry.jobId = jobResponse.jobId;
@@ -631,7 +631,7 @@ function monitorEntryNormalization(entry) {
                 if (episode) {
                     saveToLocalHistory(episode);
                 }
-                refreshHistoryList();
+                refreshHistoryList(episode?.id);
             } else {
                 entry.status = 'failed';
                 entry.error = lastStatus?.error || 'Normalization failed';
@@ -726,7 +726,7 @@ async function pollEntryNormalization(entry) {
                     saveToLocalHistory(episode);
                 }
                 updateQueueItemInDOM(entry);
-                refreshHistoryList();
+                refreshHistoryList(episode?.id);
 
                 return;
             } else if (job.status === 'Failed') {

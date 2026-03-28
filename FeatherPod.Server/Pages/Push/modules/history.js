@@ -182,10 +182,14 @@ export function updateLocalHistoryTitle(episodeId, newTitle) {
 /**
  * Invalidates caches and re-renders the history panel if it's currently visible.
  * Call after any upload completion (sync or async) to keep the history list up to date.
+ * @param {string} [selectEpisodeId] - Episode ID to select after refresh (e.g. newly uploaded episode)
  */
-export async function refreshHistoryList() {
+export async function refreshHistoryList(selectEpisodeId) {
     cachedBrowserUploads = null;
     cachedAllUploads = null;
+    if (selectEpisodeId) {
+        historySelectedId = selectEpisodeId;
+    }
     const section = document.getElementById('history-section');
     if (!section || section.style.display === 'none') {
         return;
