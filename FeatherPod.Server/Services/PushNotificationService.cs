@@ -551,7 +551,7 @@ public class PushNotificationService
     }
 
     private static string Truncate(string endpoint) =>
-        endpoint.Length > 60 ? string.Concat(endpoint.AsSpan(0, 60), "...") : endpoint;
+        endpoint.Length > 60 ? $"{endpoint[..60].TrimEnd()}..." : endpoint;
 
     private class NotificationSession
     {

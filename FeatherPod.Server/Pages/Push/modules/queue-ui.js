@@ -1,4 +1,5 @@
 import { progressAnimator } from './progress.js';
+import { truncate } from './utils.js';
 
 // These callbacks are set by the orchestrator to avoid circular imports
 let onRemoveFromQueue = null;
@@ -52,7 +53,7 @@ export function createQueueItemElement(entry) {
     const name = document.createElement('span');
     name.className = 'queue-item-name';
     const displayName = entry.title || entry.fileName;
-    name.textContent = displayName;
+    name.textContent = truncate(displayName, 50);
     name.title = entry.title ? entry.fileName : displayName;
     item.appendChild(name);
 
