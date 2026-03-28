@@ -14,6 +14,7 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 - **CLI tool** - Command-line interface for episode, icon, feed, and user management
 - **REST API** - REST API for management (consumed by CLI tool)
 - **Browser push page** - PWA at `/{feedId}/push#API_KEY` with multi-file upload, server-side normalization, real-time progress, upload history, episode context menus (rename, delete), cross-device sync via SSE, push notifications via Web Push API, and screen wake lock
+- **YouTube import** - Paste or share a YouTube link on the push page to import audio or video episodes via yt-dlp, with cookie-based authentication for bot detection bypass
 - **Android Share Target** - Install the push page as a PWA to share audio files directly from Android
 - **Windows context menu** - Right-click audio files in Explorer to push to a feed
 - **Real-time progress** - SSE and SignalR-based progress streaming for normalization jobs
@@ -192,6 +193,15 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 | `/api/jobs/{jobId}` | GET | Public | Get normalization job status |
 | `/api/jobs/{jobId}/cancel` | POST | Admin/Owner | Cancel a normalization job |
 | `/api/jobs/{jobId}/progress` | GET | Public | SSE stream for real-time job progress |
+
+### YouTube Import
+
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/api/feeds/{feedId}/youtube` | POST | Admin/Owner | Import YouTube video (returns 202 with job ID) |
+| `/api/youtube/cookies` | POST | Admin | Upload cookies.txt for yt-dlp authentication |
+| `/api/youtube/cookies/status` | GET | Any | Check if YouTube cookies are uploaded |
+| `/api/youtube/cookies` | DELETE | Admin | Remove stored YouTube cookies |
 
 ### Icon Management
 

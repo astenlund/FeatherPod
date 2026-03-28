@@ -1,9 +1,18 @@
 import { FEED_ID, API_KEY_SESSION_KEY, API_KEY_LOCAL_KEY, API_KEY_COOKIE_KEY, STR_INVALID_KEY } from './config.js';
 
 let apiKey = null;
+let userRole = null;
 
 export function getApiKey() {
     return apiKey;
+}
+
+/**
+ * Returns the authenticated user's role ('Admin' or 'FeedOwner'), or null if not yet validated.
+ * @returns {string|null}
+ */
+export function getUserRole() {
+    return userRole;
 }
 
 export function setApiKey(key) {
@@ -89,6 +98,7 @@ export async function validateApiKey(key) {
         }
 
         const user = await response.json();
+        userRole = user.role || null;
         const feedAccess = user.role === 'Admin' || (user.role === 'FeedOwner' && user.ownedFeeds && user.ownedFeeds.includes(FEED_ID));
 
         return { valid: true, user, feedAccess, error: null, networkError: false };

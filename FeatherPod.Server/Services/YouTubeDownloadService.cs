@@ -18,6 +18,7 @@ public class YouTubeDownloadService : BackgroundService
     private readonly IFeedEventChannel _feedEventChannel;
     private readonly EpisodeService _episodeService;
     private readonly PushNotificationService _pushNotificationService;
+    private readonly YouTubeCookieService _cookieService;
     private readonly int _throttleMs;
     private readonly ILogger<YouTubeDownloadService> _logger;
 
@@ -30,6 +31,7 @@ public class YouTubeDownloadService : BackgroundService
         IFeedEventChannel feedEventChannel,
         EpisodeService episodeService,
         PushNotificationService pushNotificationService,
+        YouTubeCookieService cookieService,
         IConfiguration configuration,
         ILogger<YouTubeDownloadService> logger)
     {
@@ -41,6 +43,7 @@ public class YouTubeDownloadService : BackgroundService
         _feedEventChannel = feedEventChannel;
         _episodeService = episodeService;
         _pushNotificationService = pushNotificationService;
+        _cookieService = cookieService;
         _throttleMs = configuration.GetValue("PushPage:ProgressIntervalMs", 250);
         _logger = logger;
     }
@@ -106,9 +109,28 @@ public class YouTubeDownloadService : BackgroundService
         string? lastStderr = null;
         var retried = false;
 
+        // Get cookie file for yt-dlp if available
+        string? cookiePath = null;
         try
         {
-            (outputPath, lastStderr) = await AttemptDownloadAsync(job, outputDir, stoppingToken);
+            cookiePath = await _cookieService.GetCookieFilePathAsync(outputDir, stoppingToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to get cookie file for job {JobId}, proceeding without cookies", job.JobId);
+        }
+
+        try
+        {
+            (outputPath, lastStderr) = await AttemptDownloadAsync(job, outputDir, cookiePath, stoppingToken);
+
+            // Check bot detection BEFORE extractor error - auth errors should not trigger yt-dlp update
+            if (outputPath == null && lastStderr != null && YtDlpService.IsBotDetectionError(lastStderr))
+            {
+                await MarkJobFailedAsync(job, YtDlpService.BotDetectionErrorMessage);
+
+                return;
+            }
 
             // Update-then-retry only on extractor errors (YouTube-side changes)
             if (outputPath == null && lastStderr != null && YtDlpService.IsExtractorError(lastStderr))
@@ -120,7 +142,7 @@ public class YouTubeDownloadService : BackgroundService
                 if (updated)
                 {
                     _logger.LogInformation("yt-dlp updated, retrying download for job {JobId}", job.JobId);
-                    (outputPath, lastStderr) = await AttemptDownloadAsync(job, outputDir, stoppingToken);
+                    (outputPath, lastStderr) = await AttemptDownloadAsync(job, outputDir, cookiePath, stoppingToken);
                 }
             }
 
@@ -168,6 +190,7 @@ public class YouTubeDownloadService : BackgroundService
     private async Task<(string? OutputPath, string? Stderr)> AttemptDownloadAsync(
         YouTubeDownloadJob job,
         string outputDir,
+        string? cookiePath,
         CancellationToken stoppingToken)
     {
         var lastUpdate = DateTime.MinValue;
@@ -202,6 +225,7 @@ public class YouTubeDownloadService : BackgroundService
                     }
                 });
             },
+            cookieFilePath: cookiePath,
             cancellationToken: stoppingToken);
 
         return result;

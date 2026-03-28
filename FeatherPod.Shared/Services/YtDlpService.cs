@@ -74,11 +74,12 @@ public partial class YtDlpService
     /// Fetches metadata for a YouTube video without downloading.
     /// Returns (metadata, error). On failure, metadata is null and error contains yt-dlp's stderr.
     /// </summary>
-    public async Task<(YtDlpMetadata? Metadata, string? Error)> GetMetadataAsync(string url, CancellationToken cancellationToken = default)
+    public async Task<(YtDlpMetadata? Metadata, string? Error)> GetMetadataAsync(string url, string? cookieFilePath = null, CancellationToken cancellationToken = default)
     {
         var binaryPath = _binaryManager.GetBinaryPath();
 
-        var args = $"--dump-json --no-download --no-playlist \"{url}\"";
+        var cookieArgs = cookieFilePath != null ? $"--cookies \"{cookieFilePath}\" " : "";
+        var args = $"{cookieArgs}--dump-json --no-download --no-playlist \"{url}\"";
 
         _logger?.LogInformation("Fetching YouTube metadata for {Url}", url);
 
@@ -121,6 +122,7 @@ public partial class YtDlpService
         YouTubeFormat format,
         string outputDir,
         Action<double>? progressCallback = null,
+        string? cookieFilePath = null,
         CancellationToken cancellationToken = default)
     {
         var binaryPath = _binaryManager.GetBinaryPath();
@@ -133,7 +135,8 @@ public partial class YtDlpService
             ? "-f \"bestvideo[height<=1080]+bestaudio/best[height<=1080]\" --merge-output-format mp4"
             : "--extract-audio --audio-format m4a --audio-quality 0";
 
-        var args = $"{formatArgs} --no-playlist --no-overwrites --newline -o \"{outputTemplate}\" \"{url}\"";
+        var cookieArgs = cookieFilePath != null ? $"--cookies \"{cookieFilePath}\" " : "";
+        var args = $"{cookieArgs}{formatArgs} --no-playlist --no-overwrites --newline -o \"{outputTemplate}\" \"{url}\"";
 
         _logger?.LogInformation("Downloading YouTube {Format} for {VideoId} to {OutputDir}", format, videoId, outputDir);
 
@@ -173,6 +176,21 @@ public partial class YtDlpService
         return stderr.Contains("ExtractorError", StringComparison.OrdinalIgnoreCase) ||
                stderr.Contains("unable to extract", StringComparison.OrdinalIgnoreCase) ||
                stderr.Contains("unable to download webpage", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// User-facing error message for bot detection failures. Used as a sentinel value
+    /// to derive AuthRequired on JobStatusResponse.
+    /// </summary>
+    public const string BotDetectionErrorMessage = "YouTube needs browser cookies to continue";
+
+    /// <summary>
+    /// Checks if a yt-dlp failure is a bot detection error requiring cookie authentication.
+    /// Works on both friendly error strings (from GetMetadataAsync) and raw stderr (from DownloadAsync).
+    /// </summary>
+    public static bool IsBotDetectionError(string text)
+    {
+        return text.Contains("Sign in to confirm", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(

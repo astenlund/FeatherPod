@@ -213,6 +213,7 @@ export function mergeServerJobs(serverJobs) {
             }
             existing.status = serverStatus === 'Completed' ? 'completed' : 'failed';
             existing.error = serverJob.error || null;
+            existing.authRequired = serverJob.authRequired || false;
             existing.episodeId = serverJob.episodeId || existing.episodeId;
             existing.stage = serverJob.stage || existing.stage;
             existing.progress = 100;

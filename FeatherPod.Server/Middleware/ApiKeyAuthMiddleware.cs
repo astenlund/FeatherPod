@@ -138,6 +138,13 @@ public class ApiKeyAuthMiddleware
             return true;
         }
 
+        // YouTube cookie management - allow any authenticated user
+        // Admin-only restrictions (POST, DELETE) are handled inside the controller
+        if (path.StartsWith("/api/youtube/cookies"))
+        {
+            return true;
+        }
+
         // User management endpoints are admin-only, except /api/users/me and rotating own key
         if (path.StartsWith("/api/users"))
         {

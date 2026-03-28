@@ -12,7 +12,7 @@
  */
 
 import { FEED_ID } from './config.js';
-import { getApiKey } from './auth.js';
+import { getApiKey, getUserRole } from './auth.js';
 import { getCurrentState } from './state.js';
 
 const YT_FORMAT_PREFS_KEY = 'featherpod_yt_format_prefs';
@@ -322,6 +322,11 @@ async function submitImport() {
 
         if (!response.ok) {
             const data = await response.json().catch(() => ({}));
+            if (data.authRequired) {
+                showCookieDialog();
+
+                return;
+            }
             throw new Error(data.error || `Server returned ${response.status}`);
         }
 
@@ -349,6 +354,139 @@ async function submitImport() {
 }
 
 // ============================================================================
+// Cookie upload dialog (shown on YouTube bot detection)
+// ============================================================================
+
+/** @type {boolean} Whether the cookie dialog is currently showing */
+let cookieDialogActive = false;
+
+/**
+ * Show the cookie upload dialog inside the YouTube modal.
+ * Admin users see a file picker; non-admin users see a "temporarily unavailable" message.
+ */
+function showCookieDialog() {
+    if (cookieDialogActive) {
+        return;
+    }
+    cookieDialogActive = true;
+
+    const overlay = document.getElementById('youtube-modal-overlay');
+    if (!overlay) {
+        return;
+    }
+
+    const contentEl = overlay.querySelector('.yt-modal-content');
+    if (!contentEl) {
+        return;
+    }
+
+    const isAdmin = getUserRole() === 'Admin';
+
+    // Hide normal import UI, show cookie dialog
+    contentEl.querySelectorAll('.yt-modal-import-section').forEach(el => { el.hidden = true; });
+
+    const cookieSection = contentEl.querySelector('.yt-modal-cookie-section');
+    if (cookieSection) {
+        cookieSection.hidden = false;
+        const uploadArea = cookieSection.querySelector('.yt-cookie-upload-area');
+        const adminMsg = cookieSection.querySelector('.yt-cookie-admin-msg');
+        const noAdminMsg = cookieSection.querySelector('.yt-cookie-noadmin-msg');
+
+        if (uploadArea) {
+            uploadArea.hidden = !isAdmin;
+        }
+        if (adminMsg) {
+            adminMsg.hidden = !isAdmin;
+        }
+        if (noAdminMsg) {
+            noAdminMsg.hidden = isAdmin;
+        }
+
+        // Reset state
+        const statusEl = cookieSection.querySelector('.yt-cookie-status');
+        if (statusEl) {
+            statusEl.textContent = '';
+            statusEl.hidden = true;
+        }
+    }
+
+    overlay.hidden = false;
+}
+
+/**
+ * Handle cookie file upload from the dialog.
+ * @param {File} file
+ */
+async function uploadCookieFile(file) {
+    const overlay = document.getElementById('youtube-modal-overlay');
+    const statusEl = overlay?.querySelector('.yt-cookie-status');
+
+    if (statusEl) {
+        statusEl.textContent = 'Uploading...';
+        statusEl.hidden = false;
+        statusEl.className = 'yt-cookie-status';
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const response = await fetch('/api/youtube/cookies', {
+            method: 'POST',
+            headers: { 'X-API-Key': getApiKey() },
+            body: formData
+        });
+
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data.error || `Upload failed (${response.status})`);
+        }
+
+        if (statusEl) {
+            statusEl.textContent = 'Cookies uploaded. Retrying import...';
+        }
+
+        // Close cookie dialog and retry the original import
+        hideCookieDialog();
+        await submitImport();
+    } catch (err) {
+        if (statusEl) {
+            statusEl.textContent = err.message || 'Upload failed';
+            statusEl.className = 'yt-cookie-status yt-cookie-error';
+        }
+    }
+}
+
+/**
+ * Hide the cookie dialog and restore normal import UI.
+ */
+function hideCookieDialog() {
+    cookieDialogActive = false;
+    const overlay = document.getElementById('youtube-modal-overlay');
+    if (!overlay) {
+        return;
+    }
+
+    const contentEl = overlay.querySelector('.yt-modal-content');
+    if (!contentEl) {
+        return;
+    }
+
+    contentEl.querySelectorAll('.yt-modal-import-section').forEach(el => { el.hidden = false; });
+    const cookieSection = contentEl.querySelector('.yt-modal-cookie-section');
+    if (cookieSection) {
+        cookieSection.hidden = true;
+    }
+}
+
+/**
+ * Show the cookie dialog from external callers (e.g., queue.js on authRequired failure).
+ */
+export function showYouTubeCookieDialog() {
+    showCookieDialog();
+}
+
+// ============================================================================
 // DOM wiring (called once from push.js)
 // ============================================================================
 
@@ -369,12 +507,29 @@ export function initYouTubeImport() {
     // Import button
     overlay.querySelector('.yt-modal-import')?.addEventListener('click', submitImport);
 
-    // Cancel button
-    overlay.querySelector('.yt-modal-cancel')?.addEventListener('click', hideImportDialog);
+    // Cancel buttons (one in import section, one in cookie section)
+    overlay.querySelectorAll('.yt-modal-cancel').forEach(btn => {
+        btn.addEventListener('click', () => {
+            hideCookieDialog();
+            hideImportDialog();
+        });
+    });
+
+    // Cookie file input
+    const cookieInput = overlay.querySelector('.yt-cookie-file-input');
+    if (cookieInput) {
+        cookieInput.addEventListener('change', (e) => {
+            const file = e.target.files?.[0];
+            if (file) {
+                uploadCookieFile(file);
+            }
+        });
+    }
 
     // Overlay click to close
     overlay.addEventListener('click', (e) => {
         if (e.target === overlay) {
+            hideCookieDialog();
             hideImportDialog();
         }
     });
@@ -382,6 +537,7 @@ export function initYouTubeImport() {
     // Escape key
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && !overlay.hidden) {
+            hideCookieDialog();
             hideImportDialog();
         }
     });

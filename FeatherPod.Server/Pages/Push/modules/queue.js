@@ -8,6 +8,7 @@ import { resetNotificationToggle, syncPushSession, notifyQueueComplete, setNotif
 import { resetWakeLockToggle, setWakeLockToggleVisible } from './wake-lock.js';
 import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetchBrowserUploads, initHistorySection, invalidateBrowserUploadsCache } from './history.js';
 import { getDismissedJobIds, saveDismissedJobIds } from './server-sync.js';
+import { showYouTubeCookieDialog } from './youtube.js';
 
 /** @type {Array<import('../push.js').QueueEntry>} */
 let uploadQueue = [];
@@ -628,6 +629,9 @@ function monitorEntryNormalization(entry) {
             } else {
                 entry.status = 'failed';
                 entry.error = lastStatus?.error || 'Normalization failed';
+                if (lastStatus?.authRequired) {
+                    showYouTubeCookieDialog();
+                }
             }
 
             updateQueueItemInDOM(entry);
@@ -722,6 +726,9 @@ async function pollEntryNormalization(entry) {
             } else if (job.status === 'Failed') {
                 entry.status = 'failed';
                 entry.error = job.error || 'Normalization failed';
+                if (job.authRequired) {
+                    showYouTubeCookieDialog();
+                }
                 updateQueueItemInDOM(entry);
 
                 return;

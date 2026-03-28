@@ -1,3 +1,5 @@
+using FeatherPod.Shared.Services;
+
 namespace FeatherPod.Shared.Models;
 
 /// <summary>
@@ -81,6 +83,12 @@ public record JobStatusResponse
     public string? FileName { get; init; }
 
     /// <summary>
+    /// Whether this failure requires YouTube cookie authentication.
+    /// Derived from the error message sentinel string.
+    /// </summary>
+    public bool AuthRequired { get; init; }
+
+    /// <summary>
     /// Time taken to process the job, or elapsed time if still processing.
     /// </summary>
     public TimeSpan? Duration => QueuedAt.HasValue
@@ -113,7 +121,8 @@ public record JobStatusResponse
             ProgressMessage = entity.ProgressMessage,
             CurrentPositionMs = entity.CurrentPositionMs,
             TotalDurationMs = entity.TotalDurationMs,
-            FileName = entity.FileName
+            FileName = entity.FileName,
+            AuthRequired = string.Equals(entity.Error, YtDlpService.BotDetectionErrorMessage, StringComparison.Ordinal)
         };
     }
 }

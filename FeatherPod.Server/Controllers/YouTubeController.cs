@@ -18,6 +18,7 @@ public class YouTubeController : ControllerBase
     private readonly IFeedEventChannel _feedEventChannel;
     private readonly EpisodeService _episodeService;
     private readonly Channel<YouTubeDownloadJob> _downloadChannel;
+    private readonly YouTubeCookieService _cookieService;
 
     public YouTubeController(
         YtDlpBinaryManager binaryManager,
@@ -25,7 +26,8 @@ public class YouTubeController : ControllerBase
         IJobService jobService,
         IFeedEventChannel feedEventChannel,
         EpisodeService episodeService,
-        Channel<YouTubeDownloadJob> downloadChannel)
+        Channel<YouTubeDownloadJob> downloadChannel,
+        YouTubeCookieService cookieService)
     {
         _binaryManager = binaryManager;
         _ytDlpService = ytDlpService;
@@ -33,6 +35,7 @@ public class YouTubeController : ControllerBase
         _feedEventChannel = feedEventChannel;
         _episodeService = episodeService;
         _downloadChannel = downloadChannel;
+        _cookieService = cookieService;
     }
 
     [HttpPost]
@@ -70,52 +73,87 @@ public class YouTubeController : ControllerBase
         // The raw user URL is never passed to yt-dlp.
         var canonicalUrl = YtDlpService.GetCanonicalUrl(videoId);
 
-        // Fetch metadata to validate the video is accessible
-        var (metadata, metaError) = await _ytDlpService.GetMetadataAsync(canonicalUrl, HttpContext.RequestAborted);
-        if (metadata == null)
+        // Get cookie file path if cookies are available
+        string? cookiePath = null;
+        var tempCookieDir = Path.Combine(Path.GetTempPath(), "FeatherPod", $"cookies-{Guid.NewGuid():N}");
+        try
         {
-            return BadRequest(new { error = metaError ?? "Video is unavailable" });
+            cookiePath = await _cookieService.GetCookieFilePathAsync(tempCookieDir, HttpContext.RequestAborted);
+        }
+        catch
+        {
+            // Non-fatal: proceed without cookies
         }
 
-        // Generate IDs
-        var jobId = Guid.NewGuid().ToString("N");
-        var formatName = request.Format.ToString().ToLowerInvariant();
-        var episodeId = Episode.GenerateYouTubeId(feedId, videoId, formatName);
-
-        // Create job status in Table Storage
-        var fileName = $"{videoId}{request.Format.GetExtension()}";
-        await _jobService.CreateJobStatusAsync(jobId, feedId, fileName, cancellationToken: HttpContext.RequestAborted);
-
-        // Enqueue download job
-        var job = new YouTubeDownloadJob
+        try
         {
-            JobId = jobId,
-            FeedId = feedId,
-            VideoId = videoId,
-            Format = request.Format,
-            EpisodeId = episodeId,
-            Title = metadata.Title ?? "Untitled",
-            Channel = metadata.Channel,
-            Description = metadata.Description,
-            Duration = TimeSpan.FromSeconds(metadata.Duration),
-            UploadDate = metadata.GetUploadDateTime(),
-            QueuedAt = DateTime.UtcNow
-        };
+            // Fetch metadata to validate the video is accessible
+            var (metadata, metaError) = await _ytDlpService.GetMetadataAsync(canonicalUrl, cookiePath, HttpContext.RequestAborted);
+            if (metadata == null)
+            {
+                if (metaError != null && YtDlpService.IsBotDetectionError(metaError))
+                {
+                    return BadRequest(new { error = YtDlpService.BotDetectionErrorMessage, authRequired = true });
+                }
 
-        await _downloadChannel.Writer.WriteAsync(job, HttpContext.RequestAborted);
+                return BadRequest(new { error = metaError ?? "Video is unavailable" });
+            }
 
-        _feedEventChannel.Publish(feedId, "job-added");
+            // Generate IDs
+            var jobId = Guid.NewGuid().ToString("N");
+            var formatName = request.Format.ToString().ToLowerInvariant();
+            var episodeId = Episode.GenerateYouTubeId(feedId, videoId, formatName);
 
-        var response = new JobStatusResponse
+            // Create job status in Table Storage
+            var fileName = $"{videoId}{request.Format.GetExtension()}";
+            await _jobService.CreateJobStatusAsync(jobId, feedId, fileName, cancellationToken: HttpContext.RequestAborted);
+
+            // Enqueue download job
+            var job = new YouTubeDownloadJob
+            {
+                JobId = jobId,
+                FeedId = feedId,
+                VideoId = videoId,
+                Format = request.Format,
+                EpisodeId = episodeId,
+                Title = metadata.Title ?? "Untitled",
+                Channel = metadata.Channel,
+                Description = metadata.Description,
+                Duration = TimeSpan.FromSeconds(metadata.Duration),
+                UploadDate = metadata.GetUploadDateTime(),
+                QueuedAt = DateTime.UtcNow
+            };
+
+            await _downloadChannel.Writer.WriteAsync(job, HttpContext.RequestAborted);
+
+            _feedEventChannel.Publish(feedId, "job-added");
+
+            var response = new JobStatusResponse
+            {
+                JobId = jobId,
+                FeedId = feedId,
+                Status = nameof(JobStatus.Queued),
+                EpisodeId = episodeId,
+                FileName = fileName,
+                QueuedAt = job.QueuedAt
+            };
+
+            return Accepted($"/api/jobs/{jobId}", response);
+        }
+        finally
         {
-            JobId = jobId,
-            FeedId = feedId,
-            Status = nameof(JobStatus.Queued),
-            EpisodeId = episodeId,
-            FileName = fileName,
-            QueuedAt = job.QueuedAt
-        };
-
-        return Accepted($"/api/jobs/{jobId}", response);
+            // Clean up temp cookie file
+            if (Directory.Exists(tempCookieDir))
+            {
+                try
+                {
+                    Directory.Delete(tempCookieDir, recursive: true);
+                }
+                catch
+                {
+                    // Best-effort cleanup
+                }
+            }
+        }
     }
 }

@@ -59,6 +59,7 @@ else
 // YouTube import services
 builder.Services.AddSingleton<YtDlpBinaryManager>();
 builder.Services.AddSingleton<YtDlpService>();
+builder.Services.AddSingleton<YouTubeCookieService>();
 builder.Services.AddSingleton(Channel.CreateUnbounded<YouTubeDownloadJob>());
 builder.Services.AddHostedService<YouTubeDownloadService>();
 
@@ -106,15 +107,18 @@ app.MapHub<ProgressHub>("/api/internal/signalrhub");
 // ============================================================================
 
 // Health check endpoint for Azure Monitor health probes
-app.MapGet("/health", async (EpisodeService episodeService) =>
+app.MapGet("/health", async (EpisodeService episodeService, YouTubeCookieService cookieService) =>
     {
         try
         {
             var feeds = await episodeService.GetFeedsAsync();
+            var hasCookies = await cookieService.HasCookiesAsync();
+
             return Results.Ok(new
             {
                 Status = "Healthy",
                 FeedCount = feeds.Count,
+                YouTubeCookies = hasCookies ? "Uploaded" : "Not uploaded",
                 Timestamp = DateTime.UtcNow
             });
         }

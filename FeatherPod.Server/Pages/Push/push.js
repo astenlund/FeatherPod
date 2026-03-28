@@ -16,6 +16,7 @@
  * ?vup={kB/s}, ?vanal={kB/s},    - Override localStorage-based learned velocity history.
  *  ?vnorm={kB/s}                    New code reading learned velocities should check
  *  (VELOCITY_OVERRIDES)             VELOCITY_OVERRIDES[stage] first.
+ * ?ytcookies                       - Triggers the YouTube cookie upload dialog on load.
  */
 
 import { IS_DEV, QUEUE_SYNC_TIMEOUT, STR_PASTE_KEY_BELOW, STR_PASTE_KEY, STR_SAVE_KEY, STR_INVALID_KEY, STR_NO_FEED_ACCESS } from './modules/config.js';
@@ -32,7 +33,7 @@ import { getQueue, initQueue, restoreQueueState, addFilesToQueue, clearQueueStat
 import { initHistorySection, collapseHistoryImmediate, toggleHistorySection, changeHistoryFilter, selectHistoryUpload, updateHistoryListScrollState, getHistoryFilter, getHistoryPanelPushedState, setHistoryPanelPushedState, getHistoryData, getHistorySelectedId, refreshHistoryList } from './modules/history.js';
 import { getContextMenuTargetId, hideContextMenu, showRenameModal, hideRenameModal, showDeleteConfirm, hideDeleteConfirm, deleteEpisode, saveEpisodeChanges, updateRenameSaveState, toggleNotePanel, closeNotePanel, commitNoteAndRefreshSuggestion, handleNoteInput, isNotePanelOpen } from './modules/editing.js';
 import { loadDismissedJobIds, connectFeedEvents, fetchRecentJobs, mergeServerJobs, connectLocalSource, consumeSharedFiles, getLocalSourceConfig, setLocalSourceConfig, getFeedEventsSource, getLocalSourceEvents, setLocalSourceEvents } from './modules/server-sync.js';
-import { handlePaste as handleYouTubePaste, handleDrop as handleYouTubeDrop, initYouTubeImport, registerYouTubeJobCallback } from './modules/youtube.js';
+import { handlePaste as handleYouTubePaste, handleDrop as handleYouTubeDrop, initYouTubeImport, registerYouTubeJobCallback, showYouTubeCookieDialog } from './modules/youtube.js';
 
 /**
  * @typedef {Object} Episode
@@ -258,6 +259,10 @@ async function init() {
             }
 
             return;
+        }
+
+        if (window.location.search.includes('ytcookies')) {
+            setTimeout(() => showYouTubeCookieDialog(), 500);
         }
     }
 
