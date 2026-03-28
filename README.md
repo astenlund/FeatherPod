@@ -294,6 +294,10 @@ FeatherPod feed check-integrity -f my-podcast
 # Users (requires: preferences admin-features enable)
 FeatherPod user create / list / delete / rotate-key / grant / revoke
 
+# YouTube (requires: preferences admin-features enable)
+FeatherPod youtube set-cookies cookies.txt          # Upload cookies.txt for yt-dlp auth
+FeatherPod youtube cookie-status                    # Check cookie upload status
+
 # Preferences (alias: prefs)
 FeatherPod preferences key show / set <key> / rotate
 FeatherPod preferences normalization enable / disable

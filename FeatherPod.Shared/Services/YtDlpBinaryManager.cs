@@ -12,7 +12,9 @@ namespace FeatherPod.Shared.Services;
 public class YtDlpBinaryManager
 {
     private const string GitHubReleasesUrl = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest";
+    private const string DenoReleasesUrl = "https://api.github.com/repos/denoland/deno/releases/latest";
     private const string VersionFileName = "version.txt";
+    private const string DenoVersionFileName = "deno-version.txt";
     private static readonly TimeSpan UpdateCheckInterval = TimeSpan.FromHours(24);
 
     private readonly ILogger<YtDlpBinaryManager>? _logger;
@@ -20,6 +22,7 @@ public class YtDlpBinaryManager
     private readonly SemaphoreSlim _updateLock = new(1, 1);
     private readonly string _binaryDirectory;
     private readonly string _binaryPath;
+    private readonly string _denoPath;
 
     private bool? _isAvailable;
     private DateTime _lastUpdateCheck = DateTime.MinValue;
@@ -30,6 +33,7 @@ public class YtDlpBinaryManager
         _httpClient = httpClient ?? CreateDefaultHttpClient();
         _binaryDirectory = ResolveBinaryDirectory();
         _binaryPath = Path.Combine(_binaryDirectory, OperatingSystem.IsWindows() ? "yt-dlp.exe" : "yt-dlp");
+        _denoPath = Path.Combine(_binaryDirectory, OperatingSystem.IsWindows() ? "deno.exe" : "deno");
     }
 
     public static string GetBinaryDirectory() => ResolveBinaryDirectory();
@@ -66,6 +70,12 @@ public class YtDlpBinaryManager
 
     public string GetBinaryPath() => _binaryPath;
 
+    /// <summary>
+    /// Returns the deno binary path, or null if deno is not downloaded yet.
+    /// yt-dlp uses deno as a JavaScript runtime for full YouTube format extraction.
+    /// </summary>
+    public string? GetDenoPath() => File.Exists(_denoPath) ? _denoPath : null;
+
     public bool IsAvailable()
     {
         if (_isAvailable.HasValue)
@@ -83,6 +93,7 @@ public class YtDlpBinaryManager
         if (IsAvailable())
         {
             await CheckForUpdateIfDueAsync(cancellationToken);
+            await EnsureDenoAvailableAsync(cancellationToken);
 
             return true;
         }
@@ -207,6 +218,9 @@ public class YtDlpBinaryManager
 
             _logger?.LogInformation("yt-dlp {Version} downloaded to {Path}", version, binaryPath);
 
+            // Download deno (JS runtime for YouTube format extraction) if not already present
+            await EnsureDenoAvailableAsync(cancellationToken);
+
             return true;
         }
         catch (Exception ex)
@@ -215,6 +229,85 @@ public class YtDlpBinaryManager
 
             return false;
         }
+    }
+
+    private async Task EnsureDenoAvailableAsync(CancellationToken cancellationToken)
+    {
+        if (File.Exists(_denoPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var release = await _httpClient.GetFromJsonAsync<GitHubRelease>(DenoReleasesUrl, cancellationToken);
+            if (release?.TagName == null)
+            {
+                _logger?.LogWarning("Failed to determine latest deno version");
+
+                return;
+            }
+
+            var assetName = GetDenoAssetName();
+            var downloadUrl = $"https://github.com/denoland/deno/releases/download/{release.TagName}/{assetName}";
+
+            _logger?.LogInformation("Downloading deno {Version} for yt-dlp JS runtime...", release.TagName);
+
+            using var response = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            // Deno releases are zip files containing a single binary
+            var zipPath = Path.Combine(_binaryDirectory, assetName);
+            await using (var fileStream = File.Create(zipPath))
+            {
+                await response.Content.CopyToAsync(fileStream, cancellationToken);
+            }
+
+            System.IO.Compression.ZipFile.ExtractToDirectory(zipPath, _binaryDirectory, overwriteFiles: true);
+            File.Delete(zipPath);
+
+            // Mark executable on Linux/macOS
+            if (!OperatingSystem.IsWindows())
+            {
+                var chmod = Process.Start("chmod", ["+x", _denoPath]);
+                if (chmod != null)
+                {
+                    await chmod.WaitForExitAsync(cancellationToken);
+                }
+            }
+
+            // Write version sidecar
+            var versionFile = Path.Combine(_binaryDirectory, DenoVersionFileName);
+            await File.WriteAllTextAsync(versionFile, release.TagName, cancellationToken);
+
+            _logger?.LogInformation("deno {Version} downloaded to {Path}", release.TagName, _denoPath);
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogWarning(ex, "Failed to download deno. yt-dlp will run without JS runtime (some formats may be unavailable)");
+        }
+    }
+
+    private static string GetDenoAssetName()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return "deno-x86_64-pc-windows-msvc.zip";
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            return "deno-x86_64-unknown-linux-gnu.zip";
+        }
+
+        if (OperatingSystem.IsMacOS())
+        {
+            return System.Runtime.InteropServices.RuntimeInformation.OSArchitecture == System.Runtime.InteropServices.Architecture.Arm64
+                ? "deno-aarch64-apple-darwin.zip"
+                : "deno-x86_64-apple-darwin.zip";
+        }
+
+        throw new PlatformNotSupportedException("deno is not available for this platform");
     }
 
     private async Task<string?> GetLatestVersionAsync(CancellationToken cancellationToken)

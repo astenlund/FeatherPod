@@ -79,7 +79,8 @@ public partial class YtDlpService
         var binaryPath = _binaryManager.GetBinaryPath();
 
         var cookieArgs = cookieFilePath != null ? $"--cookies \"{cookieFilePath}\" " : "";
-        var args = $"{cookieArgs}--dump-json --no-download --no-playlist \"{url}\"";
+        var denoArgs = GetDenoArgs();
+        var args = $"{denoArgs}{cookieArgs}--dump-json --no-download --no-playlist \"{url}\"";
 
         _logger?.LogInformation("Fetching YouTube metadata for {Url}", url);
 
@@ -136,7 +137,8 @@ public partial class YtDlpService
             : "--extract-audio --audio-format m4a --audio-quality 0";
 
         var cookieArgs = cookieFilePath != null ? $"--cookies \"{cookieFilePath}\" " : "";
-        var args = $"{cookieArgs}{formatArgs} --no-playlist --no-overwrites --newline -o \"{outputTemplate}\" \"{url}\"";
+        var denoArgs = GetDenoArgs();
+        var args = $"{denoArgs}{cookieArgs}{formatArgs} --no-playlist --no-overwrites --newline -o \"{outputTemplate}\" \"{url}\"";
 
         _logger?.LogInformation("Downloading YouTube {Format} for {VideoId} to {OutputDir}", format, videoId, outputDir);
 
@@ -179,6 +181,15 @@ public partial class YtDlpService
     }
 
     /// <summary>
+    /// Checks if a yt-dlp failure is a format availability error (e.g., missing JS runtime
+    /// causes yt-dlp to fall back to limited format lists).
+    /// </summary>
+    public static bool IsFormatUnavailableError(string text)
+    {
+        return text.Contains("Requested format is not available", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// User-facing error message for bot detection failures. Used as a sentinel value
     /// to derive AuthRequired on JobStatusResponse.
     /// </summary>
@@ -191,6 +202,17 @@ public partial class YtDlpService
     public static bool IsBotDetectionError(string text)
     {
         return text.Contains("Sign in to confirm", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string GetDenoArgs()
+    {
+        var denoPath = _binaryManager.GetDenoPath();
+        if (denoPath == null)
+        {
+            return "";
+        }
+
+        return $"--js-runtimes deno:\"{denoPath}\" ";
     }
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(

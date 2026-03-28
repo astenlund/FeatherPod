@@ -790,6 +790,65 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
                     }
                     break;
 
+                case MenuChoice.YouTube:
+                    if (!isConnected || httpClient == null)
+                    {
+                        Out.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                        WaitForKeyPress();
+                        break;
+                    }
+
+                    var ytChoice = new MenuBuilder<string?>()
+                        .WithTitle("YouTube:")
+                        .WithHint("(arrow keys or highlighted letter, Esc to go back)")
+                        .AddOption("S", "Set cookies", "set-cookies")
+                        .AddOption("C", "Cookie status", "cookie-status")
+                        .AllowCancel()
+                        .Show();
+
+                    if (ytChoice == null)
+                    {
+                        break;
+                    }
+
+                    switch (ytChoice)
+                    {
+                        case "set-cookies":
+                            var cookiePath = AnsiConsole.Prompt(
+                                new TextPrompt<string>("Enter cookie file path [grey](Netscape-format .txt)[/]:")
+                                    .AllowEmpty());
+
+                            if (string.IsNullOrWhiteSpace(cookiePath))
+                            {
+                                Out.Cancelled();
+                                WaitForKeyPress();
+                                break;
+                            }
+
+                            cookiePath = cookiePath.Trim().Trim('"', '\'');
+
+                            if (!File.Exists(cookiePath))
+                            {
+                                Out.Error($"File not found: {Markup.Escape(cookiePath)}");
+                                WaitForKeyPress();
+                                break;
+                            }
+
+                            await YouTubeHelpers.UploadCookiesAsync(httpClient, cookiePath);
+                            WaitForKeyPress();
+                            break;
+
+                        case "cookie-status":
+                            var status = await YouTubeHelpers.GetCookieStatusAsync(httpClient);
+                            if (status != null)
+                            {
+                                YouTubeHelpers.DisplayCookieStatus(status);
+                            }
+                            WaitForKeyPress();
+                            break;
+                    }
+                    break;
+
                 case MenuChoice.Delete:
                     if (!isConnected || httpClient == null)
                     {
@@ -1831,10 +1890,11 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             .AddOption("R", "Rename episode", MenuChoice.Rename)
             .AddOption("V", "Move/Copy episodes", MenuChoice.MoveCopy);
 
-        // Only show User Management for Admin users when admin features are enabled
+        // Only show User Management and YouTube for Admin users when admin features are enabled
         if (adminFeaturesEnabled && currentUser?.Role == "Admin")
         {
             menu.AddOption("U", "User management", MenuChoice.UserManagement);
+            menu.AddOption("Y", "YouTube", MenuChoice.YouTube);
         }
 
         menu.AddOption("M", "Manage feeds", MenuChoice.ManageFeeds)
@@ -1861,6 +1921,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         Rename,
         MoveCopy,
         UserManagement,
+        YouTube,
         SwitchFeed,
         ManageFeeds,
         Preferences,

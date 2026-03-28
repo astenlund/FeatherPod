@@ -9,6 +9,7 @@ using ContextMenuCommands = FeatherPod.Commands.Config.ContextMenu;
 using FeedCommands = FeatherPod.Commands.Feed;
 using PreferencesCommands = FeatherPod.Commands.Preferences;
 using UserCommands = FeatherPod.Commands.User;
+using YouTubeCommands = FeatherPod.Commands.YouTube;
 
 namespace FeatherPod;
 
@@ -95,6 +96,20 @@ internal class Program
                     user.AddCommand<UserCommands.RotateKeyCommand>("rotate-key")
                         .WithDescription("Regenerate another user's API key (Admin only)")
                         .WithExample("user", "rotate-key", "john");
+                });
+
+                config.AddBranch("youtube", yt =>
+                {
+                    yt.SetDescription("YouTube management commands (Admin only)");
+
+                    yt.AddCommand<YouTubeCommands.SetCookiesCommand>("set-cookies")
+                        .WithDescription("Upload cookies.txt for YouTube bot detection bypass")
+                        .WithExample("youtube", "set-cookies", "cookies.txt")
+                        .WithExample("youtube", "set-cookies", "cookies.txt", "-e", "Test");
+
+                    yt.AddCommand<YouTubeCommands.CookieStatusCommand>("cookie-status")
+                        .WithDescription("Check YouTube cookie upload status")
+                        .WithExample("youtube", "cookie-status");
                 });
             }
 

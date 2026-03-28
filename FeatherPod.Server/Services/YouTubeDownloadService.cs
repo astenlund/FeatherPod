@@ -132,6 +132,15 @@ public class YouTubeDownloadService : BackgroundService
                 return;
             }
 
+            // Format unavailable - usually means yt-dlp's JS runtime is missing and format list is incomplete
+            if (outputPath == null && lastStderr != null && YtDlpService.IsFormatUnavailableError(lastStderr))
+            {
+                _logger.LogError("Format unavailable for job {JobId} ({Format}). Ensure deno is installed on the server for full format support.", job.JobId, job.Format);
+                await MarkJobFailedAsync(job, $"The requested {job.Format.ToString().ToLowerInvariant()} format is not available for this video");
+
+                return;
+            }
+
             // Update-then-retry only on extractor errors (YouTube-side changes)
             if (outputPath == null && lastStderr != null && YtDlpService.IsExtractorError(lastStderr))
             {
