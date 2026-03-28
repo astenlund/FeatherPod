@@ -80,6 +80,11 @@ public class JobStatusEntity : ITableEntity
     public string? FileName { get; set; }
 
     /// <summary>
+    /// Episode title (AI-generated or from YouTube metadata). Set at job creation time.
+    /// </summary>
+    public string? Title { get; set; }
+
+    /// <summary>
     /// Progress delivery mode: "poll", "push", or "signalr" (null = poll).
     /// </summary>
     public string? ProgressMode { get; set; }
@@ -118,7 +123,7 @@ public class JobStatusEntity : ITableEntity
     /// <summary>
     /// Create a new JobStatusEntity for a queued job.
     /// </summary>
-    public static JobStatusEntity CreateQueued(string jobId, string feedId, string? fileName = null, string? progressMode = null, int? progressIntervalMs = null)
+    public static JobStatusEntity CreateQueued(string jobId, string feedId, string? fileName = null, string? title = null, string? progressMode = null, int? progressIntervalMs = null)
     {
         return new JobStatusEntity
         {
@@ -128,6 +133,7 @@ public class JobStatusEntity : ITableEntity
             Stage = nameof(NormalizationStage.Queued),
             FeedId = feedId,
             FileName = fileName,
+            Title = title,
             ProgressMode = progressMode,
             ProgressIntervalMs = progressIntervalMs,
             QueuedAt = DateTimeOffset.UtcNow,

@@ -81,9 +81,9 @@ public class JobService : IJobService
         }
     }
 
-    public async Task CreateJobStatusAsync(string jobId, string feedId, string? fileName = null, string? progressMode = null, int? progressIntervalMs = null, CancellationToken cancellationToken = default)
+    public async Task CreateJobStatusAsync(string jobId, string feedId, string? fileName = null, string? title = null, string? progressMode = null, int? progressIntervalMs = null, CancellationToken cancellationToken = default)
     {
-        var entity = JobStatusEntity.CreateQueued(jobId, feedId, fileName, progressMode, progressIntervalMs);
+        var entity = JobStatusEntity.CreateQueued(jobId, feedId, fileName, title, progressMode, progressIntervalMs);
         try
         {
             await _tableClient.AddEntityAsync(entity, cancellationToken);

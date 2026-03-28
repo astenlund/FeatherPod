@@ -9,7 +9,7 @@ public class JobStatusEntityTests
     public void CreateQueued_WithModeAndInterval_ShouldStoreValues()
     {
         // Arrange & Act
-        var entity = JobStatusEntity.CreateQueued("job-123", "feed-1", "test.mp3", "push", 250);
+        var entity = JobStatusEntity.CreateQueued("job-123", "feed-1", "test.mp3", progressMode: "push", progressIntervalMs: 250);
 
         // Assert
         Assert.Equal("push", entity.ProgressMode);
@@ -17,6 +17,7 @@ public class JobStatusEntityTests
         Assert.Equal("job-123", entity.RowKey);
         Assert.Equal("feed-1", entity.FeedId);
         Assert.Equal("test.mp3", entity.FileName);
+        Assert.Null(entity.Title);
     }
 
     [Fact]
@@ -28,6 +29,7 @@ public class JobStatusEntityTests
         // Assert
         Assert.Null(entity.ProgressMode);
         Assert.Null(entity.ProgressIntervalMs);
+        Assert.Null(entity.Title);
     }
 
     [Fact]
@@ -39,5 +41,17 @@ public class JobStatusEntityTests
         // Assert
         Assert.Equal("signalr", entity.ProgressMode);
         Assert.Equal(100, entity.ProgressIntervalMs);
+    }
+
+    [Fact]
+    public void CreateQueued_WithTitle_ShouldStoreTitle()
+    {
+        // Arrange & Act
+        var entity = JobStatusEntity.CreateQueued("job-101", "feed-4", "episode.mp3", title: "My Great Episode");
+
+        // Assert
+        Assert.Equal("My Great Episode", entity.Title);
+        Assert.Equal("episode.mp3", entity.FileName);
+        Assert.Null(entity.ProgressMode);
     }
 }

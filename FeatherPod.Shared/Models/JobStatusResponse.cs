@@ -83,6 +83,11 @@ public record JobStatusResponse
     public string? FileName { get; init; }
 
     /// <summary>
+    /// Episode title (AI-generated or from YouTube metadata).
+    /// </summary>
+    public string? Title { get; init; }
+
+    /// <summary>
     /// Whether this failure requires YouTube cookie authentication.
     /// Derived from the error message sentinel string.
     /// </summary>
@@ -122,6 +127,7 @@ public record JobStatusResponse
             CurrentPositionMs = entity.CurrentPositionMs,
             TotalDurationMs = entity.TotalDurationMs,
             FileName = entity.FileName,
+            Title = entity.Title,
             AuthRequired = string.Equals(entity.Error, YtDlpService.BotDetectionErrorMessage, StringComparison.Ordinal)
         };
     }

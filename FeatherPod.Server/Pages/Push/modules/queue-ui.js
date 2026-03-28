@@ -51,8 +51,9 @@ export function createQueueItemElement(entry) {
 
     const name = document.createElement('span');
     name.className = 'queue-item-name';
-    name.textContent = entry.fileName;
-    name.title = entry.fileName;
+    const displayName = entry.title || entry.fileName;
+    name.textContent = displayName;
+    name.title = entry.title ? entry.fileName : displayName;
     item.appendChild(name);
 
     const status = document.createElement('span');

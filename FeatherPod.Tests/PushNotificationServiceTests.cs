@@ -137,7 +137,7 @@ public class PushNotificationServiceTests : IDisposable
         public Task InitializeAsync() => Task.CompletedTask;
         public Task QueueNormalizationJobAsync(NormalizationJob job, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<JobStatusEntity?> GetJobStatusAsync(string jobId, CancellationToken cancellationToken = default) => Task.FromResult<JobStatusEntity?>(null);
-        public Task CreateJobStatusAsync(string jobId, string feedId, string? fileName = null, string? progressMode = null, int? progressIntervalMs = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task CreateJobStatusAsync(string jobId, string feedId, string? fileName = null, string? title = null, string? progressMode = null, int? progressIntervalMs = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<List<JobStatusEntity>> GetActiveJobsByFeedAsync(string feedId, CancellationToken cancellationToken = default) => Task.FromResult<List<JobStatusEntity>>([]);
         public Task<List<JobStatusEntity>> GetRecentJobsByFeedAsync(string feedId, TimeSpan since, CancellationToken cancellationToken = default) => Task.FromResult<List<JobStatusEntity>>([]);
         public Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default) => Task.FromResult<JobStatusEntity?>(null);

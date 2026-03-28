@@ -150,6 +150,7 @@ export function addFilesToQueue(files) {
             eventSource: null,
             fileSize: file.size,
             fileName: file.name,
+            title: null,
             validationError: !valid,
             backgroundMonitoring: false,
             startedAt: Date.now(),
@@ -416,6 +417,7 @@ async function processEntry(entry) {
         } else if (response.status === 202) {
             const jobResponse = JSON.parse(response.body);
             entry.jobId = jobResponse.jobId;
+            entry.title = jobResponse.title || null;
             entry.status = 'normalizing';
             entry.stage = 'Queued';
             entry.progress = 0;
@@ -470,6 +472,10 @@ async function processEntry(entry) {
 export function updateEntryFromJobStatus(entry, job) {
     if (!job.stage) {
         return;
+    }
+
+    if (job.title && !entry.title) {
+        entry.title = job.title;
     }
 
     entry.stage = job.stage;
@@ -918,6 +924,7 @@ export function saveQueueState() {
         const serialized = uploadQueue.map(e => ({
             id: e.id,
             fileName: e.fileName,
+            title: e.title,
             fileSize: e.fileSize,
             status: e.status,
             progress: e.progress,

@@ -215,6 +215,7 @@ export function mergeServerJobs(serverJobs) {
             existing.error = serverJob.error || null;
             existing.authRequired = serverJob.authRequired || false;
             existing.episodeId = serverJob.episodeId || existing.episodeId;
+            existing.title = serverJob.title || existing.title;
             existing.stage = serverJob.stage || existing.stage;
             existing.progress = 100;
             if (existing._resolveMonitor) {
@@ -223,6 +224,7 @@ export function mergeServerJobs(serverJobs) {
             }
             changedEntryIds.add(existing.id);
         } else if (existing.status === 'normalizing') {
+            existing.title = serverJob.title || existing.title;
             const newStage = serverJob.stage || existing.stage;
             const newProgress = serverJob.progressPercent ?? existing.progress;
             if (existing.stage !== newStage || existing.progress !== newProgress) {
@@ -282,6 +284,7 @@ export function mergeServerJobs(serverJobs) {
                 eventSource: null,
                 fileSize: 0,
                 fileName: serverJob.fileName || 'Unknown',
+                title: serverJob.title || null,
                 validationError: false,
                 backgroundMonitoring: false,
                 startedAt: serverJob.queuedAt ? new Date(serverJob.queuedAt).getTime() : Date.now(),

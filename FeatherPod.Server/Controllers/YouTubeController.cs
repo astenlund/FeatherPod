@@ -106,7 +106,8 @@ public class YouTubeController : ControllerBase
 
             // Create job status in Table Storage
             var fileName = $"{videoId}{request.Format.GetExtension()}";
-            await _jobService.CreateJobStatusAsync(jobId, feedId, fileName, cancellationToken: HttpContext.RequestAborted);
+            var title = metadata.Title ?? "Untitled";
+            await _jobService.CreateJobStatusAsync(jobId, feedId, fileName, title, cancellationToken: HttpContext.RequestAborted);
 
             // Enqueue download job
             var job = new YouTubeDownloadJob
@@ -116,7 +117,7 @@ public class YouTubeController : ControllerBase
                 VideoId = videoId,
                 Format = request.Format,
                 EpisodeId = episodeId,
-                Title = metadata.Title ?? "Untitled",
+                Title = title,
                 Channel = metadata.Channel,
                 Description = metadata.Description,
                 Duration = TimeSpan.FromSeconds(metadata.Duration),
@@ -135,6 +136,7 @@ public class YouTubeController : ControllerBase
                 Status = nameof(JobStatus.Queued),
                 EpisodeId = episodeId,
                 FileName = fileName,
+                Title = title,
                 QueuedAt = job.QueuedAt
             };
 

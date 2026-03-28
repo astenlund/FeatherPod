@@ -62,6 +62,7 @@ import { handlePaste as handleYouTubePaste, handleDrop as handleYouTubeDrop, ini
  * @property {EventSource|null} eventSource - Active SSE connection for normalization
  * @property {number} fileSize - File size in bytes
  * @property {string} fileName - Original file name
+ * @property {string|null} title - Episode title (from server 202 response or progress updates)
  * @property {boolean} validationError - Whether failure is due to validation (no retry)
  * @property {boolean} backgroundMonitoring - Whether normalization is being monitored in the background
  * @property {number} startedAt - Epoch ms when entry was created (for 1-hour localStorage filtering)
@@ -105,6 +106,7 @@ registerYouTubeJobCallback((jobResponse) => {
         eventSource: null,
         fileSize: 0,
         fileName: jobResponse.fileName || 'YouTube import',
+        title: jobResponse.title || null,
         validationError: false,
         backgroundMonitoring: false,
         startedAt: Date.now(),
