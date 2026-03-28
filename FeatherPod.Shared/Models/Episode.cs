@@ -16,6 +16,7 @@ public record Episode
     public DateTime PublishedDate { get; init; }
     public string? Url { get; init; }
     required public UploadSource Source { get; init; }
+    public MediaSource? MediaSource { get; init; }
     required public DateTime UploadedAt { get; init; }
     public string? Note { get; init; }
 

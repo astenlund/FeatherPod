@@ -184,6 +184,7 @@ public class YouTubeDownloadService : BackgroundService
                 publishedDate: job.UploadDate,
                 episodeId: job.EpisodeId,
                 source: UploadSource.Browser,
+                mediaSource: MediaSource.YouTube,
                 cancellationToken: stoppingToken);
 
             // Step 4: Completed

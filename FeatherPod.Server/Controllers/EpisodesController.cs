@@ -212,7 +212,7 @@ public class EpisodesController : ControllerBase
             }
 
             // Synchronous upload (no normalization)
-            var episode = await _episodeService.AddEpisodeAsync(feedId, tempPath, title, description, summary, publishedDate, episodeId, source, HttpContext.RequestAborted);
+            var episode = await _episodeService.AddEpisodeAsync(feedId, tempPath, title, description, summary, publishedDate, episodeId, source, cancellationToken: HttpContext.RequestAborted);
             var episodeWithUrl = episode with { Url = episode.GetAudioUrl(_baseUrl) };
 
             _feedEventChannel.Publish(feedId, "episode-added");
@@ -349,6 +349,12 @@ public class EpisodesController : ControllerBase
         if (episode == null)
         {
             return NotFound(new { error = $"Episode '{id}' not found in feed '{feedId}'" });
+        }
+
+        // YouTube titles are already good -- skip AI suggestion
+        if (episode.MediaSource == MediaSource.YouTube)
+        {
+            return Ok(new { suggestedTitle = string.Empty });
         }
 
         // Use note from request body if provided, otherwise fall back to stored episode note

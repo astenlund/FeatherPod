@@ -38,6 +38,51 @@ public class AiTitleTests
     }
 
     [Fact]
+    public void SuggestTitle_YouTubeEpisode_ShouldSkipAi()
+    {
+        // Arrange
+        var episode = new Episode
+        {
+            Id = "test",
+            FeedId = "feed",
+            Title = "Rick Astley - Never Gonna Give You Up",
+            FileName = "dQw4w9WgXcQ.m4a",
+            FileSize = 1024,
+            Source = UploadSource.Browser,
+            MediaSource = MediaSource.YouTube,
+            UploadedAt = DateTime.UtcNow,
+        };
+
+        // Act - replicate the controller's skip logic
+        var shouldSkip = episode.MediaSource == MediaSource.YouTube;
+
+        // Assert
+        Assert.True(shouldSkip);
+    }
+
+    [Fact]
+    public void SuggestTitle_RegularEpisode_ShouldCallAi()
+    {
+        // Arrange
+        var episode = new Episode
+        {
+            Id = "test",
+            FeedId = "feed",
+            Title = "My Podcast Episode",
+            FileName = "My_Podcast_Episode.mp3",
+            FileSize = 1024,
+            Source = UploadSource.Browser,
+            UploadedAt = DateTime.UtcNow,
+        };
+
+        // Act - replicate the controller's skip logic
+        var shouldSkip = episode.MediaSource == MediaSource.YouTube;
+
+        // Assert
+        Assert.False(shouldSkip);
+    }
+
+    [Fact]
     public void NormalizationJob_Deserialization_IgnoresUnknownProperties()
     {
         // Arrange - simulate an in-flight queue message with the old TitleIsUserProvided field

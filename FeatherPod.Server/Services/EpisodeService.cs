@@ -355,6 +355,7 @@ public sealed partial class EpisodeService : IDisposable
         DateTime? publishedDate = null,
         string? episodeId = null,
         UploadSource source = UploadSource.CLI,
+        MediaSource? mediaSource = null,
         CancellationToken cancellationToken = default)
     {
         var fileInfo = new FileInfo(filePath);
@@ -406,6 +407,7 @@ public sealed partial class EpisodeService : IDisposable
             Duration = duration,
             PublishedDate = finalPublishedDate,
             Source = source,
+            MediaSource = mediaSource,
             UploadedAt = DateTime.UtcNow
         };
 

@@ -1,7 +1,9 @@
+using System.Text.Json;
 using FeatherPod.Shared.Models;
 
 namespace FeatherPod.Tests;
 
+[Collection("Sequential")]
 public class YouTubeImportTests
 {
     public class EpisodeIdGeneration
@@ -109,6 +111,95 @@ public class YouTubeImportTests
 
             // Assert
             Assert.Equal(UploadSource.YouTube, parsed);
+        }
+    }
+
+    public class MediaSourceTests
+    {
+        [Fact]
+        public void Episode_WithoutMediaSource_DefaultsToNull()
+        {
+            // Arrange & Act
+            var episode = new Episode
+            {
+                Id = "test",
+                FeedId = "feed",
+                Title = "Test",
+                FileName = "test.mp3",
+                FileSize = 1024,
+                Source = UploadSource.Browser,
+                UploadedAt = DateTime.UtcNow,
+            };
+
+            // Assert
+            Assert.Null(episode.MediaSource);
+        }
+
+        [Fact]
+        public void Episode_WithMediaSource_PreservesValue()
+        {
+            // Arrange & Act
+            var episode = new Episode
+            {
+                Id = "test",
+                FeedId = "feed",
+                Title = "YouTube Video Title",
+                FileName = "dQw4w9WgXcQ.m4a",
+                FileSize = 1024,
+                Source = UploadSource.Browser,
+                MediaSource = MediaSource.YouTube,
+                UploadedAt = DateTime.UtcNow,
+            };
+
+            // Assert
+            Assert.Equal(MediaSource.YouTube, episode.MediaSource);
+        }
+
+        [Fact]
+        public void Deserialization_WithoutMediaSource_DefaultsToNull()
+        {
+            // Arrange - JSON from before MediaSource existed
+            var json = """
+                {
+                    "Id": "abc123",
+                    "FeedId": "test-feed",
+                    "Title": "Old Episode",
+                    "FileName": "old.mp3",
+                    "FileSize": 1024,
+                    "Source": 1,
+                    "UploadedAt": "2026-01-01T00:00:00Z"
+                }
+                """;
+
+            // Act
+            var episode = JsonSerializer.Deserialize<Episode>(json)!;
+
+            // Assert
+            Assert.Null(episode.MediaSource);
+        }
+
+        [Fact]
+        public void Deserialization_WithMediaSource_RoundTrips()
+        {
+            // Arrange
+            var episode = new Episode
+            {
+                Id = "test",
+                FeedId = "feed",
+                Title = "Test",
+                FileName = "dQw4w9WgXcQ.m4a",
+                FileSize = 1024,
+                Source = UploadSource.Browser,
+                MediaSource = MediaSource.YouTube,
+                UploadedAt = DateTime.UtcNow,
+            };
+
+            // Act
+            var json = JsonSerializer.Serialize(episode);
+            var deserialized = JsonSerializer.Deserialize<Episode>(json)!;
+
+            // Assert
+            Assert.Equal(MediaSource.YouTube, deserialized.MediaSource);
         }
     }
 
