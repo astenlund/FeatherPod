@@ -946,7 +946,7 @@ h1 {
     grid-template-rows: auto auto;
     align-items: center;
     gap: 0.375rem 0.5rem;
-    padding: 0.625rem 0.5rem 0.375rem;
+    padding: 0.625rem 0.75rem 0.375rem;
     border-radius: var(--radius-md);
     position: relative;
 }
@@ -2151,13 +2151,17 @@ h1 {
         margin-bottom: 1.5rem;
     }
 
-    /* Queue state on mobile: fixed container between header and footer */
-    #queue {
+    /* Queue state on mobile: fixed container between header and footer.
+       Uses .container.state-queue to match desktop rule specificity so
+       width: auto overrides the desktop width: 100%. */
+    .container.state-queue #queue {
         position: fixed;
         top: calc(10svh + 5.5rem);
         bottom: calc(7rem + env(safe-area-inset-bottom, 0px));
-        left: 1rem;
-        right: 1rem;
+        left: 1.5rem;
+        right: 1.5rem;
+        width: auto;
+        max-width: none;
         display: flex;
         flex-direction: column;
     }
@@ -2192,8 +2196,8 @@ h1 {
         margin: 0;
         position: fixed;
         bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
-        left: 1rem;
-        right: 1rem;
+        left: 1.5rem;
+        right: 1.5rem;
         width: auto;
         max-width: none;
         z-index: 101;
