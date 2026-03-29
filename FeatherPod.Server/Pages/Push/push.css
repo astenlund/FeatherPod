@@ -2158,8 +2158,8 @@ h1 {
         position: fixed;
         top: calc(10svh + 5.5rem);
         bottom: calc(7rem + env(safe-area-inset-bottom, 0px));
-        left: 1.5rem;
-        right: 1.5rem;
+        left: 1rem;
+        right: 1rem;
         width: auto;
         max-width: none;
         display: flex;
@@ -2196,8 +2196,8 @@ h1 {
         margin: 0;
         position: fixed;
         bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
-        left: 1.5rem;
-        right: 1.5rem;
+        left: 1rem;
+        right: 1rem;
         width: auto;
         max-width: none;
         z-index: 101;
