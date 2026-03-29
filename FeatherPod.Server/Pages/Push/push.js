@@ -33,7 +33,7 @@ import { getQueue, initQueue, restoreQueueState, addFilesToQueue, clearQueueStat
 import { initHistorySection, collapseHistoryImmediate, toggleHistorySection, changeHistoryFilter, selectHistoryUpload, updateHistoryListScrollState, getHistoryFilter, getHistoryPanelPushedState, setHistoryPanelPushedState, getHistoryData, getHistorySelectedId, refreshHistoryList } from './modules/history.js';
 import { getContextMenuTargetId, hideContextMenu, showRenameModal, hideRenameModal, showDeleteConfirm, hideDeleteConfirm, deleteEpisode, saveEpisodeChanges, updateRenameSaveState, toggleNotePanel, closeNotePanel, commitNoteAndRefreshSuggestion, handleNoteInput, isNotePanelOpen } from './modules/editing.js';
 import { loadDismissedJobIds, connectFeedEvents, fetchRecentJobs, mergeServerJobs, connectLocalSource, consumeSharedFiles, getLocalSourceConfig, setLocalSourceConfig, getFeedEventsSource, getLocalSourceEvents, setLocalSourceEvents } from './modules/server-sync.js';
-import { handlePaste as handleYouTubePaste, handleDrop as handleYouTubeDrop, initYouTubeImport, registerYouTubeJobCallback, showYouTubeCookieDialog } from './modules/youtube.js';
+import { handlePaste as handleYouTubePaste, handleDrop as handleYouTubeDrop, handleLongPressClipboard, consumeLongPressFlag, initYouTubeImport, registerYouTubeJobCallback, showYouTubeCookieDialog } from './modules/youtube.js';
 
 /**
  * @typedef {Object} Episode
@@ -660,17 +660,27 @@ window.addEventListener('resize', hideContextMenu);
 
 // File input and drop zones
 document.getElementById('select-file').addEventListener('click', () => {
+    if (consumeLongPressFlag()) {
+        return;
+    }
     document.getElementById('file-input').click();
 });
 
 const dropZoneEl = document.getElementById('drop-zone');
 if (dropZoneEl && dropZoneEl.classList.contains('drop-zone--has-artwork')) {
     dropZoneEl.addEventListener('click', () => {
+        if (consumeLongPressFlag()) {
+            return;
+        }
         if (dropZoneEl.classList.contains('drop-zone--has-artwork')) {
             document.getElementById('file-input')?.click();
         }
     });
 }
+
+// Long-press clipboard import (iOS) -- reads clipboard for YouTube URLs
+handleLongPressClipboard(document.getElementById('select-file'));
+handleLongPressClipboard(dropZoneEl);
 
 document.getElementById('try-another').addEventListener('click', async () => {
     clearQueueState();

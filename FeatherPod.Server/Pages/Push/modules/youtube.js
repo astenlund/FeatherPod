@@ -5,6 +5,7 @@
  * - Document-level paste events (runs before API key paste detection)
  * - Drop zone (when no files are dropped, checks text/plain and text/uri-list)
  * - ?yt= query param (from PWA share target redirect)
+ * - Long-press (500ms) on select-file button or drop zone reads clipboard (iOS)
  *
  * On detection, shows an import dialog with audio/video toggle, then POSTs to
  * /api/feeds/{feedId}/youtube with the oEmbed title for instant queue display.
@@ -543,4 +544,141 @@ export function initYouTubeImport() {
 
     // Check for shared URL on load
     checkSharedUrl();
+}
+
+// ============================================================================
+// Long-press clipboard import (iOS)
+// ============================================================================
+
+/** @type {boolean} Set when a long-press fires; consumed by click handlers to suppress file picker */
+let longPressConsumed = false;
+
+/**
+ * Returns and resets the long-press consumed flag.
+ * Call at the top of click handlers that should be suppressed after a long-press.
+ * @returns {boolean}
+ */
+export function consumeLongPressFlag() {
+    const consumed = longPressConsumed;
+    longPressConsumed = false;
+
+    return consumed;
+}
+
+/**
+ * Show a brief toast using the existing .notif-hint styling.
+ * @param {string} message
+ */
+function showClipboardToast(message) {
+    document.querySelector('.notif-hint.clipboard-toast')?.remove();
+
+    const hint = document.createElement('div');
+    hint.className = 'notif-hint clipboard-toast';
+    hint.textContent = message;
+    hint.addEventListener('click', () => hint.remove());
+    document.body.appendChild(hint);
+    setTimeout(() => hint.remove(), 3000);
+}
+
+/**
+ * Read clipboard and open import dialog if a YouTube URL is found.
+ * Called from touchend to ensure transient user activation on iOS Safari.
+ */
+async function readClipboardAndImport() {
+    const state = getCurrentState();
+    if (state !== 'ready' && state !== 'queue') {
+        return;
+    }
+
+    if (!navigator.clipboard?.readText) {
+        showClipboardToast('Clipboard not available');
+
+        return;
+    }
+
+    try {
+        const text = await navigator.clipboard.readText();
+        const url = extractYouTubeUrl(text?.trim());
+        if (url) {
+            const metaPromise = fetchVideoMeta(url);
+            showImportDialog(url, metaPromise);
+        } else {
+            showClipboardToast('No YouTube link on clipboard');
+        }
+    } catch {
+        showClipboardToast('Clipboard access denied');
+    }
+}
+
+/**
+ * Attach long-press (500ms) touch listeners to an element. On successful long-press,
+ * reads the clipboard for a YouTube URL. Uses a split-phase design: the timer in
+ * touchstart determines IF a long-press occurred, but the clipboard read happens in
+ * touchend which provides a fresh user activation context (required by iOS Safari).
+ *
+ * Each call creates independent closure state, so multiple elements can be wired independently.
+ * @param {HTMLElement} element
+ */
+export function handleLongPressClipboard(element) {
+    if (!element) {
+        return;
+    }
+
+    let longPressTimer = null;
+    let longPressCompleted = false;
+    let touchStartX = 0;
+    let touchStartY = 0;
+
+    element.addEventListener('touchstart', (e) => {
+        if (element.disabled) {
+            return;
+        }
+
+        longPressCompleted = false;
+        const touch = e.touches[0];
+        touchStartX = touch.clientX;
+        touchStartY = touch.clientY;
+        longPressTimer = setTimeout(() => {
+            longPressTimer = null;
+            longPressCompleted = true;
+        }, 500);
+    });
+
+    element.addEventListener('touchmove', (e) => {
+        if (longPressTimer === null) {
+            return;
+        }
+
+        const touch = e.touches[0];
+        const dx = touch.clientX - touchStartX;
+        const dy = touch.clientY - touchStartY;
+        if (dx * dx + dy * dy > 100) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+            longPressCompleted = false;
+        }
+    });
+
+    element.addEventListener('touchend', () => {
+        if (longPressTimer !== null) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+        }
+
+        if (longPressCompleted) {
+            longPressCompleted = false;
+            longPressConsumed = true;
+            // Safety reset in case the browser suppresses the click event after a long-press
+            setTimeout(() => { longPressConsumed = false; }, 300);
+            readClipboardAndImport();
+        }
+    });
+
+    element.addEventListener('touchcancel', () => {
+        if (longPressTimer !== null) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+        }
+        longPressCompleted = false;
+    });
 }
