@@ -94,6 +94,11 @@ function Build-Artifacts {
     Write-Host "  Building deployment artifacts" -ForegroundColor Cyan
     Write-Host "======================================`n" -ForegroundColor Cyan
 
+    # Show commit hash so the user can verify before the build finishes
+    $commitHash = git rev-parse --short HEAD
+    $commitMsg = git log -1 --format=%s
+    Write-Host "Deploying commit: $commitHash ($commitMsg)`n" -ForegroundColor Yellow
+
     # 1. Build solution
     Write-Host "Building solution...`n" -ForegroundColor Cyan
     dotnet build -c Release
