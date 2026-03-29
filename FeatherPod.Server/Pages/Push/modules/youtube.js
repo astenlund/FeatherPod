@@ -629,6 +629,9 @@ export function handleLongPressClipboard(element) {
     let touchStartX = 0;
     let touchStartY = 0;
 
+    // Suppress native image/link context menu so long-press fires our handler instead
+    element.addEventListener('contextmenu', (e) => e.preventDefault());
+
     element.addEventListener('touchstart', (e) => {
         if (element.disabled) {
             return;

@@ -679,8 +679,10 @@ if (dropZoneEl && dropZoneEl.classList.contains('drop-zone--has-artwork')) {
 }
 
 // Long-press clipboard import (iOS) -- reads clipboard for YouTube URLs
+// Attach to button, drop zone, AND artwork image (drop zone is display:contents on mobile)
 handleLongPressClipboard(document.getElementById('select-file'));
 handleLongPressClipboard(dropZoneEl);
+handleLongPressClipboard(document.getElementById('artwork-backdrop-img'));
 
 document.getElementById('try-another').addEventListener('click', async () => {
     clearQueueState();
