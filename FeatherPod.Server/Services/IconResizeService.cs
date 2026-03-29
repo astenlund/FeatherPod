@@ -5,7 +5,7 @@ namespace FeatherPod.Server.Services;
 
 public class IconResizeService(IBlobStorageService blobStorageService, IMemoryCache memoryCache, ILogger<IconResizeService> logger)
 {
-    private static readonly HashSet<int> AllowedSizes = [192, 512];
+    private static readonly HashSet<int> AllowedSizes = [180, 192, 512];
 
     public static bool IsValidSize(int size) => AllowedSizes.Contains(size);
 

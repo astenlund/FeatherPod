@@ -227,7 +227,7 @@ app.MapGet("/{feedId}/icon.png", async (string feedId, IBlobStorageService servi
     .Produces(200, contentType: "image/png")
     .Produces(404);
 
-// Resized icon for PWA manifest (192x192 or 512x512)
+// Resized icon for PWA manifest and apple-touch-icon (180x180, 192x192, or 512x512)
 app.MapGet("/{feedId}/icon-{size:int}.png", async (string feedId, int size, IconResizeService iconResizeService, HttpContext context) =>
     {
         if (!InputValidation.IsValidFeedId(feedId))
@@ -237,7 +237,7 @@ app.MapGet("/{feedId}/icon-{size:int}.png", async (string feedId, int size, Icon
 
         if (!IconResizeService.IsValidSize(size))
         {
-            return Results.BadRequest(new { error = "Icon size must be 192 or 512" });
+            return Results.BadRequest(new { error = "Icon size must be 180, 192, or 512" });
         }
 
         var bytes = await iconResizeService.GetResizedIconAsync(feedId, size);
@@ -581,6 +581,10 @@ static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvi
     var pwaHead = hasArtwork
         ? $$"""
             <link rel="manifest" href="/{{feedId}}/push/manifest.json">
+            <meta name="apple-mobile-web-app-capable" content="yes">
+            <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+            <meta name="apple-mobile-web-app-title" content="{{escapedTitle}}">
+            <link rel="apple-touch-icon" href="/{{feedId}}/icon-180.png{{iconCacheBuster}}">
             <script>
             if ('serviceWorker' in navigator) {
                 navigator.serviceWorker.register('/{{feedId}}/push/sw.js', { scope: '/{{feedId}}/push' });
