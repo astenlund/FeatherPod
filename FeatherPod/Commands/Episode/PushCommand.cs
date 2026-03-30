@@ -31,10 +31,16 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         Out.BlankLine();
 
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
-        if (env == null) return 1;
+        if (env is null)
+        {
+            return 1;
+        }
 
         var (httpClient, currentUser) = await EnvironmentHelpers.SetupHttpClientAsync(env);
-        if (httpClient == null) return 1;
+        if (httpClient is null)
+        {
+            return 1;
+        }
 
         var configuration = EnvironmentHelpers.BuildConfiguration(env);
 
@@ -291,7 +297,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
 
         if (coordinator.TryBecomeHost(out var existingHost))
         {
-            return await RunAsHostAsync(settings.FeedId, filePath, apiKey, serverBaseUrl, coordinator);
+            return await RunAsHostAsync(settings.FeedId, filePath, apiKey, serverBaseUrl, coordinator, settings.DeleteAfter, environment);
         }
 
         if (existingHost is not null)
@@ -303,7 +309,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
     }
 
     [SupportedOSPlatform("windows")]
-    private static async Task<int> RunAsHostAsync(string feedId, string filePath, string apiKey, string serverBaseUrl, SingleInstanceCoordinator coordinator)
+    private static async Task<int> RunAsHostAsync(string feedId, string filePath, string apiKey, string serverBaseUrl, SingleInstanceCoordinator coordinator, bool deleteAfter, string environment)
     {
         var server = new LocalFileServer(serverBaseUrl);
         var idleCompletionSource = new TaskCompletionSource();
@@ -320,6 +326,15 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
             Process.Start(new ProcessStartInfo(pushUrl) { UseShellExecute = true });
 
             await idleCompletionSource.Task;
+
+            if (deleteAfter)
+            {
+                var useTrash = PreferencesHelpers.GetDeleteAfterUploadUseTrash(environment) ?? true;
+                foreach (var path in server.GetUploadedFilePaths())
+                {
+                    FileTrashService.TryDeleteFile(path, useTrash);
+                }
+            }
         }
         finally
         {

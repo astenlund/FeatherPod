@@ -7,7 +7,7 @@ import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQ
 import { resetNotificationToggle, syncPushSession, notifyQueueComplete, setNotificationToggleVisible } from './notifications.js';
 import { resetWakeLockToggle, setWakeLockToggleVisible } from './wake-lock.js';
 import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetchBrowserUploads, initHistorySection, invalidateBrowserUploadsCache } from './history.js';
-import { getDismissedJobIds, saveDismissedJobIds } from './server-sync.js';
+import { getDismissedJobIds, saveDismissedJobIds, notifyLocalSourceUploaded } from './server-sync.js';
 import { showYouTubeCookieDialog } from './youtube.js';
 
 /** @type {Array<import('../push.js').QueueEntry>} */
@@ -151,6 +151,7 @@ export function addFilesToQueue(files) {
             fileSize: file.size,
             fileName: file.name,
             title: null,
+            localSourceIndex: file.localSourceIndex ?? null,
             validationError: !valid,
             backgroundMonitoring: false,
             startedAt: Date.now(),
@@ -414,6 +415,9 @@ async function processEntry(entry) {
             entry.status = 'completed';
             entry.episode = episode;
             entry.progress = 100;
+            if (entry.localSourceIndex != null) {
+                notifyLocalSourceUploaded(entry.localSourceIndex);
+            }
             saveToLocalHistory(episode);
             refreshHistoryList(episode?.id);
         } else if (response.status === 202) {
@@ -630,6 +634,9 @@ function monitorEntryNormalization(entry) {
                 entry.status = 'completed';
                 entry.episode = episode;
                 entry.progress = 100;
+                if (entry.localSourceIndex != null) {
+                    notifyLocalSourceUploaded(entry.localSourceIndex);
+                }
                 if (episode) {
                     saveToLocalHistory(episode);
                 }
@@ -724,6 +731,9 @@ async function pollEntryNormalization(entry) {
                 entry.status = 'completed';
                 entry.episode = episode;
                 entry.progress = 100;
+                if (entry.localSourceIndex != null) {
+                    notifyLocalSourceUploaded(entry.localSourceIndex);
+                }
                 if (episode) {
                     saveToLocalHistory(episode);
                 }
@@ -937,6 +947,7 @@ export function saveQueueState() {
             episodeId: e.episodeId,
             episode: e.episode,
             error: e.error,
+            localSourceIndex: e.localSourceIndex,
             validationError: e.validationError,
             startedAt: e.startedAt
         }));

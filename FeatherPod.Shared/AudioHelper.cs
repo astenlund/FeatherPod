@@ -2,17 +2,18 @@ namespace FeatherPod.Shared;
 
 public static class AudioHelper
 {
-    public static string GetMimeType(string fileName)
+    public static string GetMimeType(string fileNameOrExtension)
     {
-        var extension = Path.GetExtension(fileName).ToLowerInvariant();
-        return extension switch
+        return Path.GetExtension(fileNameOrExtension).ToLowerInvariant() switch
         {
             ".mp3" => "audio/mpeg",
-            ".m4a" => "audio/mp4",
+            ".m4a" or ".m4b" => "audio/mp4",
             ".wav" => "audio/wav",
             ".ogg" => "audio/ogg",
             ".flac" => "audio/flac",
             ".aac" => "audio/aac",
+            ".opus" => "audio/opus",
+            ".wma" => "audio/x-ms-wma",
             _ => "application/octet-stream"
         };
     }

@@ -12,4 +12,8 @@ internal sealed class ContextMenuInstallSettings : CommandSettings
     [CommandOption("-f|--feed")]
     [Description("Feed ID to register")]
     public string? FeedId { get; init; }
+
+    [CommandOption("--delete-after")]
+    [Description("Delete source files after successful upload")]
+    public bool DeleteAfter { get; init; }
 }

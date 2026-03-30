@@ -305,7 +305,8 @@ FeatherPod preferences auto-connect enable / disable
 FeatherPod preferences admin-features enable / disable
 
 # Windows context menu
-FeatherPod config context-menu install -f my-podcast  # Right-click audio files to push
+FeatherPod config context-menu install -f my-podcast                 # Right-click audio files to push
+FeatherPod config context-menu install -f my-podcast --delete-after  # Same, but trash source after upload
 FeatherPod config context-menu list / remove
 
 # Other

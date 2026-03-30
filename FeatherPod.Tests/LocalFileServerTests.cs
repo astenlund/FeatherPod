@@ -224,6 +224,62 @@ public class LocalFileServerTests : IDisposable
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    [Fact]
+    public async Task Heartbeat_Returns200()
+    {
+        // Arrange
+        using var client = new HttpClient();
+
+        // Act
+        var response = await client.PostAsync($"http://127.0.0.1:{_server.Port}/api/heartbeat?token={_server.Token}", null);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task FileUploaded_MarksFileAndRoundTrips()
+    {
+        // Arrange
+        _server.AddFile(_tempAudioFile);
+        using var client = new HttpClient();
+
+        // Act
+        var response = await client.PostAsync($"http://127.0.0.1:{_server.Port}/api/files/0/uploaded?token={_server.Token}", null);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var paths = _server.GetUploadedFilePaths();
+        Assert.Single(paths);
+        Assert.Equal(_tempAudioFile, paths[0]);
+    }
+
+    [Fact]
+    public async Task FileUploaded_Returns404_WhenIndexOutOfRange()
+    {
+        // Arrange
+        using var client = new HttpClient();
+
+        // Act
+        var response = await client.PostAsync($"http://127.0.0.1:{_server.Port}/api/files/99/uploaded?token={_server.Token}", null);
+
+        // Assert
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public void GetUploadedFilePaths_ReturnsEmpty_WhenNoUploadsConfirmed()
+    {
+        // Arrange
+        _server.AddFile(_tempAudioFile);
+
+        // Act
+        var paths = _server.GetUploadedFilePaths();
+
+        // Assert
+        Assert.Empty(paths);
+    }
+
     public void Dispose()
     {
         _server.Dispose();

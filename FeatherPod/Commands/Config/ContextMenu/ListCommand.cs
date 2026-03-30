@@ -31,6 +31,7 @@ internal sealed class ListCommand : Command<ContextMenuListSettings>
             .AddColumn("Feed ID")
             .AddColumn("Title")
             .AddColumn("Environment")
+            .AddColumn("Delete After")
             .Border(TableBorder.Rounded);
 
         foreach (var entry in entries)
@@ -38,7 +39,8 @@ internal sealed class ListCommand : Command<ContextMenuListSettings>
             table.AddRow(
                 Markup.Escape(entry.FeedId),
                 Markup.Escape(entry.FeedTitle),
-                Markup.Escape(entry.Environment));
+                Markup.Escape(entry.Environment),
+                entry.DeleteAfter ? "Yes" : "-");
         }
 
         Out.Write(table);

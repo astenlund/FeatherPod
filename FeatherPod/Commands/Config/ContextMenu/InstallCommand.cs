@@ -75,7 +75,7 @@ internal sealed class InstallCommand : AsyncCommand<ContextMenuInstallSettings>
 
             try
             {
-                ContextMenuRegistry.Install(feed.Id, feed.Title, bridgePath, cliPath, env);
+                ContextMenuRegistry.Install(feed.Id, feed.Title, bridgePath, cliPath, env, settings.DeleteAfter);
             }
             catch (Exception ex) when (ex is UnauthorizedAccessException or SecurityException)
             {
@@ -88,7 +88,8 @@ internal sealed class InstallCommand : AsyncCommand<ContextMenuInstallSettings>
             Out.BlankLine();
             Out.Success($"Registered context menu for [cyan]{Markup.Escape(feed.Title)}[/] ({AudioExtensions.All.Length} audio extensions)");
             Out.BlankLine();
-            Out.MarkupLine($"[grey]Feed: {Markup.Escape(feed.Id)}, Environment: {Markup.Escape(env)}[/]");
+            var deleteAfterHint = settings.DeleteAfter ? ", Delete after upload: yes" : "";
+            Out.MarkupLine($"[grey]Feed: {Markup.Escape(feed.Id)}, Environment: {Markup.Escape(env)}{deleteAfterHint}[/]");
             Out.BlankLine().Flush();
 
             return 0;

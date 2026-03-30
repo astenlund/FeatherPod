@@ -63,6 +63,7 @@ import { handlePaste as handleYouTubePaste, handleDrop as handleYouTubeDrop, han
  * @property {number} fileSize - File size in bytes
  * @property {string} fileName - Original file name
  * @property {string|null} title - Episode title (from server 202 response or progress updates)
+ * @property {number|null} localSourceIndex - File index on LocalFileServer (null for browser-selected files)
  * @property {boolean} validationError - Whether failure is due to validation (no retry)
  * @property {boolean} backgroundMonitoring - Whether normalization is being monitored in the background
  * @property {number} startedAt - Epoch ms when entry was created (for 1-hour localStorage filtering)

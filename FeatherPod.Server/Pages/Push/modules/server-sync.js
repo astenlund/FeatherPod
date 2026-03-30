@@ -17,6 +17,8 @@ let localSourceConfig = null;
 let localSourceEvents = null;
 /** @type {Set<number>} */
 let localSourceSeen = new Set();
+/** @type {number|null} */
+let localSourceHeartbeatInterval = null;
 
 export function getDismissedJobIds() {
     return dismissedJobIds;
@@ -44,6 +46,20 @@ export function getLocalSourceEvents() {
 
 export function setLocalSourceEvents(value) {
     localSourceEvents = value;
+}
+
+/**
+ * Notify the local file server that a file was successfully uploaded.
+ * Fire-and-forget -- errors are silently ignored since the local server
+ * may have already shut down.
+ * @param {number} localSourceIndex - File index on the local server
+ */
+export function notifyLocalSourceUploaded(localSourceIndex) {
+    if (!localSourceConfig) {
+        return;
+    }
+    const { host, token } = localSourceConfig;
+    fetch(`http://${host}/api/files/${localSourceIndex}/uploaded?token=${token}`, { method: 'POST' }).catch(() => {});
 }
 
 /**
@@ -218,6 +234,9 @@ export function mergeServerJobs(serverJobs) {
             existing.title = serverJob.title || existing.title;
             existing.stage = serverJob.stage || existing.stage;
             existing.progress = 100;
+            if (existing.status === 'completed' && existing.localSourceIndex != null) {
+                notifyLocalSourceUploaded(existing.localSourceIndex);
+            }
             if (existing._resolveMonitor) {
                 existing._resolveMonitor();
                 existing._resolveMonitor = null;
@@ -247,6 +266,9 @@ export function mergeServerJobs(serverJobs) {
             existing.episodeId = serverJob.episodeId || existing.episodeId;
             existing.stage = serverJob.stage || existing.stage;
             existing.progress = 100;
+            if (existing.localSourceIndex != null) {
+                notifyLocalSourceUploaded(existing.localSourceIndex);
+            }
             changedEntryIds.add(existing.id);
         } else if (existing.status === 'failed' && serverStatus === 'Cancelled') {
             // Server says cancelled - remove from queue
@@ -377,27 +399,42 @@ export async function connectLocalSource() {
         const unseen = files.map((f, i) => ({ index: i, name: f.name })).filter(f => !localSourceSeen.has(f.index));
 
         if (unseen.length > 0) {
-            const fetched = await Promise.all(unseen.map(({ index, name }) =>
-                fetch(`${baseUrl}/api/files/${index}?token=${token}`)
-                    .then(r => r.ok ? r.blob() : null)
-                    .then(blob => {
-                        if (!blob) {
-                            return null;
-                        }
-                        localSourceSeen.add(index);
-
-                        return new File([blob], name, { type: blob.type });
-                    })
-                    .catch(() => null)
-            ));
-            const validFiles = fetched.filter(f => f !== null);
-            if (validFiles.length > 0) {
-                addFilesToQueue(validFiles);
-            }
-            sessionStorage.setItem('localSourceSeen', JSON.stringify([...localSourceSeen]));
+            await fetchAndEnqueueLocalFiles(unseen);
         }
     } catch (e) {
         console.error('Failed to fetch local files:', e);
+    }
+
+    // Start heartbeat to keep the local file server alive during uploads
+    localSourceHeartbeatInterval = setInterval(() => {
+        fetch(`${baseUrl}/api/heartbeat?token=${token}`, { method: 'POST' }).catch(() => {});
+    }, 30_000);
+
+    /**
+     * Fetch files from the local server by index, convert to File objects, and enqueue.
+     * @param {Array<{index: number, name: string}>} items
+     */
+    async function fetchAndEnqueueLocalFiles(items) {
+        const fetched = await Promise.all(items.map(({ index, name }) =>
+            fetch(`${baseUrl}/api/files/${index}?token=${token}`)
+                .then(r => r.ok ? r.blob() : null)
+                .then(blob => {
+                    if (!blob) {
+                        return null;
+                    }
+                    localSourceSeen.add(index);
+                    const file = new File([blob], name, { type: blob.type });
+                    file.localSourceIndex = index;
+
+                    return file;
+                })
+                .catch(() => null)
+        ));
+        const validFiles = fetched.filter(f => f !== null);
+        if (validFiles.length > 0) {
+            addFilesToQueue(validFiles);
+        }
+        sessionStorage.setItem('localSourceSeen', JSON.stringify([...localSourceSeen]));
     }
 
     // Batch handler for SSE events -- collects rapid-fire events (e.g., multiple context menu
@@ -414,24 +451,7 @@ export async function connectLocalSource() {
         }
 
         try {
-            const fetched = await Promise.all(batch.map(({ index, name }) =>
-                fetch(`${baseUrl}/api/files/${index}?token=${token}`)
-                    .then(r => r.ok ? r.blob() : null)
-                    .then(blob => {
-                        if (!blob) {
-                            return null;
-                        }
-                        localSourceSeen.add(index);
-
-                        return new File([blob], name, { type: blob.type });
-                    })
-                    .catch(() => null)
-            ));
-            const validFiles = fetched.filter(f => f !== null);
-            if (validFiles.length > 0) {
-                addFilesToQueue(validFiles);
-            }
-            sessionStorage.setItem('localSourceSeen', JSON.stringify([...localSourceSeen]));
+            await fetchAndEnqueueLocalFiles(batch);
         } catch (e) {
             console.error('Failed to fetch local files:', e);
         }
@@ -459,6 +479,10 @@ export async function connectLocalSource() {
         if (localSourceEvents && localSourceEvents.readyState === EventSource.CLOSED) {
             localSourceEvents.close();
             localSourceEvents = null;
+            if (localSourceHeartbeatInterval) {
+                clearInterval(localSourceHeartbeatInterval);
+                localSourceHeartbeatInterval = null;
+            }
             sessionStorage.removeItem('localSource');
             sessionStorage.removeItem('localSourceSeen');
             localSourceSeen.clear();

@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using FeatherPod.Shared;
 
 namespace FeatherPod.Infrastructure;
 
@@ -13,21 +14,9 @@ internal sealed class LocalFileServer : IDisposable
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(5);
     private const int MaxStartAttempts = 3;
 
-    private static readonly Dictionary<string, string> MimeTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        [".mp3"] = "audio/mpeg",
-        [".m4a"] = "audio/mp4",
-        [".m4b"] = "audio/mp4",
-        [".wav"] = "audio/wav",
-        [".ogg"] = "audio/ogg",
-        [".flac"] = "audio/flac",
-        [".aac"] = "audio/aac",
-        [".opus"] = "audio/opus",
-        [".wma"] = "audio/x-ms-wma",
-    };
-
     private readonly string _allowedOrigin;
     private readonly List<(string Path, string Name, long Size)> _files = [];
+    private readonly HashSet<int> _uploadedIndices = [];
     private readonly List<HttpListenerResponse> _sseClients = [];
     private readonly object _lock = new();
 
@@ -194,7 +183,9 @@ internal sealed class LocalFileServer : IDisposable
             var path = request.Url?.AbsolutePath ?? "";
             var token = request.QueryString["token"];
 
-            if (token != Token)
+            if (!CryptographicOperations.FixedTimeEquals(
+                    Encoding.UTF8.GetBytes(token ?? ""),
+                    Encoding.UTF8.GetBytes(Token)))
             {
                 response.StatusCode = 403;
                 response.Close();
@@ -214,6 +205,14 @@ internal sealed class LocalFileServer : IDisposable
                     HandleSseConnection(response);
 
                     return; // Don't close response — SSE keeps it open
+                case "POST" when path == "/api/heartbeat":
+                    ResetIdleTimer();
+                    response.StatusCode = 200;
+                    response.Close();
+                    break;
+                case "POST" when path.EndsWith("/uploaded") && path.StartsWith("/api/files/"):
+                    HandleFileUploaded(response, path);
+                    break;
                 case "POST" when path == "/api/files":
                     HandlePostFile(request, response);
                     break;
@@ -269,9 +268,8 @@ internal sealed class LocalFileServer : IDisposable
             size = _files[index].Size;
         }
 
-        var extension = Path.GetExtension(name);
         response.StatusCode = 200;
-        response.ContentType = MimeTypes.GetValueOrDefault(extension, "application/octet-stream");
+        response.ContentType = AudioHelper.GetMimeType(name);
         response.ContentLength64 = size;
         response.AddHeader("Content-Disposition", $"attachment; filename=\"{name}\"");
 
@@ -341,6 +339,43 @@ internal sealed class LocalFileServer : IDisposable
         WriteJson(response, 201, new { index, name, size });
     }
 
+    private void HandleFileUploaded(HttpListenerResponse response, string path)
+    {
+        var indexStr = path["/api/files/".Length..^"/uploaded".Length];
+        if (!int.TryParse(indexStr, out var index))
+        {
+            response.StatusCode = 404;
+            response.Close();
+
+            return;
+        }
+
+        lock (_lock)
+        {
+            if (index < 0 || index >= _files.Count)
+            {
+                response.StatusCode = 404;
+                response.Close();
+
+                return;
+            }
+
+            _uploadedIndices.Add(index);
+        }
+
+        ResetIdleTimer();
+        response.StatusCode = 200;
+        response.Close();
+    }
+
+    public List<string> GetUploadedFilePaths()
+    {
+        lock (_lock)
+        {
+            return [.. _uploadedIndices.Where(i => i < _files.Count).Select(i => _files[i].Path)];
+        }
+    }
+
     private void HandleSseConnection(HttpListenerResponse response)
     {
         response.ContentType = "text/event-stream";
@@ -407,27 +442,7 @@ internal sealed class LocalFileServer : IDisposable
 
     private void SendHeartbeat()
     {
-        List<HttpListenerResponse> deadClients = [];
-
-        lock (_lock)
-        {
-            foreach (var client in _sseClients)
-            {
-                try
-                {
-                    WriteSseEvent(client, "heartbeat", "{}");
-                }
-                catch
-                {
-                    deadClients.Add(client);
-                }
-            }
-
-            foreach (var dead in deadClients)
-            {
-                _sseClients.Remove(dead);
-            }
-        }
+        BroadcastSseEvent("heartbeat", new { });
     }
 
     private static void WriteSseEvent(HttpListenerResponse response, string eventType, string data)
