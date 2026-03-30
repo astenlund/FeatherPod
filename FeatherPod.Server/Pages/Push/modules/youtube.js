@@ -5,7 +5,8 @@
  * - Document-level paste events (runs before API key paste detection)
  * - Drop zone (when no files are dropped, checks text/plain and text/uri-list)
  * - ?yt= query param (from PWA share target redirect)
- * - Long-press (500ms) on select-file button or drop zone reads clipboard (iOS)
+ * - Long-press (500ms) on select-file button or drop zone reads clipboard (iOS);
+ *   falls back to a paste-input modal when Clipboard API is denied (iOS PWA)
  *
  * On detection, shows an import dialog with audio/video toggle, then POSTs to
  * /api/feeds/{feedId}/youtube with the oEmbed title for instant queue display.
@@ -581,8 +582,103 @@ function showClipboardToast(message) {
 }
 
 /**
+ * Show a modal with a paste-input field as fallback when the Clipboard API
+ * is denied (e.g. iOS PWA standalone mode). Auto-focuses the input so iOS
+ * shows the native "Paste" pill above the keyboard.
+ */
+function showClipboardFallbackModal() {
+    // Reuse if already open
+    let overlay = document.getElementById('clipboard-fallback-overlay');
+    if (overlay) {
+        overlay.hidden = false;
+        overlay.querySelector('.modal-input')?.focus();
+
+        return;
+    }
+
+    overlay = document.createElement('div');
+    overlay.id = 'clipboard-fallback-overlay';
+    overlay.className = 'modal-overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'modal modal--narrow';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-label', 'Paste YouTube URL');
+    modal.setAttribute('aria-modal', 'true');
+
+    const title = document.createElement('h3');
+    title.className = 'modal-title';
+    title.textContent = 'Paste YouTube URL';
+
+    const body = document.createElement('div');
+    body.className = 'modal-body';
+
+    const input = document.createElement('input');
+    input.type = 'url';
+    input.className = 'modal-input';
+    input.placeholder = 'https://youtube.com/watch?v=...';
+    input.enterKeyHint = 'go';
+    input.autocomplete = 'off';
+
+    body.appendChild(input);
+
+    const actions = document.createElement('div');
+    actions.className = 'modal-actions';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'btn-modal btn-modal--secondary';
+    cancelBtn.textContent = 'Cancel';
+
+    actions.appendChild(cancelBtn);
+
+    modal.append(title, body, actions);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const cleanup = () => {
+        overlay.hidden = true;
+        input.value = '';
+    };
+
+    const trySubmit = (text, event) => {
+        const url = extractYouTubeUrl(text?.trim());
+        if (url) {
+            event?.preventDefault();
+            cleanup();
+            const metaPromise = fetchVideoMeta(url);
+            showImportDialog(url, metaPromise);
+        }
+    };
+
+    input.addEventListener('paste', (e) => {
+        trySubmit(e.clipboardData?.getData('text/plain') || '', e);
+    });
+
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            trySubmit(input.value);
+        }
+        if (e.key === 'Escape') {
+            cleanup();
+        }
+    });
+
+    cancelBtn.addEventListener('click', cleanup);
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+            cleanup();
+        }
+    });
+
+    // Focus after a microtask so the overlay transition starts
+    requestAnimationFrame(() => input.focus());
+}
+
+/**
  * Read clipboard and open import dialog if a YouTube URL is found.
  * Called from touchend to ensure transient user activation on iOS Safari.
+ * Falls back to a paste-input modal when the Clipboard API is unavailable
+ * or denied (iOS PWA standalone mode).
  */
 async function readClipboardAndImport() {
     const state = getCurrentState();
@@ -591,7 +687,7 @@ async function readClipboardAndImport() {
     }
 
     if (!navigator.clipboard?.readText) {
-        showClipboardToast('Clipboard not available');
+        showClipboardFallbackModal();
 
         return;
     }
@@ -606,7 +702,7 @@ async function readClipboardAndImport() {
             showClipboardToast('No YouTube link on clipboard');
         }
     } catch {
-        showClipboardToast('Clipboard access denied');
+        showClipboardFallbackModal();
     }
 }
 
