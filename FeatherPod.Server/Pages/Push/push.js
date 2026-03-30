@@ -35,6 +35,31 @@ import { getContextMenuTargetId, hideContextMenu, showRenameModal, hideRenameMod
 import { loadDismissedJobIds, connectFeedEvents, fetchRecentJobs, mergeServerJobs, connectLocalSource, consumeSharedFiles, getLocalSourceConfig, setLocalSourceConfig, getFeedEventsSource, getLocalSourceEvents, setLocalSourceEvents } from './modules/server-sync.js';
 import { handlePaste as handleYouTubePaste, handleDrop as handleYouTubeDrop, handleLongPressClipboard, consumeLongPressFlag, initYouTubeImport, registerYouTubeJobCallback, showYouTubeCookieDialog } from './modules/youtube.js';
 
+// CSS hot-swap: service worker notifies when app.css has changed via background revalidation
+if (navigator.serviceWorker) {
+    navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data?.type !== 'css-updated') return;
+        const oldLink = document.querySelector('link[rel="stylesheet"][href*="/push/app.css"]');
+        if (!oldLink) return;
+        const newLink = document.createElement('link');
+        newLink.rel = 'stylesheet';
+        newLink.href = oldLink.getAttribute('href');
+        newLink.onload = () => {
+            oldLink.remove();
+            const backdrop = document.getElementById('artwork-backdrop');
+            if (backdrop) {
+                backdrop.style.transition = 'filter 0.3s ease';
+                backdrop.style.filter = 'brightness(1.3)';
+                setTimeout(() => {
+                    backdrop.style.filter = '';
+                    setTimeout(() => { backdrop.style.transition = ''; }, 300);
+                }, 300);
+            }
+        };
+        oldLink.parentNode.insertBefore(newLink, oldLink.nextSibling);
+    });
+}
+
 /**
  * @typedef {Object} Episode
  * @property {string} id - Episode ID

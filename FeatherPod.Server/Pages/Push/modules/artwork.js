@@ -313,7 +313,7 @@ export function initFeedArtwork() {
     }
 
     const cached = loadCachedPalette();
-    if (cached && cached.primaryHue != null && ICON_ETAG) {
+    if (cached && cached.primaryHue != null && cached.etag === ICON_ETAG) {
         applyArtworkPalette(cached.primaryHue, cached.accentHue);
         const backdrop = document.getElementById('artwork-backdrop');
         if (backdrop) {

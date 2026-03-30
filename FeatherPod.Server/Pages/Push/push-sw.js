@@ -1,42 +1,56 @@
 const CACHE_NAME = 'push-page';
 const SHARE_CACHE_NAME = 'share-target';
+const JS_VALIDATE_TIMEOUT_MS = 3000;
+
+const CACHED_ASSET_SUFFIXES = [
+    '/app.js',
+    '/app.css',
+    '/modules/config.js',
+    '/modules/events.js',
+    '/modules/utils.js',
+    '/modules/auth.js',
+    '/modules/artwork.js',
+    '/modules/wake-lock.js',
+    '/modules/notifications.js',
+    '/modules/progress.js',
+    '/modules/state.js',
+    '/modules/queue-ui.js',
+    '/modules/queue.js',
+    '/modules/history.js',
+    '/modules/editing.js',
+    '/modules/server-sync.js',
+    '/modules/youtube.js',
+];
 
 self.addEventListener('install', (event) => {
     event.waitUntil((async () => {
         const scope = new URL(self.registration.scope).pathname;
         const cache = await caches.open(CACHE_NAME);
-        const urls = [
-            scope,
-            `${scope}/app.js`,
-            `${scope}/app.css`,
-            `${scope}/modules/config.js`,
-            `${scope}/modules/events.js`,
-            `${scope}/modules/utils.js`,
-            `${scope}/modules/auth.js`,
-            `${scope}/modules/artwork.js`,
-            `${scope}/modules/wake-lock.js`,
-            `${scope}/modules/notifications.js`,
-            `${scope}/modules/progress.js`,
-            `${scope}/modules/state.js`,
-            `${scope}/modules/queue-ui.js`,
-            `${scope}/modules/queue.js`,
-            `${scope}/modules/history.js`,
-            `${scope}/modules/editing.js`,
-            `${scope}/modules/server-sync.js`,
-            `${scope}/modules/youtube.js`,
-        ];
-        for (const url of urls) {
+        for (const suffix of CACHED_ASSET_SUFFIXES) {
             try {
-                await cache.add(url);
+                await cache.add(scope + suffix);
             } catch (e) {
-                // Best-effort — don't prevent installation if pre-caching fails
+                // Best-effort -- don't prevent installation if pre-caching fails
             }
         }
         self.skipWaiting();
     })());
 });
 
-self.addEventListener('activate', (event) => event.waitUntil(clients.claim()));
+self.addEventListener('activate', (event) => {
+    event.waitUntil((async () => {
+        await clients.claim();
+        const scope = new URL(self.registration.scope).pathname;
+        const validPaths = new Set(CACHED_ASSET_SUFFIXES.map(s => scope + s));
+        const cache = await caches.open(CACHE_NAME);
+        const keys = await cache.keys();
+        await Promise.all(keys.map(req => {
+            if (!validPaths.has(new URL(req.url).pathname)) {
+                return cache.delete(req);
+            }
+        }));
+    })());
+});
 
 self.addEventListener('push', (event) => {
     if (!event.data) return;
@@ -74,12 +88,12 @@ self.addEventListener('notificationclick', (event) => {
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
 
+    // Share target POST -- unchanged
     if (event.request.method === 'POST' && url.pathname.endsWith('/push')) {
         event.respondWith((async () => {
             try {
                 const formData = await event.request.formData();
 
-                // Check for shared text/URL (e.g., YouTube share from Android)
                 const sharedText = formData.get('shared_text');
                 if (sharedText) {
                     const redirectUrl = new URL(event.request.url);
@@ -87,7 +101,6 @@ self.addEventListener('fetch', (event) => {
                     return Response.redirect(redirectUrl.href, 303);
                 }
 
-                // File sharing (existing flow)
                 const files = formData.getAll('audio');
                 if (files.length > 0) {
                     const cache = await caches.open(SHARE_CACHE_NAME);
@@ -105,33 +118,82 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // Stale-while-revalidate for push page navigation and assets (JS, CSS)
-    if (event.request.method === 'GET') {
-        const isNavigation = url.pathname.endsWith('/push') && event.request.mode === 'navigate';
-        const isAsset = url.pathname.endsWith('/push/app.js') || url.pathname.endsWith('/push/app.css') || url.pathname.includes('/push/modules/');
+    if (event.request.method !== 'GET') return;
 
-        if (isNavigation || isAsset) {
-            event.respondWith((async () => {
-                const cache = await caches.open(CACHE_NAME);
-                const cached = await cache.match(event.request);
+    const isNavigation = url.pathname.endsWith('/push') && event.request.mode === 'navigate';
+    const isCss = url.pathname.endsWith('/push/app.css');
+    const isJs = url.pathname.endsWith('/push/app.js') || url.pathname.includes('/push/modules/');
 
-                const networkFetch = fetch(event.request).then(response => {
-                    if (response.ok) {
-                        cache.put(event.request, response.clone());
+    // HTML -- network only (always fresh after deploy)
+    if (isNavigation) {
+        event.respondWith(
+            fetch(event.request).catch(() => new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } }))
+        );
+        return;
+    }
+
+    // CSS -- stale-while-revalidate + postMessage on ETag change
+    if (isCss) {
+        event.respondWith((async () => {
+            const cache = await caches.open(CACHE_NAME);
+            const cached = await cache.match(event.request);
+
+            const revalidate = fetch(event.request).then(async (response) => {
+                if (!response.ok) return response;
+                const newEtag = response.headers.get('etag');
+                const oldEtag = cached?.headers.get('etag');
+                await cache.put(event.request, response.clone());
+                if (newEtag && oldEtag && newEtag !== oldEtag) {
+                    const allClients = await clients.matchAll({ type: 'window' });
+                    for (const client of allClients) {
+                        client.postMessage({ type: 'css-updated' });
                     }
-                    return response;
-                }).catch(() => null);
+                }
+                return response;
+            }).catch(() => null);
 
-                if (cached) {
-                    event.waitUntil(networkFetch);
+            if (cached) {
+                event.waitUntil(revalidate);
+                return cached;
+            }
+
+            return (await revalidate) || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+        })());
+        return;
+    }
+
+    // JS -- cache-then-validate with timeout (conditional GET via If-None-Match)
+    if (isJs) {
+        event.respondWith((async () => {
+            const cache = await caches.open(CACHE_NAME);
+            const cached = await cache.match(event.request);
+            const cachedEtag = cached?.headers.get('etag');
+
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), JS_VALIDATE_TIMEOUT_MS);
+
+            try {
+                const init = { signal: controller.signal };
+                if (cachedEtag) {
+                    init.headers = { 'If-None-Match': cachedEtag };
+                }
+                const response = await fetch(event.request, init);
+                clearTimeout(timeoutId);
+
+                if (response.status === 304 && cached) {
                     return cached;
                 }
+                if (response.ok) {
+                    await cache.put(event.request, response.clone());
+                    return response;
+                }
 
-                return (await networkFetch) || new Response('Offline', {
-                    status: 503,
-                    headers: { 'Content-Type': 'text/plain' }
-                });
-            })());
-        }
+                return cached || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+            } catch {
+                clearTimeout(timeoutId);
+
+                return cached || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain' } });
+            }
+        })());
     }
 });
