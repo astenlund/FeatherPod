@@ -14,7 +14,7 @@ export const VELOCITY_OVERRIDES = IS_DEV ? parseVelocityOverrides() : {};
 function parseVelocityOverrides() {
     const params = new URLSearchParams(window.location.search);
     const overrides = {};
-    const mapping = { vup: 'Uploading', vanal: 'Analyzing', vnorm: 'Normalizing' };
+    const mapping = { vup: 'Uploading', vanal: 'Analyzing', vnorm: 'Normalizing', vdown: 'Downloading', vtrans: 'Transcribing' };
     for (const [param, stage] of Object.entries(mapping)) {
         const value = params.get(param);
         if (value != null) {

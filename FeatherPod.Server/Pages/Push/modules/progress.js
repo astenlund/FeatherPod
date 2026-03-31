@@ -5,20 +5,28 @@ import './utils.js'; // Number.prototype.formatBytes
  * Singleton progress animator with velocity prediction.
  * When PROGRESS_SMOOTHING is enabled, uses learned velocities and EMA
  * to produce smooth progress bar animation. When disabled, updates directly.
+ *
+ * Velocity learning: accumulates progress samples for 5 seconds (min 2 samples)
+ * before updating the learned cold-start velocity via asymmetric EMA. Also tracks
+ * overall stage velocity (persisted on stage end) for the restore path.
+ * Learned velocities stored in localStorage as { coldStart, overall } per stage.
  */
 export const progressAnimator = {
     DEFAULT_INITIAL_VELOCITIES: {
         'Uploading': 1024 * 1024,
         'Analyzing': 100 * 1024,
-        'Normalizing': 100 * 1024
+        'Normalizing': 100 * 1024,
+        'Downloading': 1024 * 1024,
+        'Transcribing': 100 * 1024
     },
     MAX_INITIAL_VELOCITIES: {
-        'Uploading': 10 * 1024 * 1024
+        'Uploading': 10 * 1024 * 1024,
+        'Downloading': 10 * 1024 * 1024
     },
     LEARNED_INITIAL_VELOCITY_STORAGE_KEY: 'featherpod_learned_initial_velocity',
     currentFileSize: 0,
 
-    getLearnedInitialVelocity(stage) {
+    getLearnedInitialVelocity(stage, { preferOverall = false } = {}) {
         if (VELOCITY_OVERRIDES[stage] != null) {
             const bytesPerSec = VELOCITY_OVERRIDES[stage];
             if (this.currentFileSize > 0) {
@@ -34,11 +42,17 @@ export const progressAnimator = {
             const stored = localStorage.getItem(this.LEARNED_INITIAL_VELOCITY_STORAGE_KEY);
             if (stored) {
                 const values = JSON.parse(stored);
-                if (values[stage] != null) {
-                    bytesPerSec = values[stage];
+                const entry = values[stage];
+                if (entry != null && typeof entry === 'object') {
+                    if (preferOverall && entry.overall != null) {
+                        bytesPerSec = entry.overall;
+                    } else if (entry.coldStart != null) {
+                        bytesPerSec = entry.coldStart;
+                    }
                 }
+                // Old flat-number format: discard (fall through to default)
             }
-        } catch (e) {
+        } catch {
             // Ignore localStorage errors
         }
 
@@ -67,23 +81,89 @@ export const progressAnimator = {
             const stored = localStorage.getItem(this.LEARNED_INITIAL_VELOCITY_STORAGE_KEY);
             const values = stored ? JSON.parse(stored) : {};
             const defaultBytesPerSec = this.DEFAULT_INITIAL_VELOCITIES[stage] ?? 100 * 1024;
-            const currentBytesPerSec = values[stage] ?? defaultBytesPerSec;
+
+            // Read coldStart from new format, discard old flat numbers
+            const entry = values[stage];
+            let currentBytesPerSec = defaultBytesPerSec;
+            if (entry != null && typeof entry === 'object' && entry.coldStart != null) {
+                currentBytesPerSec = entry.coldStart;
+            }
 
             const targetBytesPerSec = actualBytesPerSec * 0.8;
             const alpha = targetBytesPerSec < currentBytesPerSec ? 0.8 : 0.2;
             const updatedBytesPerSec = currentBytesPerSec * (1 - alpha) + targetBytesPerSec * alpha;
 
-            values[stage] = updatedBytesPerSec;
+            // Write back in new { coldStart, overall } format, preserving overall if present
+            if (entry != null && typeof entry === 'object') {
+                entry.coldStart = updatedBytesPerSec;
+            } else {
+                values[stage] = { coldStart: updatedBytesPerSec };
+            }
             localStorage.setItem(this.LEARNED_INITIAL_VELOCITY_STORAGE_KEY, JSON.stringify(values));
 
             const current = currentBytesPerSec.formatBytes(2, '/s');
             const updated = updatedBytesPerSec.formatBytes(2, '/s');
             const actual = actualBytesPerSec.formatBytes(2, '/s');
-            console.log(`[${stage}] Initial velocity: ${current} -> ${updated} (actual: ${actual})`);
+            console.log(`[${stage}] Cold-start velocity: ${current} -> ${updated} (actual: ${actual})`);
 
             return true;
-        } catch (e) {
+        } catch {
             return false;
+        }
+    },
+
+    finalizeStageVelocity() {
+        if (this.currentStage == null || this.targetValue < 1 || this.currentFileSize <= 0) {
+            return;
+        }
+
+        const now = performance.now();
+        const elapsed = (now - this.stageStartTime) / 1000;
+        if (elapsed <= 0) {
+            return;
+        }
+
+        const stage = this.currentStage;
+        this.currentStage = null;
+
+        const velocityPctPerSec = this.targetValue / elapsed;
+        const overallBytesPerSec = (velocityPctPerSec / 100) * this.currentFileSize;
+
+        try {
+            const stored = localStorage.getItem(this.LEARNED_INITIAL_VELOCITY_STORAGE_KEY);
+            const values = stored ? JSON.parse(stored) : {};
+
+            const defaultBytesPerSec = this.DEFAULT_INITIAL_VELOCITIES[stage] ?? 100 * 1024;
+            let entry = values[stage];
+
+            // Discard old flat-number format
+            if (entry != null && typeof entry !== 'object') {
+                entry = null;
+            }
+
+            let currentOverall = defaultBytesPerSec;
+            if (entry?.overall != null) {
+                currentOverall = entry.overall;
+            }
+
+            // Same asymmetric EMA as cold-start: faster to decrease, slower to increase
+            const targetBytesPerSec = overallBytesPerSec * 0.8;
+            const alpha = targetBytesPerSec < currentOverall ? 0.8 : 0.2;
+            const updatedOverall = currentOverall * (1 - alpha) + targetBytesPerSec * alpha;
+
+            if (entry) {
+                entry.overall = updatedOverall;
+            } else {
+                values[stage] = { overall: updatedOverall };
+            }
+            localStorage.setItem(this.LEARNED_INITIAL_VELOCITY_STORAGE_KEY, JSON.stringify(values));
+
+            const current = currentOverall.formatBytes(2, '/s');
+            const updated = updatedOverall.formatBytes(2, '/s');
+            const actual = overallBytesPerSec.formatBytes(2, '/s');
+            console.log(`[${stage}] Overall velocity: ${current} -> ${updated} (actual: ${actual})`);
+        } catch {
+            // Ignore localStorage errors
         }
     },
 
@@ -102,9 +182,12 @@ export const progressAnimator = {
     currentStage: null,
     awaitingFirstUpdate: false,
     isRestoring: false,
+    sampleCount: 0,
+    coldStartLearned: false,
 
     startWithAssumption(stage, progressBar, fileSize) {
         const wasRestoring = this.isRestoring;
+        this.finalizeStageVelocity();
         this.reset();
         if (fileSize != null) {
             this.currentFileSize = fileSize;
@@ -151,7 +234,7 @@ export const progressAnimator = {
             const dt = (now - this.lastUpdateTime) / 1000;
 
             if (this.isRestoring) {
-                const { velocity: learnedVelocity } = this.getLearnedInitialVelocity(stage);
+                const { velocity: learnedVelocity } = this.getLearnedInitialVelocity(stage, { preferOverall: true });
                 this.currentValue = value;
                 this.targetValue = value;
                 this.velocity = learnedVelocity;
@@ -167,6 +250,19 @@ export const progressAnimator = {
                 return;
             }
 
+            this.sampleCount++;
+
+            if (!this.coldStartLearned) {
+                const elapsed = (now - this.stageStartTime) / 1000;
+                if (elapsed >= 5 && this.sampleCount >= 2) {
+                    const avgVelocity = value / elapsed;
+                    if (this.updateLearnedInitialVelocity(stage, avgVelocity)) {
+                        this.coldStartLearned = true;
+                    }
+                }
+            }
+
+            // Update velocity/target tracking (same as before)
             if (dt > 0.05) {
                 const totalElapsed = (now - this.stageStartTime) / 1000;
                 const realVelocity = totalElapsed > 0 ? value / totalElapsed : this.velocity;
@@ -179,9 +275,8 @@ export const progressAnimator = {
                 this.targetValue = value;
             }
 
-            const totalElapsed = (now - this.stageStartTime) / 1000;
-            const learningVelocity = totalElapsed > 0.05 ? value / totalElapsed : 0;
-            if (this.updateLearnedInitialVelocity(stage, learningVelocity)) {
+            // Stop awaiting after cold-start is learned (accumulation complete)
+            if (this.coldStartLearned) {
                 this.awaitingFirstUpdate = false;
             }
 
@@ -241,6 +336,7 @@ export const progressAnimator = {
     },
 
     reset() {
+        this.finalizeStageVelocity();
         this.stop();
         this.currentValue = 0;
         this.targetValue = 0;
@@ -252,6 +348,8 @@ export const progressAnimator = {
         this.speedFactor = 1;
         this.currentStage = null;
         this.awaitingFirstUpdate = false;
+        this.sampleCount = 0;
+        this.coldStartLearned = false;
         if (this.ghostBar) {
             this.ghostBar.parentElement.classList.remove('visible');
             this.ghostBar = null;
