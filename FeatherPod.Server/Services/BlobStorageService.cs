@@ -326,6 +326,46 @@ public class BlobStorageService : IBlobStorageService
         }
     }
 
+    public async Task UploadTranscriptAsync(string feedId, string episodeId, string vttContent)
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+        var blobPath = $"{feedId}/transcripts/{episodeId}.vtt";
+        var blobClient = containerClient.GetBlobClient(blobPath);
+
+        await using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(vttContent));
+        await blobClient.UploadAsync(stream, overwrite: true);
+
+        _logger.LogInformation("Uploaded transcript to blob storage: {FeedId}/{EpisodeId}", feedId, episodeId);
+    }
+
+    public async Task<Stream?> DownloadTranscriptAsync(string feedId, string episodeId)
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+        var blobPath = $"{feedId}/transcripts/{episodeId}.vtt";
+        var blobClient = containerClient.GetBlobClient(blobPath);
+
+        try
+        {
+            var response = await blobClient.DownloadStreamingAsync();
+
+            return response.Value.Content;
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
+    }
+
+    public async Task DeleteTranscriptAsync(string feedId, string episodeId)
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+        var blobPath = $"{feedId}/transcripts/{episodeId}.vtt";
+        var blobClient = containerClient.GetBlobClient(blobPath);
+
+        await blobClient.DeleteIfExistsAsync();
+        _logger.LogInformation("Deleted transcript from blob storage: {FeedId}/{EpisodeId}", feedId, episodeId);
+    }
+
     public async Task RenameFeedAsync(string oldFeedId, string newFeedId)
     {
         var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);

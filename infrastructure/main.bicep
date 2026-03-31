@@ -66,6 +66,12 @@ param signalRServiceName string
 @description('Name of the Azure OpenAI account')
 param openAiAccountName string
 
+@description('LLM model name for AI title suggestions')
+param llmModelName string
+
+@description('LLM model version')
+param llmModelVersion string
+
 // Resource tags
 var tags = {
   Environment: environment
@@ -275,7 +281,7 @@ param functionAppScaleLimit int = 3
   2048
   4096
 ])
-param functionAppInstanceMemoryMB int = 2048
+param functionAppInstanceMemoryMB int = 4096
 
 // Deployment container for Flex Consumption (replaces WEBSITE_CONTENTSHARE/WEBSITE_CONTENTAZUREFILECONNECTIONSTRING)
 resource functionDeploymentContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
@@ -338,6 +344,8 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2023-12-01' = {
     JobRetentionDays: '7'
     OrphanedBlobRetentionDays: '1'
     CleanupSchedule: '0 0 3 * * *'
+    AzureOpenAIEndpoint: 'https://${openAiAccountName}.openai.azure.com/'
+    WhisperDeployment: whisperDeployment.name
     APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.properties.ConnectionString
   }
 }
@@ -421,8 +429,25 @@ resource gpt4oMiniDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
   properties: {
     model: {
       format: 'OpenAI'
-      name: 'gpt-4o-mini'
-      version: '2024-07-18'
+      name: llmModelName
+      version: llmModelVersion
+    }
+  }
+}
+
+resource whisperDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
+  parent: openAiAccount
+  name: 'whisper'
+  dependsOn: [gpt4oMiniDeployment]
+  sku: {
+    name: 'Standard'
+    capacity: 1
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: 'whisper'
+      version: '001'
     }
   }
 }
@@ -434,6 +459,17 @@ resource appServiceOpenAiRoleAssignment 'Microsoft.Authorization/roleAssignments
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cognitiveServicesOpenAiUserRoleId)
     principalId: appService.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Role Assignment: Grant Function App managed identity access to Azure OpenAI (for Whisper transcription)
+resource functionAppOpenAiRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(openAiAccount.id, functionApp.id, cognitiveServicesOpenAiUserRoleId)
+  scope: openAiAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cognitiveServicesOpenAiUserRoleId)
+    principalId: functionApp.identity.principalId
     principalType: 'ServicePrincipal'
   }
 }

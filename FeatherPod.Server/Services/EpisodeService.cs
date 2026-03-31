@@ -470,6 +470,12 @@ public sealed partial class EpisodeService : IDisposable
                 _logger.LogInformation("Skipping blob deletion - another episode references {FileName}", episode.FileName);
             }
 
+            // Delete transcript blob if available
+            if (episode.TranscriptStatus == TranscriptStatus.Available)
+            {
+                await _blobStorage.DeleteTranscriptAsync(feedId, episode.Id);
+            }
+
             // Remove from list
             _episodesByFeed[feedId].Remove(episode);
             BumpFeedVersion(feedId);
@@ -564,6 +570,14 @@ public sealed partial class EpisodeService : IDisposable
         File.Delete(tempPath);
 
         var newId = Episode.GenerateId(targetFeedId, episode.FileName, episode.FileSize);
+
+        // Copy transcript to target feed with new episode ID, then delete source
+        await CopyTranscriptAsync(episode, sourceFeedId, targetFeedId, newId);
+        if (episode.TranscriptStatus == TranscriptStatus.Available)
+        {
+            await _blobStorage.DeleteTranscriptAsync(sourceFeedId, episode.Id);
+        }
+
         var movedEpisode = episode with
         {
             Id = newId,
@@ -624,6 +638,10 @@ public sealed partial class EpisodeService : IDisposable
         File.Delete(tempPath);
 
         var newId = Episode.GenerateId(targetFeedId, episode.FileName, episode.FileSize);
+
+        // Copy transcript to target feed with new episode ID
+        await CopyTranscriptAsync(episode, sourceFeedId, targetFeedId, newId);
+
         var copiedEpisode = episode with
         {
             Id = newId,
@@ -650,6 +668,25 @@ public sealed partial class EpisodeService : IDisposable
         finally
         {
             _lock.Release();
+        }
+    }
+
+    private async Task CopyTranscriptAsync(Episode episode, string sourceFeedId, string targetFeedId, string targetEpisodeId)
+    {
+        if (episode.TranscriptStatus != TranscriptStatus.Available)
+        {
+            return;
+        }
+
+        var transcriptStream = await _blobStorage.DownloadTranscriptAsync(sourceFeedId, episode.Id);
+        if (transcriptStream != null)
+        {
+            await using (transcriptStream)
+            {
+                using var reader = new StreamReader(transcriptStream);
+                var vttContent = await reader.ReadToEndAsync();
+                await _blobStorage.UploadTranscriptAsync(targetFeedId, targetEpisodeId, vttContent);
+            }
         }
     }
 

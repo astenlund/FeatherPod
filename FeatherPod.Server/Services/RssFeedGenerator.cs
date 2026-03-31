@@ -24,6 +24,7 @@ public static class RssFeedGenerator
         writer.WriteAttributeString("version", "2.0");
         writer.WriteAttributeString("xmlns", "itunes", null, "http://www.itunes.com/dtds/podcast-1.0.dtd");
         writer.WriteAttributeString("xmlns", "content", null, "http://purl.org/rss/1.0/modules/content/");
+        writer.WriteAttributeString("xmlns", "podcast", null, "https://podcastindex.org/namespace/1.0");
 
         writer.WriteStartElement("channel");
 
@@ -113,6 +114,16 @@ public static class RssFeedGenerator
         {
             var duration = $"{(int)episode.Duration.TotalHours:D2}:{episode.Duration.Minutes:D2}:{episode.Duration.Seconds:D2}";
             writer.WriteElementString("itunes", "duration", null, duration);
+        }
+
+        // Podcast 2.0 transcript
+        var transcriptUrl = episode.GetTranscriptUrl(baseUrl);
+        if (transcriptUrl != null)
+        {
+            writer.WriteStartElement("podcast", "transcript", "https://podcastindex.org/namespace/1.0");
+            writer.WriteAttributeString("url", transcriptUrl);
+            writer.WriteAttributeString("type", "text/vtt");
+            writer.WriteEndElement();
         }
 
         writer.WriteEndElement(); // item

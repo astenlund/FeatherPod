@@ -12,4 +12,8 @@ public class FunctionSettings
     public int JobRetentionDays { get; set; } = 7;
     public int OrphanedBlobRetentionDays { get; set; } = 1;
     public string CleanupSchedule { get; set; } = "0 0 3 * * *";
+    public string? AzureOpenAIEndpoint { get; set; }
+    public string? WhisperDeployment { get; set; }
+    public int WhisperChunkMinutes { get; set; } = 12;
+    public int WhisperOverlapSeconds { get; set; } = 30;
 }

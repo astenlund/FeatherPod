@@ -20,6 +20,10 @@ public static partial class InputValidation
     [GeneratedRegex(@"^[^/\\:\*\?""<>\|\x00]+$")]
     private static partial Regex SafeFilenamePattern();
 
+    // Episode IDs: 12-char lowercase hex (SHA256 prefix)
+    [GeneratedRegex(@"^[a-f0-9]{12}$")]
+    private static partial Regex EpisodeIdPattern();
+
     // Duration strings: optional days, hours, minutes (e.g., "1h", "30m", "2h30m", "1d")
     [GeneratedRegex(@"^(?:(\d+)d)?(?:(\d+)h)?(?:(\d+)m)?$")]
     private static partial Regex DurationPattern();
@@ -60,6 +64,14 @@ public static partial class InputValidation
             return false;
 
         return SafeFilenamePattern().IsMatch(filename);
+    }
+
+    /// <summary>
+    /// Validates an episode ID (12-char lowercase hex, SHA256 prefix).
+    /// </summary>
+    public static bool IsValidEpisodeId(string? episodeId)
+    {
+        return !string.IsNullOrWhiteSpace(episodeId) && EpisodeIdPattern().IsMatch(episodeId);
     }
 
     /// <summary>

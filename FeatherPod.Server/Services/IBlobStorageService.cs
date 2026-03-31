@@ -40,6 +40,11 @@ public interface IBlobStorageService
     Task<string?> LoadPushSubscriptionsAsync(string feedId);
     Task SavePushSubscriptionsAsync(string feedId, string subscriptionsJson);
 
+    // Transcript operations (feed-aware)
+    Task UploadTranscriptAsync(string feedId, string episodeId, string vttContent);
+    Task<Stream?> DownloadTranscriptAsync(string feedId, string episodeId);
+    Task DeleteTranscriptAsync(string feedId, string episodeId);
+
     // Feed management operations
     Task RenameFeedAsync(string oldFeedId, string newFeedId);
     Task DeleteFeedAsync(string feedId);

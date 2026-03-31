@@ -11,7 +11,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "SolutionItems", "SolutionIt
 	ProjectSection(SolutionItems) = preProject
 		README.md = README.md
 		global.json = global.json
-		episodes.json = episodes.json
 		Deploy-FeatherPod.ps1 = Deploy-FeatherPod.ps1
 	EndProjectSection
 EndProject
@@ -25,8 +24,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "infrastructure", "infrastru
 	ProjectSection(SolutionItems) = preProject
 		infrastructure\main.bicep = infrastructure\main.bicep
 		infrastructure\parameters.json = infrastructure\parameters.json
-		infrastructure\test-environment.bicep = infrastructure\test-environment.bicep
-		infrastructure\test-environment.parameters.json = infrastructure\test-environment.parameters.json
+		infrastructure\parameters-test.json = infrastructure\parameters-test.json
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FeatherPod.Analyzers", "FeatherPod.Analyzers\FeatherPod.Analyzers.csproj", "{4008D026-7E87-494F-9D4F-2875EF9C654F}"

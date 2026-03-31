@@ -19,6 +19,7 @@ public record Episode
     public MediaSource? MediaSource { get; init; }
     required public DateTime UploadedAt { get; init; }
     public string? Note { get; init; }
+    public TranscriptStatus? TranscriptStatus { get; init; }
 
     public static string GenerateId(string feedId, string fileName, long fileSize)
     {
@@ -39,5 +40,15 @@ public record Episode
     public string GetAudioUrl(string baseUrl)
     {
         return $"{baseUrl}/{FeedId}/audio/{Uri.EscapeDataString(FileName)}";
+    }
+
+    public string? GetTranscriptUrl(string baseUrl)
+    {
+        if (TranscriptStatus != Models.TranscriptStatus.Available)
+        {
+            return null;
+        }
+
+        return $"{baseUrl}/{FeedId}/transcripts/{Uri.EscapeDataString(Id)}.vtt";
     }
 }

@@ -25,6 +25,7 @@ public class NormalizationFunction
     private readonly BlobServiceClient _blobClient;
     private readonly TableServiceClient _tableClient;
     private readonly IAudioNormalizationService _normalizationService;
+    private readonly ITranscriptionService _transcriptionService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly TelemetryClient _telemetryClient;
     private readonly FunctionSettings _settings;
@@ -40,6 +41,7 @@ public class NormalizationFunction
         BlobServiceClient blobClient,
         TableServiceClient tableClient,
         IAudioNormalizationService normalizationService,
+        ITranscriptionService transcriptionService,
         IHttpClientFactory httpClientFactory,
         TelemetryClient telemetryClient,
         IOptions<FunctionSettings> settings,
@@ -48,6 +50,7 @@ public class NormalizationFunction
         _blobClient = blobClient;
         _tableClient = tableClient;
         _normalizationService = normalizationService;
+        _transcriptionService = transcriptionService;
         _httpClientFactory = httpClientFactory;
         _telemetryClient = telemetryClient;
         _settings = settings.Value;
@@ -167,8 +170,9 @@ public class NormalizationFunction
     }
 
     /// <summary>
-    /// Downloads, analyzes, normalizes, uploads, and creates the episode in a single invocation.
-    /// Progress: Preparing (download) → Analyzing (0-40%) → Normalizing (40-100%) → Finishing (upload) → Completed.
+    /// Downloads, analyzes, normalizes, optionally transcribes, uploads, and creates the episode in a single invocation.
+    /// Progress mapping is dynamic: with Whisper enabled, Analyzing 0-30% / Normalizing 30-70% / Transcribing 70-100%.
+    /// Without Whisper, Analyzing 0-40% / Normalizing 40-100%. Finishing is always indeterminate.
     /// </summary>
     private async Task ProcessNormalizationAsync(NormalizationJob job, TableClient tableClient, CancellationToken cancellationToken, HubConnection? signalRConnection = null)
     {
@@ -187,7 +191,15 @@ public class NormalizationFunction
             // Download pending blob
             tempInputFile = await DownloadPendingBlobAsync(containerClient, pendingBlobPath, job, tableClient, Preparing, cancellationToken, signalRConnection);
 
-            // Analyze audio (progress mapped to 0-40%)
+            // Progress mapping: dynamic based on whether transcription is enabled
+            // With transcription:    Analyzing 0-30%, Normalizing 30-70%, Transcribing 70-100%
+            // Without transcription: Analyzing 0-40%, Normalizing 40-100%
+            var whisperEnabled = _transcriptionService.IsAvailable;
+            var analyzeEnd = whisperEnabled ? 30 : 40;
+            var normalizeStart = analyzeEnd;
+            var normalizeSize = whisperEnabled ? 40 : 60;
+
+            // Analyze audio
             var inputFileSize = new FileInfo(tempInputFile).Length;
             _logger.LogInformation("Starting analysis for {FileName} (input size: {Size} bytes)", job.FileName, inputFileSize);
             _telemetryClient.Flush();
@@ -208,7 +220,7 @@ public class NormalizationFunction
                     var mappedProgress = new ProgressUpdate
                     {
                         Stage = Analyzing,
-                        ProgressPercent = (int)Math.Floor(progress.ProgressPercent * 0.4),
+                        ProgressPercent = (int)Math.Floor(progress.ProgressPercent * analyzeEnd / 100.0),
                         Message = progress.Message,
                         CurrentPosition = progress.CurrentPosition,
                         TotalDuration = progress.TotalDuration
@@ -232,14 +244,14 @@ public class NormalizationFunction
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
                 Stage = Analyzing,
-                ProgressPercent = 40,
+                ProgressPercent = analyzeEnd,
                 Message = "Analysis complete"
             }, progressMode, signalRConnection);
 
             _logger.LogInformation("Analysis complete for {FileName}: {InputLufs} LUFS, duration {Duration}",
                 job.FileName, analysisResult.Analysis.InputI, analysisResult.Duration);
 
-            // Normalize audio (progress mapped to 40-100%)
+            // Normalize audio
             _logger.LogInformation("Starting normalization for {FileName}", job.FileName);
             _telemetryClient.Flush();
 
@@ -261,7 +273,7 @@ public class NormalizationFunction
                     var mappedProgress = new ProgressUpdate
                     {
                         Stage = Normalizing,
-                        ProgressPercent = 40 + (int)Math.Floor(progress.ProgressPercent * 0.6),
+                        ProgressPercent = normalizeStart + (int)Math.Floor(progress.ProgressPercent * normalizeSize / 100.0),
                         Message = progress.Message,
                         CurrentPosition = progress.CurrentPosition,
                         TotalDuration = progress.TotalDuration
@@ -285,7 +297,7 @@ public class NormalizationFunction
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
                 Stage = Normalizing,
-                ProgressPercent = 100,
+                ProgressPercent = normalizeStart + normalizeSize,
                 Message = "Normalization complete"
             }, progressMode, signalRConnection);
 
@@ -293,6 +305,49 @@ public class NormalizationFunction
             var mediaInfo = await FFProbe.AnalyseAsync(normalizedFile, cancellationToken: cancellationToken);
             var duration = mediaInfo.Duration;
             var normalizedFileSize = new FileInfo(normalizedFile).Length;
+
+            // Transcribe audio (fault-tolerant)
+            var transcribeStart = normalizeStart + normalizeSize;
+            var transcribeSize = 100 - transcribeStart;
+            TranscriptStatus? transcriptStatus = null;
+            string? vttContent = null;
+
+            if (_transcriptionService.IsAvailable)
+            {
+                try
+                {
+                    var transcribeLastUpdate = DateTime.MinValue;
+                    vttContent = await _transcriptionService.TranscribeAsync(normalizedFile, progress =>
+                    {
+                        var now = DateTime.UtcNow;
+                        if (now - transcribeLastUpdate < progressThrottle)
+                        {
+                            return;
+                        }
+                        transcribeLastUpdate = now;
+
+                        var mappedPercent = transcribeStart + (int)Math.Floor(progress.ProgressPercent * transcribeSize / 100.0);
+                        _ = UpdateProgressAsync(tableClient, job.JobId, new()
+                        {
+                            Stage = Transcribing,
+                            ProgressPercent = mappedPercent,
+                            Message = progress.Message
+                        }, progressMode, signalRConnection).ContinueWith(t => _logger.LogError(t.Exception, "Transcription progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
+                    }, cancellationToken);
+
+                    transcriptStatus = vttContent != null ? TranscriptStatus.Available : TranscriptStatus.Failed;
+                    _logger.LogInformation("Transcription {Status} for job {JobId}", transcriptStatus, job.JobId);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Transcription failed for job {JobId}, publishing without transcript", job.JobId);
+                    transcriptStatus = TranscriptStatus.Failed;
+                }
+            }
 
             // Upload normalized file
             await UpdateProgressAsync(tableClient, job.JobId, new()
@@ -339,6 +394,16 @@ public class NormalizationFunction
                 Message = "Almost done"
             }, progressMode, signalRConnection);
 
+            // Upload transcript blob if available
+            if (vttContent != null)
+            {
+                var transcriptBlobPath = $"{job.FeedId}/transcripts/{job.EpisodeId}.vtt";
+                var transcriptBlob = containerClient.GetBlobClient(transcriptBlobPath);
+                await using var vttStream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(vttContent));
+                await transcriptBlob.UploadAsync(vttStream, overwrite: true, cancellationToken);
+                _logger.LogInformation("Uploaded transcript for episode {EpisodeId}", job.EpisodeId);
+            }
+
             // Create episode entry
             var episode = new Episode
             {
@@ -352,7 +417,8 @@ public class NormalizationFunction
                 Duration = duration,
                 PublishedDate = job.PublishedDate,
                 Source = job.Source,
-                UploadedAt = DateTime.UtcNow
+                UploadedAt = DateTime.UtcNow,
+                TranscriptStatus = transcriptStatus
             };
 
             await UpdateProgressAsync(tableClient, job.JobId, new()

@@ -18,6 +18,13 @@ public enum NormalizationStage
     /// </summary>
     Downloading = 10,
 
+    /// <summary>
+    /// Transcribing audio via Whisper STT.
+    /// Explicit value to leave gap after Downloading = 10.
+    /// Completed/Failed/Cancelled auto-assign after this (16/17/18).
+    /// </summary>
+    Transcribing = 15,
+
     Completed,
     Failed,
     Cancelled

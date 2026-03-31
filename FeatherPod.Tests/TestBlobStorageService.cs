@@ -239,6 +239,34 @@ public class TestBlobStorageService : IBlobStorageService
         await Task.CompletedTask;
     }
 
+    public async Task UploadTranscriptAsync(string feedId, string episodeId, string vttContent)
+    {
+        var transcriptDir = Path.Combine(_rootPath, feedId, "transcripts");
+        Directory.CreateDirectory(transcriptDir);
+        await File.WriteAllTextAsync(Path.Combine(transcriptDir, $"{episodeId}.vtt"), vttContent);
+    }
+
+    public async Task<Stream?> DownloadTranscriptAsync(string feedId, string episodeId)
+    {
+        var filePath = Path.Combine(_rootPath, feedId, "transcripts", $"{episodeId}.vtt");
+        if (!File.Exists(filePath))
+        {
+            return await Task.FromResult<Stream?>(null);
+        }
+
+        return File.OpenRead(filePath);
+    }
+
+    public async Task DeleteTranscriptAsync(string feedId, string episodeId)
+    {
+        var filePath = Path.Combine(_rootPath, feedId, "transcripts", $"{episodeId}.vtt");
+        if (File.Exists(filePath))
+        {
+            File.Delete(filePath);
+        }
+        await Task.CompletedTask;
+    }
+
     public async Task RenameFeedAsync(string oldFeedId, string newFeedId)
     {
         var oldPath = Path.Combine(_rootPath, oldFeedId);

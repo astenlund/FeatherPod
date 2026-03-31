@@ -560,6 +560,31 @@ class Program
             .Produces(404)
             .Produces(416);
 
+        // Transcript file serving
+        app.MapGet("/{feedId}/transcripts/{episodeId}.vtt", async (string feedId, string episodeId, IBlobStorageService service) =>
+            {
+                if (!InputValidation.IsValidFeedId(feedId))
+                {
+                    return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+                }
+
+                if (!InputValidation.IsValidEpisodeId(episodeId))
+                {
+                    return Results.BadRequest(new { error = "Invalid episode ID format" });
+                }
+
+                var stream = await service.DownloadTranscriptAsync(feedId, episodeId);
+                if (stream == null)
+                {
+                    return Results.NotFound();
+                }
+
+                return Results.Stream(stream, "text/vtt");
+            })
+            .WithName("GetTranscript")
+            .Produces(200)
+            .Produces(404);
+
         app.Run();
     }
 

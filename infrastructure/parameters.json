@@ -37,6 +37,12 @@
     },
     "openAiAccountName": {
       "value": "featherpod-openai"
+    },
+    "llmModelName": {
+      "value": "gpt-4.1-mini"
+    },
+    "llmModelVersion": {
+      "value": "2025-04-14"
     }
   }
 }
