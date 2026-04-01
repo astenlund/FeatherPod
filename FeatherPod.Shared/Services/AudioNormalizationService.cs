@@ -436,7 +436,7 @@ public partial class AudioNormalizationService : IAudioNormalizationService
                     progressCallback(new()
                     {
                         Stage = NormalizationStage.Normalizing,
-                        ProgressPercent = (int)percent,
+                        ProgressPercent = percent,
                         Message = "Pass 2: Applying normalization",
                         CurrentPosition = currentPosition,
                         TotalDuration = totalDuration

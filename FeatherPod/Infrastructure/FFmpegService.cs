@@ -313,7 +313,7 @@ internal static partial class FFmpegService
                     progressCallback(new()
                     {
                         Stage = NormalizationStage.Normalizing,
-                        ProgressPercent = (int)percent,
+                        ProgressPercent = percent,
                         Message = "Applying normalization",
                         CurrentPosition = currentPosition,
                         TotalDuration = duration

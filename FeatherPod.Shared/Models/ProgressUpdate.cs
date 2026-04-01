@@ -7,7 +7,7 @@ public record ProgressUpdate
 {
     required public NormalizationStage Stage { get; init; }
 
-    required public int ProgressPercent { get; init; }
+    required public double ProgressPercent { get; init; }
 
     required public string Message { get; init; }
 

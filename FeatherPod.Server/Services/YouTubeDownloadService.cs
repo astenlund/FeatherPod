@@ -267,7 +267,7 @@ public class YouTubeDownloadService : BackgroundService
                 lastUpdate = DateTime.UtcNow;
 
                 // Map yt-dlp 0-100% to job 5-90%
-                var jobPercent = 5 + (int)(percent * 0.85);
+                var jobPercent = 5 + percent * 0.85;
                 var message = $"Downloading... {percent:F0}%";
 
                 _ = Task.Run(async () =>
@@ -292,7 +292,7 @@ public class YouTubeDownloadService : BackgroundService
     private async Task UpdateProgressAsync(
         YouTubeDownloadJob job,
         NormalizationStage stage,
-        int progressPercent,
+        double progressPercent,
         string message,
         CancellationToken cancellationToken,
         bool isTerminal = false)

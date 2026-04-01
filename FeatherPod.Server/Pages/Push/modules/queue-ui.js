@@ -6,19 +6,17 @@ let onRemoveFromQueue = null;
 let onCancelEntry = null;
 let onRetryEntry = null;
 let onDismissEntry = null;
-let getActiveUploadId = null;
 let getUploadQueue = null;
 
 /**
  * Register callbacks from the orchestrator/queue module.
  * Called once during init to wire up action button handlers.
  */
-export function registerQueueCallbacks({ removeFromQueue, cancelEntry, retryEntry, dismissEntry, getActiveId, getQueue }) {
+export function registerQueueCallbacks({ removeFromQueue, cancelEntry, retryEntry, dismissEntry, getQueue }) {
     onRemoveFromQueue = removeFromQueue;
     onCancelEntry = cancelEntry;
     onRetryEntry = retryEntry;
     onDismissEntry = dismissEntry;
-    getActiveUploadId = getActiveId;
     getUploadQueue = getQueue;
 }
 
@@ -72,7 +70,7 @@ export function createQueueItemElement(entry) {
     if (entry.status === 'uploading') {
         progressBar.style.width = entry.progress + '%';
     } else if (entry.status === 'normalizing') {
-        if (entry.stage && !['Analyzing', 'Normalizing', 'Downloading', 'Transcribing'].includes(entry.stage)) {
+        if (entry.stage && !['Analyzing', 'Normalizing', 'Downloading'].includes(entry.stage)) {
             progressBar.classList.add('indeterminate');
         } else {
             progressBar.style.width = entry.progress + '%';
@@ -221,6 +219,7 @@ export function updateQueueItemInDOM(entry) {
         return;
     }
     existingEl.replaceWith(createQueueItemElement(entry));
+    progressAnimator.rebindProgressBar(entry.id, getEntryProgressBar(entry.id));
 }
 
 export function updateQueueItemProgress(entry) {
@@ -242,8 +241,5 @@ export function getEntryProgressBar(entryId) {
 }
 
 export function rebindProgressAnimator() {
-    const activeId = getActiveUploadId();
-    if (activeId && progressAnimator.progressBar) {
-        progressAnimator.progressBar = getEntryProgressBar(activeId);
-    }
+    progressAnimator.rebindAllProgressBars(getEntryProgressBar);
 }

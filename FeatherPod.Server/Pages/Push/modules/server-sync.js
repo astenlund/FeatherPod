@@ -3,6 +3,7 @@ import { isActiveWork, tryParseJson } from './utils.js';
 import { getApiKey } from './auth.js';
 import { getQueue, getActiveUploadId, generateEntryId, addFilesToQueue, monitorEntryNormalizationInBackground, saveQueueState, checkAllComplete } from './queue.js';
 import { renderQueueList, updateQueueItemInDOM, removeQueueItemFromDOM, rebindProgressAnimator } from './queue-ui.js';
+import { progressAnimator } from './progress.js';
 import { showState, getCurrentState, updateQueueTitle } from './state.js';
 import { refreshHistoryList, initHistorySection, collapseHistoryImmediate } from './history.js';
 import { syncPushSession } from './notifications.js';
@@ -187,6 +188,7 @@ export function mergeServerJobs(serverJobs) {
             stale.eventSource.close();
             stale.eventSource = null;
         }
+        progressAnimator.removeSlot(stale.id);
         removeQueueItemFromDOM(stale.id);
         uploadQueue.splice(uploadQueue.indexOf(stale), 1);
         if (stale._resolveMonitor) {
@@ -214,6 +216,7 @@ export function mergeServerJobs(serverJobs) {
                 existing.eventSource = null;
             }
             existing.status = 'cancelled';
+            progressAnimator.removeSlot(existing.id);
             removeQueueItemFromDOM(existing.id);
             uploadQueue.splice(uploadQueue.indexOf(existing), 1);
             if (existing._resolveMonitor) {
@@ -241,6 +244,7 @@ export function mergeServerJobs(serverJobs) {
                 existing._resolveMonitor();
                 existing._resolveMonitor = null;
             }
+            progressAnimator.removeSlot(existing.id);
             changedEntryIds.add(existing.id);
         } else if (existing.status === 'normalizing') {
             existing.title = serverJob.title || existing.title;
@@ -269,10 +273,12 @@ export function mergeServerJobs(serverJobs) {
             if (existing.localSourceIndex != null) {
                 notifyLocalSourceUploaded(existing.localSourceIndex);
             }
+            progressAnimator.removeSlot(existing.id);
             changedEntryIds.add(existing.id);
         } else if (existing.status === 'failed' && serverStatus === 'Cancelled') {
             // Server says cancelled - remove from queue
             existing.status = 'cancelled';
+            progressAnimator.removeSlot(existing.id);
             removeQueueItemFromDOM(existing.id);
             uploadQueue.splice(uploadQueue.indexOf(existing), 1);
             removedEntries = true;
@@ -308,7 +314,6 @@ export function mergeServerJobs(serverJobs) {
                 fileName: serverJob.fileName || 'Unknown',
                 title: serverJob.title || null,
                 validationError: false,
-                backgroundMonitoring: false,
                 startedAt: serverJob.queuedAt ? new Date(serverJob.queuedAt).getTime() : Date.now(),
                 _resolveMonitor: null
             });

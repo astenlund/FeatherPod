@@ -57,7 +57,7 @@ public class JobStatusEntity : ITableEntity
     /// <summary>
     /// Progress percentage within current stage (0-100).
     /// </summary>
-    public int? ProgressPercent { get; set; }
+    public double? ProgressPercent { get; set; }
 
     /// <summary>
     /// Human-readable progress message.

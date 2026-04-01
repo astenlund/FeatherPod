@@ -90,7 +90,6 @@ if (navigator.serviceWorker) {
  * @property {string|null} title - Episode title (from server 202 response or progress updates)
  * @property {number|null} localSourceIndex - File index on LocalFileServer (null for browser-selected files)
  * @property {boolean} validationError - Whether failure is due to validation (no retry)
- * @property {boolean} backgroundMonitoring - Whether normalization is being monitored in the background
  * @property {number} startedAt - Epoch ms when entry was created (for 1-hour localStorage filtering)
  * @property {Function|null} _resolveMonitor - Internal: resolve function for normalization promise
  */
@@ -134,7 +133,6 @@ registerYouTubeJobCallback((jobResponse) => {
         fileName: jobResponse.fileName || 'YouTube import',
         title: jobResponse.title || null,
         validationError: false,
-        backgroundMonitoring: false,
         startedAt: Date.now(),
         _resolveMonitor: null,
         source: 'youtube'
@@ -206,28 +204,28 @@ function applyDevState(devState) {
                     episode: { id: 'abc123def456', title: 'Morning Thoughts on Architecture', fileName: 'morning-thoughts.m4a', fileSize: 15728640, duration: '0:42:15', publishedDate: '2026-03-22T08:00:00Z' },
                     error: null, xhr: null, eventSource: null,
                     fileSize: 15728640, fileName: 'morning-thoughts.m4a',
-                    validationError: false, backgroundMonitoring: false, startedAt: Date.now() - 300000, _resolveMonitor: null,
+                    validationError: false, startedAt: Date.now() - 300000, _resolveMonitor: null,
                 },
                 {
                     id: 'dev-2', file: null, status: 'uploading', progress: 45,
                     stage: null, jobId: null, episodeId: null, episode: null,
                     error: null, xhr: null, eventSource: null,
                     fileSize: 52428800, fileName: 'interview-with-special-guest.m4a',
-                    validationError: false, backgroundMonitoring: false, startedAt: Date.now() - 60000, _resolveMonitor: null,
+                    validationError: false, startedAt: Date.now() - 60000, _resolveMonitor: null,
                 },
                 {
                     id: 'dev-3', file: null, status: 'failed', progress: 0,
                     stage: null, jobId: null, episodeId: null, episode: null,
                     error: 'File exceeds maximum size of 200 MB', xhr: null, eventSource: null,
                     fileSize: 209715200, fileName: 'uncompressed-recording.wav',
-                    validationError: true, backgroundMonitoring: false, startedAt: Date.now() - 120000, _resolveMonitor: null,
+                    validationError: true, startedAt: Date.now() - 120000, _resolveMonitor: null,
                 },
                 {
                     id: 'dev-4', file: null, status: 'queued', progress: 0,
                     stage: null, jobId: null, episodeId: null, episode: null,
                     error: null, xhr: null, eventSource: null,
                     fileSize: 8388608, fileName: 'quick-update.m4a',
-                    validationError: false, backgroundMonitoring: false, startedAt: Date.now() - 10000, _resolveMonitor: null,
+                    validationError: false, startedAt: Date.now() - 10000, _resolveMonitor: null,
                 },
             );
             const hasActive = queue.some(e => isActiveWork(e));
@@ -659,9 +657,8 @@ window.addEventListener('beforeunload', () => {
 
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-        if (progressAnimator.currentStage) {
-            progressAnimator.awaitingFirstUpdate = true;
-            progressAnimator.isRestoring = true;
+        if (progressAnimator.hasActiveSlots()) {
+            progressAnimator.setRestoring();
         }
         if (isWakeLockTogglePressed()) {
             acquireWakeLock();

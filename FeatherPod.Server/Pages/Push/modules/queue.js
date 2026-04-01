@@ -153,7 +153,6 @@ export function addFilesToQueue(files) {
             title: null,
             localSourceIndex: file.localSourceIndex ?? null,
             validationError: !valid,
-            backgroundMonitoring: false,
             startedAt: Date.now(),
             _resolveMonitor: null
         };
@@ -256,6 +255,7 @@ export async function dismissEntry(entryId) {
 
     uploadQueue.splice(index, 1);
     removeQueueItemFromDOM(entryId);
+    progressAnimator.removeSlot(entryId);
 
     saveQueueState();
     checkAllComplete();
@@ -339,14 +339,11 @@ export function checkAllComplete() {
 
 /**
  * Fire-and-forget wrapper around monitorEntryNormalization for background monitoring.
- * Sets entry.backgroundMonitoring = true so progressAnimator is not used.
  * When the promise resolves: updates DOM, saves state, calls checkAllComplete().
  * @param {QueueEntry} entry
  */
 export function monitorEntryNormalizationInBackground(entry) {
-    entry.backgroundMonitoring = true;
     monitorEntryNormalization(entry).then(() => {
-        entry.backgroundMonitoring = false;
         if (uploadQueue.includes(entry)) {
             updateQueueItemInDOM(entry);
         }
@@ -367,7 +364,7 @@ async function processEntry(entry) {
     saveQueueState();
 
     const progressBar = getEntryProgressBar(entry.id);
-    progressAnimator.startWithAssumption('Uploading', progressBar, entry.fileSize);
+    progressAnimator.startWithAssumption('Uploading', progressBar, entry.id, entry.fileSize);
 
     const formData = new FormData();
     formData.append('file', entry.file);
@@ -381,26 +378,29 @@ async function processEntry(entry) {
                 if (e.lengthComputable) {
                     const percent = Math.round((e.loaded / e.total) * 100);
                     entry.progress = percent;
-                    progressAnimator.setTarget(percent, 'Uploading');
+                    progressAnimator.setTarget(percent, 'Uploading', entry.id);
                     updateQueueItemProgress(entry);
                 }
             });
 
             xhr.onload = () => {
                 entry.xhr = null;
-                progressAnimator.reset();
+                progressAnimator.reset(entry.id);
+                progressAnimator.removeSlot(entry.id);
                 resolve({ status: xhr.status, body: xhr.responseText });
             };
 
             xhr.onerror = () => {
                 entry.xhr = null;
-                progressAnimator.reset();
+                progressAnimator.reset(entry.id);
+                progressAnimator.removeSlot(entry.id);
                 reject(new Error('Network error'));
             };
 
             xhr.onabort = () => {
                 entry.xhr = null;
-                progressAnimator.reset();
+                progressAnimator.reset(entry.id);
+                progressAnimator.removeSlot(entry.id);
                 reject(new DOMException('Upload cancelled', 'AbortError'));
             };
 
@@ -451,6 +451,7 @@ async function processEntry(entry) {
     } catch (err) {
         if (err.name === 'AbortError') {
             removeQueueItemFromDOM(entry.id);
+            progressAnimator.removeSlot(entry.id);
             uploadQueue.splice(uploadQueue.indexOf(entry), 1);
 
             saveQueueState();
@@ -485,49 +486,30 @@ export function updateEntryFromJobStatus(entry, job) {
     }
 
     entry.stage = job.stage;
-    const stagesWithProgress = ['Analyzing', 'Normalizing', 'Downloading', 'Transcribing'];
+    const stagesWithProgress = ['Analyzing', 'Normalizing', 'Downloading'];
     const isProgressStage = stagesWithProgress.includes(job.stage);
     const progressBar = getEntryProgressBar(entry.id);
 
-    if (entry.backgroundMonitoring) {
-        if (isProgressStage) {
-            if (progressBar) {
-                progressBar.classList.remove('indeterminate');
-            }
-            if (job.progressPercent != null) {
-                entry.progress = job.progressPercent;
-                if (progressBar) {
-                    progressBar.style.width = job.progressPercent + '%';
-                }
-            }
-        } else {
-            if (progressBar) {
-                progressBar.classList.add('indeterminate');
-                progressBar.style.width = '';
-            }
+    if (isProgressStage) {
+        if (progressBar) {
+            progressBar.classList.remove('indeterminate');
         }
+
+        if (progressAnimator.getCurrentStage(entry.id) !== job.stage) {
+            progressAnimator.startWithAssumption(job.stage, progressBar, entry.id);
+        }
+
+        if (job.progressPercent != null) {
+            entry.progress = job.progressPercent;
+            progressAnimator.setTarget(job.progressPercent, job.stage, entry.id);
+        }
+
+        progressAnimator.start(progressBar, entry.id);
     } else {
-        if (isProgressStage) {
-            if (progressBar) {
-                progressBar.classList.remove('indeterminate');
-            }
-
-            if (progressAnimator.currentStage !== job.stage) {
-                progressAnimator.startWithAssumption(job.stage, progressBar);
-            }
-
-            if (job.progressPercent != null) {
-                entry.progress = job.progressPercent;
-                progressAnimator.setTarget(job.progressPercent, job.stage);
-            }
-
-            progressAnimator.start(progressBar);
-        } else {
-            progressAnimator.reset();
-            if (progressBar) {
-                progressBar.classList.add('indeterminate');
-                progressBar.style.width = '';
-            }
+        progressAnimator.reset(entry.id);
+        if (progressBar) {
+            progressBar.classList.add('indeterminate');
+            progressBar.style.width = '';
         }
     }
 }
@@ -547,10 +529,8 @@ function monitorEntryNormalization(entry) {
             progressBar.classList.add('indeterminate');
             progressBar.style.width = '';
         }
-        if (!entry.backgroundMonitoring) {
-            progressAnimator.reset();
-            progressAnimator.currentFileSize = entry.fileSize;
-        }
+        progressAnimator.reset(entry.id);
+        progressAnimator.setFileSize(entry.id, entry.fileSize);
 
         const sseUrl = '/api/jobs/' + entry.jobId + '/progress';
 
@@ -600,6 +580,7 @@ function monitorEntryNormalization(entry) {
                     jobFinished = true;
                     eventSource.close();
                     entry.status = 'cancelled';
+                    progressAnimator.removeSlot(entry.id);
                     removeQueueItemFromDOM(entry.id);
                     uploadQueue.splice(uploadQueue.indexOf(entry), 1);
 
@@ -620,6 +601,7 @@ function monitorEntryNormalization(entry) {
 
             if (lastStatus?.status === 'Cancelled') {
                 entry.status = 'cancelled';
+                progressAnimator.removeSlot(entry.id);
                 removeQueueItemFromDOM(entry.id);
                 uploadQueue.splice(uploadQueue.indexOf(entry), 1);
 
@@ -649,6 +631,7 @@ function monitorEntryNormalization(entry) {
                 }
             }
 
+            progressAnimator.removeSlot(entry.id);
             updateQueueItemInDOM(entry);
             finishMonitoring();
         });
@@ -664,6 +647,7 @@ function monitorEntryNormalization(entry) {
             const data = tryParseJson(e.data);
             entry.status = 'failed';
             entry.error = data?.error || 'An error occurred';
+            progressAnimator.removeSlot(entry.id);
             updateQueueItemInDOM(entry);
             finishMonitoring();
         });
@@ -717,6 +701,7 @@ async function pollEntryNormalization(entry) {
                 }
                 // Stop polling but don't mark as failed - mergeServerJobs on
                 // visibility change will resolve the actual status from the server
+                progressAnimator.removeSlot(entry.id);
 
                 return;
             }
@@ -737,6 +722,7 @@ async function pollEntryNormalization(entry) {
                 if (episode) {
                     saveToLocalHistory(episode);
                 }
+                progressAnimator.removeSlot(entry.id);
                 updateQueueItemInDOM(entry);
                 refreshHistoryList(episode?.id);
 
@@ -747,11 +733,13 @@ async function pollEntryNormalization(entry) {
                 if (job.authRequired) {
                     showYouTubeCookieDialog();
                 }
+                progressAnimator.removeSlot(entry.id);
                 updateQueueItemInDOM(entry);
 
                 return;
             } else if (job.status === 'Cancelled') {
                 entry.status = 'cancelled';
+                progressAnimator.removeSlot(entry.id);
                 removeQueueItemFromDOM(entry.id);
                 uploadQueue.splice(uploadQueue.indexOf(entry), 1);
 
@@ -774,6 +762,7 @@ async function pollEntryNormalization(entry) {
             }
             // Stop polling but don't mark as failed - mergeServerJobs on
             // visibility change will resolve the actual status from the server
+            progressAnimator.removeSlot(entry.id);
 
             return;
         }
@@ -814,9 +803,8 @@ export async function cancelEntry(entryId) {
         }
 
         entry.status = 'cancelled';
-        if (!entry.backgroundMonitoring) {
-            progressAnimator.reset();
-        }
+        progressAnimator.reset(entry.id);
+        progressAnimator.removeSlot(entry.id);
         removeQueueItemFromDOM(entryId);
         uploadQueue.splice(uploadQueue.indexOf(entry), 1);
 
@@ -920,6 +908,7 @@ export function clearTerminalEntries() {
             entry._resolveMonitor = null;
         }
         removeQueueItemFromDOM(entry.id);
+        progressAnimator.removeSlot(entry.id);
         const idx = uploadQueue.indexOf(entry);
         if (idx !== -1) {
             uploadQueue.splice(idx, 1);
@@ -1043,7 +1032,6 @@ export function initQueue() {
         cancelEntry,
         retryEntry,
         dismissEntry,
-        getActiveId: getActiveUploadId,
         getQueue,
     });
 }

@@ -192,12 +192,10 @@ public class NormalizationFunction
             tempInputFile = await DownloadPendingBlobAsync(containerClient, pendingBlobPath, job, tableClient, Preparing, cancellationToken, signalRConnection);
 
             // Progress mapping: dynamic based on whether transcription is enabled
-            // With transcription:    Analyzing 0-30%, Normalizing 30-70%, Transcribing 70-100%
-            // Without transcription: Analyzing 0-40%, Normalizing 40-100%
-            var whisperEnabled = _transcriptionService.IsAvailable;
-            var analyzeEnd = whisperEnabled ? 30 : 40;
+            // Analyzing 0-35%, Normalizing 35-100%. Transcribing and Finishing are indeterminate.
+            var analyzeEnd = 35;
             var normalizeStart = analyzeEnd;
-            var normalizeSize = whisperEnabled ? 40 : 60;
+            var normalizeSize = 100 - analyzeEnd;
 
             // Analyze audio
             var inputFileSize = new FileInfo(tempInputFile).Length;
@@ -220,7 +218,7 @@ public class NormalizationFunction
                     var mappedProgress = new ProgressUpdate
                     {
                         Stage = Analyzing,
-                        ProgressPercent = (int)Math.Floor(progress.ProgressPercent * analyzeEnd / 100.0),
+                        ProgressPercent = progress.ProgressPercent * analyzeEnd / 100.0,
                         Message = progress.Message,
                         CurrentPosition = progress.CurrentPosition,
                         TotalDuration = progress.TotalDuration
@@ -273,7 +271,7 @@ public class NormalizationFunction
                     var mappedProgress = new ProgressUpdate
                     {
                         Stage = Normalizing,
-                        ProgressPercent = normalizeStart + (int)Math.Floor(progress.ProgressPercent * normalizeSize / 100.0),
+                        ProgressPercent = normalizeStart + progress.ProgressPercent * normalizeSize / 100.0,
                         Message = progress.Message,
                         CurrentPosition = progress.CurrentPosition,
                         TotalDuration = progress.TotalDuration
@@ -326,7 +324,7 @@ public class NormalizationFunction
                         }
                         transcribeLastUpdate = now;
 
-                        var mappedPercent = transcribeStart + (int)Math.Floor(progress.ProgressPercent * transcribeSize / 100.0);
+                        var mappedPercent = transcribeStart + progress.ProgressPercent * transcribeSize / 100.0;
                         _ = UpdateProgressAsync(tableClient, job.JobId, new()
                         {
                             Stage = Transcribing,
@@ -363,7 +361,7 @@ public class NormalizationFunction
             var uploadProgress = new Progress<long>(bytesUploaded =>
             {
                 var now = DateTime.UtcNow;
-                var percent = normalizedFileSize > 0 ? (int)(bytesUploaded * 100 / normalizedFileSize) : 0;
+                var percent = normalizedFileSize > 0 ? (double)bytesUploaded * 100 / normalizedFileSize : 0.0;
                 if (percent < 100 && now - uploadLastUpdate < progressThrottle)
                 {
                     return;
@@ -500,7 +498,7 @@ public class NormalizationFunction
         var downloadProgress = new Progress<long>(bytesDownloaded =>
         {
             var now = DateTime.UtcNow;
-            var percent = downloadSize > 0 ? (int)(bytesDownloaded * 100 / downloadSize) : 0;
+            var percent = downloadSize > 0 ? (double)bytesDownloaded * 100 / downloadSize : 0.0;
             if (percent < 100 && now - downloadLastUpdate < progressThrottle)
             {
                 return;

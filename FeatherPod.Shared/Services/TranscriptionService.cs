@@ -53,12 +53,14 @@ public class TranscriptionService : ITranscriptionService
             return null;
         }
 
-        var fileSize = new FileInfo(audioPath).Length;
         var extension = Path.GetExtension(audioPath);
+        var totalDuration = await GetAudioDurationAsync(audioPath, cancellationToken);
+        var chunkDuration = TimeSpan.FromMinutes(_chunkMinutes);
 
-        if (fileSize <= MaxWhisperFileSize)
+        if (totalDuration <= TimeSpan.Zero || totalDuration <= chunkDuration * 1.5)
         {
-            _logger.LogDebug("File under 25 MB ({Size} bytes), transcribing without chunking", fileSize);
+            var fileSize = new FileInfo(audioPath).Length;
+            _logger.LogDebug("Audio {Duration} fits in a single chunk ({Size} bytes), transcribing without chunking", totalDuration, fileSize);
             progressCallback?.Invoke(new()
             {
                 Stage = NormalizationStage.Transcribing,
@@ -78,21 +80,13 @@ public class TranscriptionService : ITranscriptionService
             return vtt;
         }
 
-        return await TranscribeWithChunkingAsync(audioPath, extension, progressCallback, cancellationToken);
+        return await TranscribeWithChunkingAsync(audioPath, extension, totalDuration, progressCallback, cancellationToken);
     }
 
-    private async Task<string?> TranscribeWithChunkingAsync(string audioPath, string extension, Action<ProgressUpdate>? progressCallback, CancellationToken cancellationToken)
+    private async Task<string?> TranscribeWithChunkingAsync(string audioPath, string extension, TimeSpan totalDuration, Action<ProgressUpdate>? progressCallback, CancellationToken cancellationToken)
     {
         var chunkDuration = TimeSpan.FromMinutes(_chunkMinutes);
         var overlap = TimeSpan.FromSeconds(_overlapSeconds);
-
-        var totalDuration = await GetAudioDurationAsync(audioPath, cancellationToken);
-        if (totalDuration <= TimeSpan.Zero)
-        {
-            _logger.LogWarning("Could not determine audio duration for {Path}", audioPath);
-
-            return null;
-        }
 
         var chunks = CalculateChunks(totalDuration, chunkDuration, overlap);
         _logger.LogInformation("Splitting {Duration} audio into {Count} chunks ({ChunkMin}min, {OverlapSec}s overlap)", totalDuration, chunks.Count, _chunkMinutes, _overlapSeconds);
@@ -115,12 +109,15 @@ public class TranscriptionService : ITranscriptionService
                 await SplitAudioChunkAsync(audioPath, chunkPath, chunk.Start, chunk.Duration, cancellationToken);
             }
 
-            // Transcribe each chunk sequentially
+            // Transcribe each chunk sequentially (progress weighted by owned duration)
+            var totalOwnedSeconds = totalDuration.TotalSeconds;
             for (var i = 0; i < chunks.Count; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var progressPercent = chunks.Count > 1 ? (i * 100) / chunks.Count : 0;
+                var progressPercent = totalOwnedSeconds > 0
+                    ? (chunks[i].OwnedStart.TotalSeconds / totalOwnedSeconds) * 100
+                    : 0.0;
                 progressCallback?.Invoke(new()
                 {
                     Stage = NormalizationStage.Transcribing,
@@ -262,7 +259,7 @@ public class TranscriptionService : ITranscriptionService
             var start = isFirst ? TimeSpan.Zero : position - overlap;
             var ownedStart = position;
             var remaining = totalDuration - position;
-            var ownedEnd = remaining <= chunkDuration ? totalDuration : position + chunkDuration;
+            var ownedEnd = remaining <= chunkDuration * 1.5 ? totalDuration : position + chunkDuration;
             var end = ownedEnd == totalDuration ? totalDuration : ownedEnd + overlap;
             var duration = end - start;
 

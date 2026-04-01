@@ -60,7 +60,7 @@ public record JobStatusResponse
     /// <summary>
     /// Progress percentage (0-100).
     /// </summary>
-    public int? ProgressPercent { get; init; }
+    public double? ProgressPercent { get; init; }
 
     /// <summary>
     /// Detailed progress message.

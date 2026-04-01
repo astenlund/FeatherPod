@@ -2,35 +2,72 @@ import { PROGRESS_SMOOTHING, SHOW_GHOST, VELOCITY_OVERRIDES } from './config.js'
 import './utils.js'; // Number.prototype.formatBytes
 
 /**
- * Singleton progress animator with velocity prediction.
+ * Multi-entry progress animator with velocity prediction.
+ * Manages per-entry animation slots via a Map<entryId, slotState>.
  * When PROGRESS_SMOOTHING is enabled, uses learned velocities and EMA
  * to produce smooth progress bar animation. When disabled, updates directly.
  *
- * Velocity learning: accumulates progress samples for 5 seconds (min 2 samples)
+ * Velocity learning: accumulates progress samples for 3 seconds (min 12 samples)
  * before updating the learned cold-start velocity via asymmetric EMA. Also tracks
  * overall stage velocity (persisted on stage end) for the restore path.
  * Learned velocities stored in localStorage as { coldStart, overall } per stage.
  */
+
+/** @returns {SlotState} A fresh slot state with zero/null/false defaults */
+function createSlot() {
+    return {
+        currentValue: 0,
+        targetValue: 0,
+        velocity: 0,
+        displayVelocity: 0,
+        acceleration: 0,
+        speedFactor: 1,
+        lastUpdateTime: 0,
+        stageStartTime: 0,
+        stageStartValue: 0,
+        progressBar: null,
+        ghostBar: null,
+        currentStage: null,
+        awaitingFirstUpdate: false,
+        isRestoring: false,
+        currentFileSize: 0,
+        sampleCount: 0,
+        coldStartLearned: false
+    };
+}
+
 export const progressAnimator = {
     DEFAULT_INITIAL_VELOCITIES: {
         'Uploading': 1024 * 1024,
-        'Analyzing': 100 * 1024,
-        'Normalizing': 100 * 1024,
-        'Downloading': 1024 * 1024,
-        'Transcribing': 100 * 1024
+        'Analyzing': 200 * 1024,
+        'Normalizing': 200 * 1024,
+        'Transcribing': 100 * 1024,
+        'Downloading': 1024 * 1024
     },
     MAX_INITIAL_VELOCITIES: {
         'Uploading': 10 * 1024 * 1024,
         'Downloading': 10 * 1024 * 1024
     },
     LEARNED_INITIAL_VELOCITY_STORAGE_KEY: 'featherpod_learned_initial_velocity',
-    currentFileSize: 0,
+    /** @type {Map<string, SlotState>} */
+    slots: new Map(),
+    /** @type {number|null} Shared requestAnimationFrame ID */
+    animationId: null,
+    /** @type {number} Shared last frame timestamp */
+    lastFrameTime: 0,
 
-    getLearnedInitialVelocity(stage, { preferOverall = false } = {}) {
+    /**
+     * Get the learned initial velocity for a stage, reading file size from the slot.
+     * @param {string} stage
+     * @param {{ preferOverall?: boolean }} options
+     * @param {SlotState} slot
+     * @returns {{ velocity: number, wasClamped: boolean }}
+     */
+    getLearnedInitialVelocity(stage, { preferOverall = false } = {}, slot) {
         if (VELOCITY_OVERRIDES[stage] != null) {
             const bytesPerSec = VELOCITY_OVERRIDES[stage];
-            if (this.currentFileSize > 0) {
-                return { velocity: (bytesPerSec / this.currentFileSize) * 100, wasClamped: false };
+            if (slot.currentFileSize > 0) {
+                return { velocity: (bytesPerSec / slot.currentFileSize) * 100, wasClamped: false };
             }
 
             return { velocity: 1, wasClamped: false };
@@ -63,20 +100,27 @@ export const progressAnimator = {
             wasClamped = true;
         }
 
-        if (this.currentFileSize > 0) {
-            return { velocity: (bytesPerSec / this.currentFileSize) * 100, wasClamped };
+        if (slot.currentFileSize > 0) {
+            return { velocity: (bytesPerSec / slot.currentFileSize) * 100, wasClamped };
         }
 
         return { velocity: 1, wasClamped: false };
     },
 
-    updateLearnedInitialVelocity(stage, actualVelocity) {
-        if (this.currentFileSize <= 0 || actualVelocity < 0.1) {
+    /**
+     * Update the learned cold-start velocity for a stage.
+     * @param {string} stage
+     * @param {number} actualVelocity - In percent-per-second
+     * @param {SlotState} slot
+     * @returns {boolean}
+     */
+    updateLearnedInitialVelocity(stage, actualVelocity, slot) {
+        if (slot.currentFileSize <= 0 || actualVelocity < 0.1) {
             return false;
         }
 
         try {
-            const actualBytesPerSec = (actualVelocity / 100) * this.currentFileSize;
+            const actualBytesPerSec = (actualVelocity / 100) * slot.currentFileSize;
 
             const stored = localStorage.getItem(this.LEARNED_INITIAL_VELOCITY_STORAGE_KEY);
             const values = stored ? JSON.parse(stored) : {};
@@ -89,7 +133,7 @@ export const progressAnimator = {
                 currentBytesPerSec = entry.coldStart;
             }
 
-            const targetBytesPerSec = actualBytesPerSec * 0.8;
+            const targetBytesPerSec = actualBytesPerSec * 0.9;
             const alpha = targetBytesPerSec < currentBytesPerSec ? 0.8 : 0.2;
             const updatedBytesPerSec = currentBytesPerSec * (1 - alpha) + targetBytesPerSec * alpha;
 
@@ -112,22 +156,26 @@ export const progressAnimator = {
         }
     },
 
-    finalizeStageVelocity() {
-        if (this.currentStage == null || this.targetValue < 1 || this.currentFileSize <= 0) {
+    /**
+     * Finalize overall stage velocity and persist it. No-op if guards fail.
+     * @param {SlotState} slot
+     */
+    finalizeStageVelocity(slot) {
+        if (slot.currentStage == null || slot.targetValue < 1 || slot.currentFileSize <= 0 || slot.sampleCount < 2) {
             return;
         }
 
         const now = performance.now();
-        const elapsed = (now - this.stageStartTime) / 1000;
+        const elapsed = (now - slot.stageStartTime) / 1000;
         if (elapsed <= 0) {
             return;
         }
 
-        const stage = this.currentStage;
-        this.currentStage = null;
+        const stage = slot.currentStage;
+        slot.currentStage = null;
 
-        const velocityPctPerSec = this.targetValue / elapsed;
-        const overallBytesPerSec = (velocityPctPerSec / 100) * this.currentFileSize;
+        const velocityPctPerSec = (slot.targetValue - slot.stageStartValue) / elapsed;
+        const overallBytesPerSec = (velocityPctPerSec / 100) * slot.currentFileSize;
 
         try {
             const stored = localStorage.getItem(this.LEARNED_INITIAL_VELOCITY_STORAGE_KEY);
@@ -147,7 +195,7 @@ export const progressAnimator = {
             }
 
             // Same asymmetric EMA as cold-start: faster to decrease, slower to increase
-            const targetBytesPerSec = overallBytesPerSec * 0.8;
+            const targetBytesPerSec = overallBytesPerSec * 0.9;
             const alpha = targetBytesPerSec < currentOverall ? 0.8 : 0.2;
             const updatedOverall = currentOverall * (1 - alpha) + targetBytesPerSec * alpha;
 
@@ -167,244 +215,367 @@ export const progressAnimator = {
         }
     },
 
-    currentValue: 0,
-    targetValue: 0,
-    velocity: 0,
-    acceleration: 0,
-    displayVelocity: 0,
-    lastUpdateTime: 0,
-    lastFrameTime: 0,
-    stageStartTime: 0,
-    speedFactor: 1,
-    animationId: null,
-    progressBar: null,
-    ghostBar: null,
-    currentStage: null,
-    awaitingFirstUpdate: false,
-    isRestoring: false,
-    sampleCount: 0,
-    coldStartLearned: false,
+    /**
+     * Begin a new stage for an entry, optionally setting file size.
+     * @param {string} stage
+     * @param {HTMLElement} progressBar
+     * @param {string} entryId
+     * @param {number} [fileSize]
+     */
+    startWithAssumption(stage, progressBar, entryId, fileSize) {
+        let slot = this.slots.get(entryId) || createSlot();
 
-    startWithAssumption(stage, progressBar, fileSize) {
-        const wasRestoring = this.isRestoring;
-        this.finalizeStageVelocity();
-        this.reset();
-        if (fileSize != null) {
-            this.currentFileSize = fileSize;
+        if (slot.currentStage) {
+            this.finalizeStageVelocity(slot);
         }
+
+        const wasRestoring = slot.isRestoring;
+        const preservedFileSize = slot.currentFileSize;
+        const preservedCurrentValue = slot.currentValue;
+        const preservedTargetValue = slot.targetValue;
+
+        // Reset slot state (preserve progress position for continuous display across stages)
+        Object.assign(slot, createSlot());
+        slot.isRestoring = wasRestoring;
+        slot.currentFileSize = preservedFileSize;
+        slot.currentValue = preservedCurrentValue;
+        slot.targetValue = preservedTargetValue;
+
+        if (fileSize != null) {
+            slot.currentFileSize = fileSize;
+        }
+
         const now = performance.now();
-        this.currentStage = stage;
-        this.lastUpdateTime = now;
-        this.stageStartTime = now;
+        slot.currentStage = stage;
+        slot.lastUpdateTime = now;
+        slot.stageStartTime = now;
+        slot.stageStartValue = slot.targetValue;
+        this.slots.set(entryId, slot);
 
         if (!PROGRESS_SMOOTHING) {
-            this.progressBar = progressBar;
+            slot.progressBar = progressBar;
 
             return;
         }
 
         if (wasRestoring) {
-            this.progressBar = progressBar;
-            this.awaitingFirstUpdate = true;
-            this.isRestoring = true;
+            slot.progressBar = progressBar;
+            slot.awaitingFirstUpdate = true;
+            slot.isRestoring = true;
         } else {
-            const { velocity: learnedInitialVelocity, wasClamped } = this.getLearnedInitialVelocity(stage);
-            this.targetValue = learnedInitialVelocity;
-            this.velocity = learnedInitialVelocity;
-            this.displayVelocity = learnedInitialVelocity;
-            this.awaitingFirstUpdate = true;
-            const bytesPerSec = (learnedInitialVelocity / 100) * this.currentFileSize;
+            const { velocity: learnedInitialVelocity, wasClamped } = this.getLearnedInitialVelocity(stage, {}, slot);
+            if (slot.currentValue === 0) {
+                slot.targetValue = Math.min(learnedInitialVelocity * 1, 30);
+            }
+            slot.velocity = learnedInitialVelocity;
+            slot.displayVelocity = learnedInitialVelocity;
+            slot.awaitingFirstUpdate = true;
+            const bytesPerSec = (learnedInitialVelocity / 100) * slot.currentFileSize;
             const clampedSuffix = wasClamped ? ' (clamped)' : '';
             console.log(`[${stage}] Initial velocity: ${bytesPerSec.formatBytes(2, '/s')}${clampedSuffix}`);
-            this.start(progressBar);
+            this.start(progressBar, entryId);
         }
     },
 
-    setTarget(value, stage) {
+    /**
+     * Update target progress for an entry.
+     * @param {number} value - Progress percentage (0-100)
+     * @param {string} stage
+     * @param {string} entryId
+     */
+    setTarget(value, stage, entryId) {
+        const slot = this.slots.get(entryId);
+        if (!slot) {
+            return;
+        }
+
         if (!PROGRESS_SMOOTHING) {
-            if (this.progressBar) {
-                this.progressBar.style.width = value + '%';
+            if (slot.progressBar) {
+                slot.progressBar.style.width = value + '%';
             }
 
             return;
         }
 
-        if (this.awaitingFirstUpdate && stage === this.currentStage) {
+        if (slot.awaitingFirstUpdate && stage === slot.currentStage) {
             const now = performance.now();
-            const dt = (now - this.lastUpdateTime) / 1000;
+            const dt = (now - slot.lastUpdateTime) / 1000;
 
-            if (this.isRestoring) {
-                const { velocity: learnedVelocity } = this.getLearnedInitialVelocity(stage, { preferOverall: true });
-                this.currentValue = value;
-                this.targetValue = value;
-                this.velocity = learnedVelocity;
-                this.displayVelocity = learnedVelocity;
-                this.lastUpdateTime = now;
-                this.awaitingFirstUpdate = false;
-                this.isRestoring = false;
-                if (this.progressBar) {
-                    this.progressBar.style.width = value + '%';
-                    this.start(this.progressBar);
+            if (slot.isRestoring) {
+                const { velocity: learnedVelocity } = this.getLearnedInitialVelocity(stage, { preferOverall: true }, slot);
+                slot.currentValue = value;
+                slot.targetValue = value;
+                slot.velocity = learnedVelocity;
+                slot.displayVelocity = learnedVelocity;
+                slot.lastUpdateTime = now;
+                slot.awaitingFirstUpdate = false;
+                slot.isRestoring = false;
+                if (slot.progressBar) {
+                    slot.progressBar.style.width = value + '%';
+                    this.start(slot.progressBar, entryId);
                 }
 
                 return;
             }
 
-            this.sampleCount++;
+            slot.sampleCount++;
 
-            if (!this.coldStartLearned) {
-                const elapsed = (now - this.stageStartTime) / 1000;
-                if (elapsed >= 5 && this.sampleCount >= 2) {
-                    const avgVelocity = value / elapsed;
-                    if (this.updateLearnedInitialVelocity(stage, avgVelocity)) {
-                        this.coldStartLearned = true;
+            if (!slot.coldStartLearned) {
+                const elapsed = (now - slot.stageStartTime) / 1000;
+                if (elapsed >= 3 && slot.sampleCount >= 12) {
+                    const avgVelocity = (value - slot.stageStartValue) / elapsed;
+                    if (this.updateLearnedInitialVelocity(stage, avgVelocity, slot)) {
+                        slot.coldStartLearned = true;
                     }
                 }
             }
 
-            // Update velocity/target tracking (same as before)
+            // Update velocity/target tracking
             if (dt > 0.05) {
-                const totalElapsed = (now - this.stageStartTime) / 1000;
-                const realVelocity = totalElapsed > 0 ? value / totalElapsed : this.velocity;
-                this.velocity = realVelocity;
-                this.displayVelocity = realVelocity;
-                this.targetValue = value;
-                this.acceleration = 0;
-                this.lastUpdateTime = now;
+                const totalElapsed = (now - slot.stageStartTime) / 1000;
+                const realVelocity = totalElapsed > 0 ? (value - slot.stageStartValue) / totalElapsed : slot.velocity;
+                slot.velocity = realVelocity;
+                slot.displayVelocity = slot.velocity;
+                slot.targetValue = value;
+                slot.acceleration = 0;
+                slot.lastUpdateTime = now;
             } else {
-                this.targetValue = value;
+                slot.targetValue = value;
             }
 
-            // Stop awaiting after cold-start is learned (accumulation complete)
-            if (this.coldStartLearned) {
-                this.awaitingFirstUpdate = false;
+            // Stop awaiting after cold-start is learned (accumulation complete).
+            // Seed steady-state velocity from the cumulative average so the EMA
+            // doesn't jump on the first post-accumulation sample.
+            if (slot.coldStartLearned) {
+                const totalElapsed = (now - slot.stageStartTime) / 1000;
+                if (totalElapsed > 0) {
+                    slot.velocity = (value - slot.stageStartValue) / totalElapsed;
+                    slot.displayVelocity = slot.velocity;
+                }
+                slot.awaitingFirstUpdate = false;
             }
 
             return;
         }
 
         const now = performance.now();
-        const dt = (now - this.lastUpdateTime) / 1000;
+        const dt = (now - slot.lastUpdateTime) / 1000;
 
-        if (dt > 0 && dt < 5) {
-            const instantVelocity = (value - this.targetValue) / dt;
-            const prevVelocity = this.velocity;
-            this.velocity = this.velocity * 0.5 + instantVelocity * 0.5;
+        if (dt > 0.05) {
+            const instantVelocity = (value - slot.targetValue) / dt;
+            const prevVelocity = slot.velocity;
+            slot.velocity = slot.velocity * 0.5 + instantVelocity * 0.5;
 
-            const instantAcceleration = (this.velocity - prevVelocity) / dt;
-            this.acceleration = this.acceleration * 0.5 + instantAcceleration * 0.5;
+            const instantAcceleration = (slot.velocity - prevVelocity) / dt;
+            slot.acceleration = slot.acceleration * 0.5 + instantAcceleration * 0.5;
 
             if (SHOW_GHOST) {
-                const bytesPerSec = (instantVelocity / 100) * this.currentFileSize;
-                const deltaBytesPerSec = ((this.displayVelocity - instantVelocity) / 100) * this.currentFileSize;
+                const bytesPerSec = (instantVelocity / 100) * slot.currentFileSize;
+                const deltaBytesPerSec = ((slot.displayVelocity - instantVelocity) / 100) * slot.currentFileSize;
                 const deltaSign = deltaBytesPerSec >= 0 ? '+' : '';
                 console.log(`[${stage}] Instant velocity: ${bytesPerSec.formatBytes(2, '/s')} (${deltaSign}${deltaBytesPerSec.formatBytes(2, '/s')})`);
             }
         }
 
-        this.targetValue = value;
-        this.lastUpdateTime = now;
+        slot.targetValue = value;
+        slot.lastUpdateTime = now;
 
-        if (this.ghostBar) {
-            this.ghostBar.style.width = value + '%';
+        if (slot.ghostBar) {
+            slot.ghostBar.style.width = value + '%';
         }
     },
 
-    start(progressBar) {
-        this.progressBar = progressBar;
+    /**
+     * Bind a progress bar to a slot and start animation if needed.
+     * @param {HTMLElement} progressBar
+     * @param {string} entryId
+     */
+    start(progressBar, entryId) {
+        const slot = this.slots.get(entryId);
+        if (!slot) {
+            return;
+        }
+
+        slot.progressBar = progressBar;
         if (!PROGRESS_SMOOTHING) {
             return;
         }
+
         if (SHOW_GHOST && progressBar) {
             const ghostId = progressBar.id + '-ghost';
-            this.ghostBar = document.getElementById(ghostId);
-            if (this.ghostBar) {
-                this.ghostBar.parentElement.classList.add('visible');
+            slot.ghostBar = document.getElementById(ghostId);
+            if (slot.ghostBar) {
+                slot.ghostBar.parentElement.classList.add('visible');
             }
         }
+
         if (!this.animationId) {
             this.lastFrameTime = performance.now();
             this.animate();
         }
     },
 
-    stop() {
-        if (this.animationId) {
-            cancelAnimationFrame(this.animationId);
-            this.animationId = null;
+    /**
+     * Reset a slot's animation state. isRestoring survives. Does not remove from map.
+     * @param {string} entryId
+     */
+    reset(entryId) {
+        const slot = this.slots.get(entryId);
+        if (!slot) {
+            return;
         }
+
+        this.finalizeStageVelocity(slot);
+
+        if (slot.ghostBar) {
+            slot.ghostBar.parentElement.classList.remove('visible');
+        }
+
+        const preservedRestoring = slot.isRestoring;
+        const preservedFileSize = slot.currentFileSize;
+        Object.assign(slot, createSlot());
+        slot.isRestoring = preservedRestoring;
+        slot.currentFileSize = preservedFileSize;
+        // Shared loop self-terminates when no active slots remain
     },
 
-    reset() {
-        this.finalizeStageVelocity();
-        this.stop();
-        this.currentValue = 0;
-        this.targetValue = 0;
-        this.velocity = 0;
-        this.acceleration = 0;
-        this.displayVelocity = 0;
-        this.lastUpdateTime = 0;
-        this.stageStartTime = 0;
-        this.speedFactor = 1;
-        this.currentStage = null;
-        this.awaitingFirstUpdate = false;
-        this.sampleCount = 0;
-        this.coldStartLearned = false;
-        if (this.ghostBar) {
-            this.ghostBar.parentElement.classList.remove('visible');
-            this.ghostBar = null;
-        }
-        // isRestoring survives reset() - cleared in setTarget() after use
+    /**
+     * Remove a slot entirely from the map.
+     * @param {string} entryId
+     */
+    removeSlot(entryId) {
+        this.slots.delete(entryId);
     },
 
+    /**
+     * Set file size for an entry's slot (creates slot if needed).
+     * @param {string} entryId
+     * @param {number} fileSize
+     */
+    setFileSize(entryId, fileSize) {
+        let slot = this.slots.get(entryId);
+        if (!slot) {
+            slot = createSlot();
+        }
+        slot.currentFileSize = fileSize;
+        this.slots.set(entryId, slot);
+    },
+
+    /**
+     * Get the current animation stage for an entry.
+     * @param {string} entryId
+     * @returns {string|null}
+     */
+    getCurrentStage(entryId) {
+        return this.slots.get(entryId)?.currentStage ?? null;
+    },
+
+    /**
+     * Check if any slot has an active stage.
+     * @returns {boolean}
+     */
+    hasActiveSlots() {
+        for (const slot of this.slots.values()) {
+            if (slot.currentStage != null) {
+                return true;
+            }
+        }
+
+        return false;
+    },
+
+    /**
+     * Mark all active slots as restoring (awaiting first real update).
+     */
     setRestoring() {
-        this.isRestoring = true;
+        for (const slot of this.slots.values()) {
+            if (slot.currentStage != null) {
+                slot.awaitingFirstUpdate = true;
+                slot.isRestoring = true;
+            }
+        }
     },
 
+    /**
+     * Rebind all progress bars using a lookup function.
+     * @param {(entryId: string) => HTMLElement|null} getBarFn
+     */
+    rebindAllProgressBars(getBarFn) {
+        for (const [entryId, slot] of this.slots) {
+            slot.progressBar = getBarFn(entryId);
+        }
+    },
+
+    /**
+     * Rebind the progress bar for a single entry.
+     * @param {string} entryId
+     * @param {HTMLElement|null} progressBar
+     */
+    rebindProgressBar(entryId, progressBar) {
+        const slot = this.slots.get(entryId);
+        if (slot) {
+            slot.progressBar = progressBar;
+        }
+    },
+
+    /**
+     * Shared animation loop. Ticks all active slots, self-terminates when none remain.
+     */
     animate() {
         const now = performance.now();
         const rawDt = (now - this.lastFrameTime) / 1000;
         this.lastFrameTime = now;
         const dt = Math.min(rawDt, 0.1);
 
-        const timeSinceUpdate = (now - this.lastUpdateTime) / 1000;
-        const estimatedActual = this.targetValue + this.velocity * timeSinceUpdate;
+        let anyActive = false;
 
-        if (rawDt > 1) {
-            this.currentValue = Math.max(this.currentValue, Math.min(estimatedActual, this.targetValue));
-            this.displayVelocity = this.velocity;
-            this.speedFactor = 1;
+        for (const slot of this.slots.values()) {
+            if (slot.currentStage == null) {
+                continue;
+            }
+
+            const timeSinceUpdate = (now - slot.lastUpdateTime) / 1000;
+            const estimatedActual = slot.targetValue + slot.velocity * timeSinceUpdate;
+
+            if (rawDt > 1) {
+                slot.currentValue = Math.max(slot.currentValue, Math.min(estimatedActual, slot.targetValue));
+                slot.displayVelocity = slot.velocity;
+                slot.speedFactor = 1;
+            }
+
+            const velocityEaseRate = 3;
+            slot.displayVelocity += (slot.velocity - slot.displayVelocity) * Math.min(1, velocityEaseRate * dt);
+
+            const velocityGap = slot.velocity - slot.displayVelocity;
+            const baseProjectedLag = velocityGap / velocityEaseRate;
+
+            const accelAdjustment = Math.max(-0.3, Math.min(0.3, slot.acceleration * 0.05));
+            const projectedLag = baseProjectedLag * (1 - accelAdjustment);
+
+            const compensatedTarget = estimatedActual + projectedLag;
+            const error = compensatedTarget - slot.currentValue;
+
+            const maxSpeedAdjust = 0.3;
+            const targetSpeedFactor = 1 + Math.max(-maxSpeedAdjust, Math.min(maxSpeedAdjust, error * 0.3));
+            const easingRate = 3;
+            slot.speedFactor += (targetSpeedFactor - slot.speedFactor) * Math.min(1, easingRate * dt);
+
+            slot.currentValue += slot.displayVelocity * dt * slot.speedFactor;
+            slot.currentValue = Math.max(0, Math.min(100, slot.currentValue));
+
+            if (slot.progressBar) {
+                slot.progressBar.style.width = slot.currentValue + '%';
+            }
+            if (slot.ghostBar) {
+                slot.ghostBar.style.width = slot.targetValue + '%';
+            }
+
+            if (slot.currentValue < 99.9) {
+                anyActive = true;
+            }
         }
 
-        const velocityEaseRate = 3;
-        this.displayVelocity += (this.velocity - this.displayVelocity) * Math.min(1, velocityEaseRate * dt);
-
-        const velocityGap = this.velocity - this.displayVelocity;
-        const baseProjectedLag = velocityGap / velocityEaseRate;
-
-        const accelAdjustment = Math.max(-0.3, Math.min(0.3, this.acceleration * 0.05));
-        const projectedLag = baseProjectedLag * (1 - accelAdjustment);
-
-        const compensatedTarget = estimatedActual + projectedLag;
-        const error = compensatedTarget - this.currentValue;
-
-        const progressFactor = Math.max(0, (this.targetValue - 67) / 33);
-        const maxSpeedAdjust = 0.3 + progressFactor * 0.7;
-        const targetSpeedFactor = 1 + Math.max(-maxSpeedAdjust, Math.min(maxSpeedAdjust, error * 0.3));
-        const easingRate = 3 + progressFactor * 3;
-        this.speedFactor += (targetSpeedFactor - this.speedFactor) * Math.min(1, easingRate * dt);
-
-        this.currentValue += this.displayVelocity * dt * this.speedFactor;
-        this.currentValue = Math.max(0, Math.min(100, this.currentValue));
-
-        if (this.progressBar) {
-            this.progressBar.style.width = this.currentValue + '%';
-        }
-        if (this.ghostBar) {
-            this.ghostBar.style.width = this.targetValue + '%';
-        }
-
-        if (this.currentValue < 99.9) {
+        if (anyActive) {
             this.animationId = requestAnimationFrame(() => this.animate());
         } else {
             this.animationId = null;
