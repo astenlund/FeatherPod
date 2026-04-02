@@ -428,6 +428,10 @@ public class NormalizationFunction
 
             await AddEpisodeToFeedAsync(containerClient, episodesJsonPath, episode, _logger, cancellationToken);
 
+            // Refresh app service cache BEFORE notifying the client, so the episode
+            // is available when the client fetches browser uploads on completion.
+            await RefreshAppServiceCacheAsync(job.FeedId, cancellationToken);
+
             // Update job status to Completed
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
@@ -438,8 +442,6 @@ public class NormalizationFunction
             }, progressMode, signalRConnection);
 
             await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Completed, progressMode, signalRConnection, episodeId: job.EpisodeId, cancellationToken: cancellationToken);
-
-            await RefreshAppServiceCacheAsync(job.FeedId, cancellationToken);
 
             // Delete pending blob
             _logger.LogDebug("Deleting pending blob {PendingPath}", pendingBlobPath);

@@ -23,6 +23,27 @@ const Q_MORPH_DURATION = 400;
 
 const COLLAPSED_HEIGHT_DEFAULT = 280;
 
+/**
+ * Build a minimal episode object from job status data for local history,
+ * used as a fallback when the server cache hasn't refreshed yet.
+ * @param {Object} jobStatus - Job status response (from SSE or poll)
+ * @param {Object} entry - Queue entry
+ * @returns {Object|null}
+ */
+function buildFallbackEpisode(jobStatus, entry) {
+    const id = jobStatus.episodeId || entry.episodeId;
+    if (!id) {
+        return null;
+    }
+
+    return {
+        id,
+        fileName: entry.fileName,
+        title: jobStatus.title || entry.title || entry.fileName,
+        uploadedAt: new Date().toISOString()
+    };
+}
+
 export function getQueue() {
     return uploadQueue;
 }
@@ -619,10 +640,11 @@ function monitorEntryNormalization(entry) {
                 if (entry.localSourceIndex != null) {
                     notifyLocalSourceUploaded(entry.localSourceIndex);
                 }
-                if (episode) {
-                    saveToLocalHistory(episode);
+                const historyEpisode = episode || buildFallbackEpisode(lastStatus, entry);
+                if (historyEpisode) {
+                    saveToLocalHistory(historyEpisode);
                 }
-                refreshHistoryList(episode?.id);
+                refreshHistoryList(historyEpisode?.id);
             } else {
                 entry.status = 'failed';
                 entry.error = lastStatus?.error || 'Normalization failed';
@@ -719,12 +741,13 @@ async function pollEntryNormalization(entry) {
                 if (entry.localSourceIndex != null) {
                     notifyLocalSourceUploaded(entry.localSourceIndex);
                 }
-                if (episode) {
-                    saveToLocalHistory(episode);
+                const historyEpisode = episode || buildFallbackEpisode(job, entry);
+                if (historyEpisode) {
+                    saveToLocalHistory(historyEpisode);
                 }
                 progressAnimator.removeSlot(entry.id);
                 updateQueueItemInDOM(entry);
-                refreshHistoryList(episode?.id);
+                refreshHistoryList(historyEpisode?.id);
 
                 return;
             } else if (job.status === 'Failed') {
