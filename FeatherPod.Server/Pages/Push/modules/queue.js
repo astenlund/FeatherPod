@@ -527,7 +527,7 @@ export function updateEntryFromJobStatus(entry, job) {
 
         if (job.progressPercent != null) {
             entry.progress = job.progressPercent;
-            progressAnimator.setTarget(job.progressPercent, job.stage, entry.id);
+            progressAnimator.setTarget(job.progressPercent, job.stage, entry.id, job.tickMs);
         }
 
         progressAnimator.start(progressBar, entry.id);

@@ -32,7 +32,8 @@ function createSlot() {
         isRestoring: false,
         currentFileSize: 0,
         sampleCount: 0,
-        coldStartLearned: false
+        coldStartLearned: false,
+        lastTickMs: null
     };
 }
 
@@ -282,8 +283,9 @@ export const progressAnimator = {
      * @param {number} value - Progress percentage (0-100)
      * @param {string} stage
      * @param {string} entryId
+     * @param {number} [tickMs] - Server-measured ms since job start (immune to tab suspension)
      */
-    setTarget(value, stage, entryId) {
+    setTarget(value, stage, entryId, tickMs) {
         const slot = this.slots.get(entryId);
         if (!slot) {
             return;
@@ -308,6 +310,7 @@ export const progressAnimator = {
                 slot.velocity = learnedVelocity;
                 slot.displayVelocity = learnedVelocity;
                 slot.lastUpdateTime = now;
+                slot.lastTickMs = tickMs ?? null;
                 slot.awaitingFirstUpdate = false;
                 slot.isRestoring = false;
                 if (slot.progressBar) {
@@ -330,8 +333,9 @@ export const progressAnimator = {
                 }
             }
 
-            // Update velocity/target tracking
-            if (dt > 0.05) {
+            // Update velocity/target tracking (prefer server ticks when available)
+            const accumDt = (tickMs != null && slot.lastTickMs != null) ? (tickMs - slot.lastTickMs) / 1000 : dt;
+            if (accumDt > 0.05) {
                 const totalElapsed = (now - slot.stageStartTime) / 1000;
                 const realVelocity = totalElapsed > 0 ? (value - slot.stageStartValue) / totalElapsed : slot.velocity;
                 slot.velocity = realVelocity;
@@ -339,6 +343,7 @@ export const progressAnimator = {
                 slot.targetValue = value;
                 slot.acceleration = 0;
                 slot.lastUpdateTime = now;
+                slot.lastTickMs = tickMs ?? null;
             } else {
                 slot.targetValue = value;
             }
@@ -359,7 +364,8 @@ export const progressAnimator = {
         }
 
         const now = performance.now();
-        const dt = (now - slot.lastUpdateTime) / 1000;
+        const clientDt = (now - slot.lastUpdateTime) / 1000;
+        const dt = (tickMs != null && slot.lastTickMs != null) ? (tickMs - slot.lastTickMs) / 1000 : clientDt;
 
         if (dt > 0.05) {
             const instantVelocity = (value - slot.targetValue) / dt;
@@ -379,6 +385,7 @@ export const progressAnimator = {
 
         slot.targetValue = value;
         slot.lastUpdateTime = now;
+        slot.lastTickMs = tickMs ?? null;
 
         if (slot.ghostBar) {
             slot.ghostBar.style.width = value + '%';

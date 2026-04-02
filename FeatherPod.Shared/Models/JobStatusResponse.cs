@@ -94,6 +94,12 @@ public record JobStatusResponse
     public bool AuthRequired { get; init; }
 
     /// <summary>
+    /// Milliseconds elapsed since the job was queued, measured server-side.
+    /// Used by the client for velocity calculations immune to tab suspension.
+    /// </summary>
+    public long? TickMs { get; init; }
+
+    /// <summary>
     /// Time taken to process the job, or elapsed time if still processing.
     /// </summary>
     public TimeSpan? Duration => QueuedAt.HasValue
@@ -128,7 +134,8 @@ public record JobStatusResponse
             TotalDurationMs = entity.TotalDurationMs,
             FileName = entity.FileName,
             Title = entity.Title,
-            AuthRequired = string.Equals(entity.Error, YtDlpService.BotDetectionErrorMessage, StringComparison.Ordinal)
+            AuthRequired = string.Equals(entity.Error, YtDlpService.BotDetectionErrorMessage, StringComparison.Ordinal),
+            TickMs = entity.QueuedAt.HasValue ? (long)(DateTimeOffset.UtcNow - entity.QueuedAt.Value).TotalMilliseconds : null
         };
     }
 }
