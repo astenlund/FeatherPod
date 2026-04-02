@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using FeatherPod.Shared.Models;
+using FeatherPod.Shared.Services;
 
 namespace FeatherPod.Server.Services;
 
@@ -867,6 +868,20 @@ public sealed partial class EpisodeService : IDisposable
 
             return false;
         }
+    }
+
+    public static async Task<string> GenerateTitleAsync(string fileName, IAiService aiService, CancellationToken cancellationToken = default)
+    {
+        if (aiService.IsAvailable)
+        {
+            var aiTitle = await aiService.SuggestTitleAsync(fileName, cancellationToken: cancellationToken);
+            if (!string.IsNullOrWhiteSpace(aiTitle))
+            {
+                return aiTitle;
+            }
+        }
+
+        return ParseTitleFromFilename(fileName);
     }
 
     public static string ParseTitleFromFilename(string fileName)

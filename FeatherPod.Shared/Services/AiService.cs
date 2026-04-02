@@ -16,7 +16,8 @@ public class AiService : IAiService
 {
     private readonly ChatClient? _chatClient;
     private readonly ILogger<AiService> _logger;
-    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
+    private const int MaxRetries = 1;
 
     private const string SystemPrompt = """
         You are a podcast episode title generator. Given a filename, produce a clean, readable episode title.
@@ -60,46 +61,58 @@ public class AiService : IAiService
             return null;
         }
 
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(Timeout);
-
         var userMessage = string.IsNullOrWhiteSpace(note)
             ? filename
             : $"{filename}\n\nUser note: {note}";
 
-        try
+        for (var attempt = 0; attempt <= MaxRetries; attempt++)
         {
-            var completion = await _chatClient.CompleteChatAsync(
-                [
-                    new SystemChatMessage(SystemPrompt),
-                    new UserChatMessage(userMessage),
-                ],
-                new ChatCompletionOptions { MaxOutputTokenCount = 80, Temperature = 0.3f },
-                timeoutCts.Token);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(Timeout);
 
-            var finishReason = completion.Value.FinishReason;
-            var content = completion.Value.Content;
-            if (content.Count == 0)
+            try
             {
-                _logger.LogWarning("AI returned empty content for filename '{Filename}' (FinishReason: {FinishReason})", filename, finishReason);
+                var completion = await _chatClient.CompleteChatAsync(
+                    [
+                        new SystemChatMessage(SystemPrompt),
+                        new UserChatMessage(userMessage),
+                    ],
+                    new ChatCompletionOptions { MaxOutputTokenCount = 80, Temperature = 0.3f },
+                    timeoutCts.Token);
+
+                var finishReason = completion.Value.FinishReason;
+                var content = completion.Value.Content;
+                if (content.Count == 0)
+                {
+                    _logger.LogWarning("AI returned empty content for filename '{Filename}' (FinishReason: {FinishReason})", filename, finishReason);
+
+                    return null;
+                }
+
+                if (finishReason == ChatFinishReason.ContentFilter)
+                {
+                    _logger.LogWarning("AI response was filtered for filename '{Filename}'", filename);
+
+                    return null;
+                }
+
+                return content[0].Text?.Trim();
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                if (attempt < MaxRetries)
+                {
+                    _logger.LogWarning(ex, "AI title attempt {Attempt} failed for '{Filename}', retrying", attempt + 1, filename);
+
+                    continue;
+                }
+
+                _logger.LogWarning(ex, "Failed to suggest title for filename '{Filename}' after {Attempts} attempts", filename, attempt + 1);
 
                 return null;
             }
-
-            if (finishReason == ChatFinishReason.ContentFilter)
-            {
-                _logger.LogWarning("AI response was filtered for filename '{Filename}'", filename);
-
-                return null;
-            }
-
-            return content[0].Text?.Trim();
         }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        {
-            _logger.LogWarning(ex, "Failed to suggest title for filename '{Filename}'", filename);
 
-            return null;
-        }
+        return null;
     }
 }

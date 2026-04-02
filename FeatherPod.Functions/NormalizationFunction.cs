@@ -402,12 +402,16 @@ public class NormalizationFunction
                 _logger.LogInformation("Uploaded transcript for episode {EpisodeId}", job.EpisodeId);
             }
 
+            // Check status table for AI-updated title (may have arrived after job was queued)
+            var latestStatus = await GetJobEntityAsync(tableClient, job.JobId, cancellationToken);
+            var effectiveTitle = !string.IsNullOrEmpty(latestStatus?.Title) ? latestStatus.Title : job.Title;
+
             // Create episode entry
             var episode = new Episode
             {
                 Id = job.EpisodeId,
                 FeedId = job.FeedId,
-                Title = job.Title,
+                Title = effectiveTitle,
                 Description = job.Description,
                 Summary = job.Summary,
                 FileName = job.FileName,

@@ -19,11 +19,12 @@ public class EpisodesController : ControllerBase
     private readonly IUserService _userService;
     private readonly IFeedEventChannel _feedEventChannel;
     private readonly IAiService _aiService;
+    private readonly ILogger<EpisodesController> _logger;
     private readonly string _baseUrl;
     private readonly string? _progressMode;
     private readonly int _progressIntervalMs;
 
-    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IAiService aiService, IConfiguration configuration)
+    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IAiService aiService, ILogger<EpisodesController> logger, IConfiguration configuration)
     {
         _episodeService = episodeService;
         _blobStorageService = blobStorageService;
@@ -31,6 +32,7 @@ public class EpisodesController : ControllerBase
         _userService = userService;
         _feedEventChannel = feedEventChannel;
         _aiService = aiService;
+        _logger = logger;
         _baseUrl = configuration.GetSection("Podcast")["BaseUrl"]
             ?? throw new InvalidOperationException("Podcast.BaseUrl must be configured in appsettings.json");
 
@@ -157,15 +159,10 @@ public class EpisodesController : ControllerBase
                     ? extractedDate.Value
                     : DateTime.UtcNow);
 
-                // Upload to pending location and generate AI title in parallel
-                var blobUploadTask = _blobStorageService.UploadPendingAudioAsync(feedId, jobId, file.FileName, tempPath);
-                var aiTitleTask = string.IsNullOrWhiteSpace(title) && _aiService.IsAvailable
-                    ? _aiService.SuggestTitleAsync(file.FileName, cancellationToken: HttpContext.RequestAborted)
-                    : Task.FromResult<string?>(null);
+                // Upload to pending location (AI title runs in background, doesn't block 202)
+                await _blobStorageService.UploadPendingAudioAsync(feedId, jobId, file.FileName, tempPath);
 
-                await Task.WhenAll(blobUploadTask, aiTitleTask);
-                var aiTitle = await aiTitleTask;
-                var effectiveTitle = aiTitle ?? (string.IsNullOrWhiteSpace(title) ? EpisodeService.ParseTitleFromFilename(file.FileName) : title);
+                var effectiveTitle = ResolveDeferredTitle(title, jobId, file.FileName);
 
                 // Queue the normalization job first, then create status entry
                 // This order prevents orphaned status entries if queue send fails
@@ -205,10 +202,9 @@ public class EpisodesController : ControllerBase
                 return Accepted($"/api/jobs/{jobId}", response);
             }
 
-            // AI title generation for sync upload (when user didn't provide a title)
-            if (string.IsNullOrWhiteSpace(title) && _aiService.IsAvailable)
+            if (string.IsNullOrWhiteSpace(title))
             {
-                title = await _aiService.SuggestTitleAsync(file.FileName, cancellationToken: HttpContext.RequestAborted);
+                title = await EpisodeService.GenerateTitleAsync(file.FileName, _aiService, HttpContext.RequestAborted);
             }
 
             // Synchronous upload (no normalization)
@@ -460,6 +456,42 @@ public class EpisodesController : ControllerBase
         catch (InvalidOperationException ex)
         {
             return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Returns an initial placeholder title and, when AI is available, fires off a background
+    /// task that replaces it with the AI-generated (or heuristic fallback) title.
+    /// </summary>
+    private string ResolveDeferredTitle(string? userTitle, string jobId, string fileName)
+    {
+        if (!string.IsNullOrWhiteSpace(userTitle))
+        {
+            return userTitle;
+        }
+
+        if (_aiService.IsAvailable)
+        {
+            _ = UpdateJobTitleFromAiAsync(jobId, fileName);
+
+            return fileName;
+        }
+
+        return EpisodeService.ParseTitleFromFilename(fileName);
+    }
+
+    private async Task UpdateJobTitleFromAiAsync(string jobId, string fileName)
+    {
+        try
+        {
+            var title = await EpisodeService.GenerateTitleAsync(fileName, _aiService);
+
+            await _jobService.UpdateJobStatusAsync(jobId, entity => entity.Title = title);
+            _logger.LogInformation("Updated job {JobId} title: {Title}", jobId, title);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            _logger.LogWarning(ex, "Failed to update title for job {JobId}", jobId);
         }
     }
 

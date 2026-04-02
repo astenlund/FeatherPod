@@ -1,5 +1,5 @@
 import { FEED_ID, QUEUE_STORAGE_KEY, STR_INVALID_KEY, STR_NO_FEED_ACCESS } from './config.js';
-import { isValidAudioFile, isActiveWork, tryParseJson } from './utils.js';
+import { isValidAudioFile, isActiveWork, tryParseJson, truncate } from './utils.js';
 import { getApiKey } from './auth.js';
 import { showState, getCurrentState, updateQueueTitle, getCollapsedHeight, COLLAPSED_WIDTH } from './state.js';
 import { progressAnimator } from './progress.js';
@@ -504,6 +504,11 @@ export function updateEntryFromJobStatus(entry, job) {
 
     if (job.title && job.title !== entry.title) {
         entry.title = job.title;
+        const nameEl = document.querySelector('#queue-item-' + entry.id + ' .queue-item-name');
+        if (nameEl) {
+            nameEl.textContent = truncate(job.title, 50);
+            nameEl.title = entry.fileName;
+        }
     }
 
     entry.stage = job.stage;

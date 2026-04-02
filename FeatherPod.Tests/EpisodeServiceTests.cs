@@ -1,4 +1,5 @@
 using FeatherPod.Shared.Models;
+using FeatherPod.Shared.Services;
 using FeatherPod.Server.Services;
 using Microsoft.Extensions.Logging;
 
@@ -826,3 +827,80 @@ public class TitleParsingTests
         Assert.Equal(expected, result);
     }
 }
+
+public class TitleGenerationTests
+{
+    private class StubAiService(bool isAvailable, string? suggestedTitle) : IAiService
+    {
+        public bool IsAvailable => isAvailable;
+
+        public Task<string?> SuggestTitleAsync(string filename, string? note = null, CancellationToken cancellationToken = default)
+            => Task.FromResult(suggestedTitle);
+    }
+
+    [Fact]
+    public async Task GenerateTitleAsync_ReturnsAiTitle_WhenAvailableAndSucceeds()
+    {
+        // Arrange
+        var aiService = new StubAiService(isAvailable: true, suggestedTitle: "AI Generated Title");
+
+        // Act
+        var result = await EpisodeService.GenerateTitleAsync("my_podcast_episode.mp3", aiService);
+
+        // Assert
+        Assert.Equal("AI Generated Title", result);
+    }
+
+    [Fact]
+    public async Task GenerateTitleAsync_FallsBackToHeuristic_WhenAiReturnsNull()
+    {
+        // Arrange
+        var aiService = new StubAiService(isAvailable: true, suggestedTitle: null);
+
+        // Act
+        var result = await EpisodeService.GenerateTitleAsync("my_podcast_episode.mp3", aiService);
+
+        // Assert
+        Assert.Equal("my podcast episode", result);
+    }
+
+    [Fact]
+    public async Task GenerateTitleAsync_FallsBackToHeuristic_WhenAiReturnsEmpty()
+    {
+        // Arrange
+        var aiService = new StubAiService(isAvailable: true, suggestedTitle: "");
+
+        // Act
+        var result = await EpisodeService.GenerateTitleAsync("my_podcast_episode.mp3", aiService);
+
+        // Assert
+        Assert.Equal("my podcast episode", result);
+    }
+
+    [Fact]
+    public async Task GenerateTitleAsync_UsesHeuristic_WhenAiUnavailable()
+    {
+        // Arrange
+        var aiService = new StubAiService(isAvailable: false, suggestedTitle: null);
+
+        // Act
+        var result = await EpisodeService.GenerateTitleAsync("my_podcast_episode.mp3", aiService);
+
+        // Assert
+        Assert.Equal("my podcast episode", result);
+    }
+
+    [Fact]
+    public async Task GenerateTitleAsync_FallsBackToHeuristic_WhenAiReturnsWhitespace()
+    {
+        // Arrange
+        var aiService = new StubAiService(isAvailable: true, suggestedTitle: "   ");
+
+        // Act
+        var result = await EpisodeService.GenerateTitleAsync("my_podcast_episode.mp3", aiService);
+
+        // Assert
+        Assert.Equal("my podcast episode", result);
+    }
+}
+

@@ -383,7 +383,8 @@ public class JobsController : ControllerBase
                old.Stage != current.Stage ||
                old.ProgressPercent != current.ProgressPercent ||
                old.ProgressMessage != current.ProgressMessage ||
-               old.Error != current.Error;
+               old.Error != current.Error ||
+               old.Title != current.Title;
     }
 
     private static bool HasChanged(JobStatusResponse? last, JobStatusResponse current)
@@ -397,7 +398,8 @@ public class JobsController : ControllerBase
                last.Stage != current.Stage ||
                last.ProgressPercent != current.ProgressPercent ||
                last.ProgressMessage != current.ProgressMessage ||
-               last.Error != current.Error;
+               last.Error != current.Error ||
+               last.Title != current.Title;
     }
 
     private static bool IsTerminal(string? status)
