@@ -60,6 +60,36 @@ if (navigator.serviceWorker) {
     });
 }
 
+// Auto-reload on SW update: new deployment detected, reload once uploads finish
+if (navigator.serviceWorker) {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController) return;
+        const flashAndReload = () => {
+            const backdrop = document.getElementById('artwork-backdrop');
+            if (backdrop) {
+                backdrop.style.transition = 'filter 0.3s ease';
+                backdrop.style.filter = 'brightness(1.3)';
+                setTimeout(() => location.reload(), 300);
+            } else {
+                location.reload();
+            }
+        };
+        const hasActiveUpload = () => getQueue().some(e => e.status === 'uploading');
+        if (!hasActiveUpload()) {
+            flashAndReload();
+
+            return;
+        }
+        const check = setInterval(() => {
+            if (!hasActiveUpload()) {
+                clearInterval(check);
+                flashAndReload();
+            }
+        }, 1000);
+    });
+}
+
 /**
  * @typedef {Object} Episode
  * @property {string} id - Episode ID
