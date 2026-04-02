@@ -1109,7 +1109,7 @@ h1 {
     background: linear-gradient(90deg, var(--primary-500), var(--accent-500));
 }
 
-.queue-item-progress.indeterminate::after {
+.queue-item-progress::after {
     content: '';
     position: absolute;
     top: 0;
@@ -1118,6 +1118,10 @@ h1 {
     bottom: 0;
     background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.5) 50%, transparent 100%);
     animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.queue-item--completed .queue-item-progress::after {
+    display: none;
 }
 
 
