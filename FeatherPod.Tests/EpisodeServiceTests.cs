@@ -605,7 +605,7 @@ public class EpisodeServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task FeedVersion_IncreasesOnEpisodeAdd()
+    public async Task FeedLastModified_AdvancesOnEpisodeAdd()
     {
         // Arrange
         var service = CreateService();
@@ -613,7 +613,7 @@ public class EpisodeServiceTests : IDisposable
         await CreateTestFeedAsync(service);
 
         var snapshot1 = await service.GetFeedSnapshotAsync(TestFeedId);
-        var versionAfterCreate = snapshot1!.Value.Version;
+        var modifiedAfterCreate = snapshot1!.Value.LastModified;
 
         var testFile = Path.Combine(_testDirectory, "test.mp3");
         await File.WriteAllTextAsync(testFile, "audio data");
@@ -623,11 +623,11 @@ public class EpisodeServiceTests : IDisposable
         var snapshot2 = await service.GetFeedSnapshotAsync(TestFeedId);
 
         // Assert
-        Assert.True(snapshot2!.Value.Version > versionAfterCreate);
+        Assert.True(snapshot2!.Value.LastModified > modifiedAfterCreate);
     }
 
     [Fact]
-    public async Task FeedVersion_IncreasesOnEpisodeDelete()
+    public async Task FeedLastModified_AdvancesOnEpisodeDelete()
     {
         // Arrange
         var service = CreateService();
@@ -639,18 +639,18 @@ public class EpisodeServiceTests : IDisposable
         var episode = await service.AddEpisodeAsync(TestFeedId, testFile, "Episode 1");
 
         var snapshot1 = await service.GetFeedSnapshotAsync(TestFeedId);
-        var versionBeforeDelete = snapshot1!.Value.Version;
+        var modifiedBeforeDelete = snapshot1!.Value.LastModified;
 
         // Act
         await service.DeleteEpisodeAsync(TestFeedId, episode.Id);
         var snapshot2 = await service.GetFeedSnapshotAsync(TestFeedId);
 
         // Assert
-        Assert.True(snapshot2!.Value.Version > versionBeforeDelete);
+        Assert.True(snapshot2!.Value.LastModified > modifiedBeforeDelete);
     }
 
     [Fact]
-    public async Task FeedVersion_IncreasesOnMetadataUpdate()
+    public async Task FeedLastModified_AdvancesOnMetadataUpdate()
     {
         // Arrange
         var service = CreateService();
@@ -662,18 +662,18 @@ public class EpisodeServiceTests : IDisposable
         var episode = await service.AddEpisodeAsync(TestFeedId, testFile, "Episode 1");
 
         var snapshot1 = await service.GetFeedSnapshotAsync(TestFeedId);
-        var versionBeforeUpdate = snapshot1!.Value.Version;
+        var modifiedBeforeUpdate = snapshot1!.Value.LastModified;
 
         // Act
         await service.UpdateEpisodeMetadataAsync(TestFeedId, episode.Id, title: "New Title");
         var snapshot2 = await service.GetFeedSnapshotAsync(TestFeedId);
 
         // Assert
-        Assert.True(snapshot2!.Value.Version > versionBeforeUpdate);
+        Assert.True(snapshot2!.Value.LastModified > modifiedBeforeUpdate);
     }
 
     [Fact]
-    public async Task FeedVersion_IncreasesOnFeedConfigUpdate()
+    public async Task FeedLastModified_AdvancesOnFeedConfigUpdate()
     {
         // Arrange
         var service = CreateService();
@@ -681,7 +681,7 @@ public class EpisodeServiceTests : IDisposable
         await CreateTestFeedAsync(service);
 
         var snapshot1 = await service.GetFeedSnapshotAsync(TestFeedId);
-        var versionBeforeUpdate = snapshot1!.Value.Version;
+        var modifiedBeforeUpdate = snapshot1!.Value.LastModified;
 
         // Act
         var updatedConfig = new FeedConfig
@@ -695,7 +695,7 @@ public class EpisodeServiceTests : IDisposable
         var snapshot2 = await service.GetFeedSnapshotAsync(TestFeedId);
 
         // Assert
-        Assert.True(snapshot2!.Value.Version > versionBeforeUpdate);
+        Assert.True(snapshot2!.Value.LastModified > modifiedBeforeUpdate);
     }
 
     [Fact]

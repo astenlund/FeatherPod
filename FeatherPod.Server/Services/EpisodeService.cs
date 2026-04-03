@@ -17,7 +17,7 @@ public sealed partial class EpisodeService : IDisposable
     private readonly Dictionary<string, FeedVersionState> _feedVersionByFeed = new();
     private static readonly DateTime ServerStartTime = DateTime.UtcNow;
 
-    private record FeedVersionState(long Version, DateTime ModifiedAt, string? LastSyncJson);
+    private record FeedVersionState(DateTime ModifiedAt, string? LastSyncJson);
     private FeedsMetadata _feedsMetadata = new();
     private readonly JsonSerializerOptions _jsonSerializerOptions = new() { WriteIndented = true };
 
@@ -81,7 +81,7 @@ public sealed partial class EpisodeService : IDisposable
             };
 
             _episodesByFeed[feedConfig.Id] = new List<Episode>();
-            BumpFeedVersion(feedConfig.Id);
+            BumpFeedModifiedAt(feedConfig.Id);
 
             await SaveFeedsAsync();
             _logger.LogInformation("Created feed: {FeedId}", feedConfig.Id);
@@ -115,7 +115,7 @@ public sealed partial class EpisodeService : IDisposable
             var feeds = _feedsMetadata.Feeds.ToList();
             feeds[existingIndex] = updatedConfig;
             _feedsMetadata = new() { Feeds = feeds };
-            BumpFeedVersion(feedId);
+            BumpFeedModifiedAt(feedId);
 
             await SaveFeedsAsync();
             _logger.LogInformation("Updated feed: {FeedId}", feedId);
@@ -163,7 +163,7 @@ public sealed partial class EpisodeService : IDisposable
             }
 
             RemoveFeedVersionTracking(oldFeedId);
-            BumpFeedVersion(newFeedId);
+            BumpFeedModifiedAt(newFeedId);
 
             await SaveFeedsAsync();
 
@@ -228,7 +228,7 @@ public sealed partial class EpisodeService : IDisposable
         }
     }
 
-    public async Task<(FeedConfig Feed, List<Episode> Episodes, long Version, DateTime LastModified)?> GetFeedSnapshotAsync(string feedId)
+    public async Task<(FeedConfig Feed, List<Episode> Episodes, DateTime LastModified)?> GetFeedSnapshotAsync(string feedId)
     {
         await _lock.WaitAsync();
 
@@ -240,11 +240,9 @@ public sealed partial class EpisodeService : IDisposable
                 return null;
             }
 
-            var state = _feedVersionByFeed.GetValueOrDefault(feedId);
-            var version = state?.Version ?? 0;
-            var lastModified = state?.ModifiedAt ?? ServerStartTime;
+            var lastModified = _feedVersionByFeed.GetValueOrDefault(feedId)?.ModifiedAt ?? ServerStartTime;
 
-            return (feed, episodes.OrderByDescending(e => e.PublishedDate).ToList(), version, lastModified);
+            return (feed, episodes.OrderByDescending(e => e.PublishedDate).ToList(), lastModified);
         }
         finally
         {
@@ -430,7 +428,7 @@ public sealed partial class EpisodeService : IDisposable
             }
 
             episodes.Add(episode);
-            BumpFeedVersion(feedId);
+            BumpFeedModifiedAt(feedId);
             await SaveEpisodesAsync(feedId);
 
             _logger.LogInformation("Added episode to feed {FeedId}: {Title} ({FileName})", feedId, episode.Title, fileName);
@@ -479,7 +477,7 @@ public sealed partial class EpisodeService : IDisposable
 
             // Remove from list
             _episodesByFeed[feedId].Remove(episode);
-            BumpFeedVersion(feedId);
+            BumpFeedModifiedAt(feedId);
             await SaveEpisodesAsync(feedId);
 
             _logger.LogInformation("Deleted episode from feed {FeedId}: {Title}", feedId, episode.Title);
@@ -521,7 +519,7 @@ public sealed partial class EpisodeService : IDisposable
                 Note = note ?? existing.Note,
             };
             episodes[index] = updated;
-            BumpFeedVersion(feedId);
+            BumpFeedModifiedAt(feedId);
             await SaveEpisodesAsync(feedId);
 
             if (title != null)
@@ -595,8 +593,8 @@ public sealed partial class EpisodeService : IDisposable
                 _episodesByFeed[targetFeedId] = [];
             }
             _episodesByFeed[targetFeedId].Add(movedEpisode);
-            BumpFeedVersion(sourceFeedId);
-            BumpFeedVersion(targetFeedId);
+            BumpFeedModifiedAt(sourceFeedId);
+            BumpFeedModifiedAt(targetFeedId);
 
             await SaveEpisodesAsync(sourceFeedId);
             await SaveEpisodesAsync(targetFeedId);
@@ -658,7 +656,7 @@ public sealed partial class EpisodeService : IDisposable
                 _episodesByFeed[targetFeedId] = [];
             }
             _episodesByFeed[targetFeedId].Add(copiedEpisode);
-            BumpFeedVersion(targetFeedId);
+            BumpFeedModifiedAt(targetFeedId);
 
             await SaveEpisodesAsync(targetFeedId);
 
@@ -709,10 +707,10 @@ public sealed partial class EpisodeService : IDisposable
             var currentState = _feedVersionByFeed.GetValueOrDefault(feedId);
             if (!string.Equals(metadataJson, currentState?.LastSyncJson, StringComparison.Ordinal))
             {
-                BumpFeedVersion(feedId);
+                BumpFeedModifiedAt(feedId);
             }
 
-            // Update LastSyncJson to current blob content (preserve version/modifiedAt from BumpFeedVersion if it ran)
+            // Update LastSyncJson to current blob content (preserve modifiedAt from BumpFeedModifiedAt if it ran)
             var updatedState = _feedVersionByFeed.GetValueOrDefault(feedId);
             if (updatedState != null)
             {
@@ -778,16 +776,15 @@ public sealed partial class EpisodeService : IDisposable
                 _episodesByFeed[feed.Id] = [];
             }
 
-            _feedVersionByFeed[feed.Id] = new FeedVersionState(0, ServerStartTime, metadataJson);
+            _feedVersionByFeed[feed.Id] = new FeedVersionState(ServerStartTime, metadataJson);
         }
     }
 
-    private void BumpFeedVersion(string feedId)
+    private void BumpFeedModifiedAt(string feedId)
     {
-        var current = _feedVersionByFeed.GetValueOrDefault(feedId);
-        var lastSyncJson = current?.LastSyncJson;
+        var lastSyncJson = _feedVersionByFeed.GetValueOrDefault(feedId)?.LastSyncJson;
 
-        _feedVersionByFeed[feedId] = new FeedVersionState((current?.Version ?? 0) + 1, DateTime.UtcNow, lastSyncJson);
+        _feedVersionByFeed[feedId] = new FeedVersionState(DateTime.UtcNow, lastSyncJson);
     }
 
     private void RemoveFeedVersionTracking(string feedId)

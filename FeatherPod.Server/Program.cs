@@ -164,8 +164,8 @@ class Program
                     return Results.NotFound($"Feed '{feedId}' not found");
                 }
 
-                var (feed, episodes, version, lastModified) = snapshot.Value;
-                var etag = $"\"{feedId}-{version}\"";
+                var (feed, episodes, lastModified) = snapshot.Value;
+                var etag = $"\"{feedId}-{lastModified.Ticks}\"";
 
                 // Truncate to second precision for HTTP date comparison
                 var lastModifiedTruncated = new DateTime(lastModified.Year, lastModified.Month, lastModified.Day, lastModified.Hour, lastModified.Minute, lastModified.Second, DateTimeKind.Utc);

@@ -1593,6 +1593,70 @@ public sealed class IntegrationTests : IDisposable
         // Assert
         Assert.Equal(HttpStatusCode.NotModified, response2.StatusCode);
     }
+
+    [AzuriteFact]
+    public async Task GetFeed_ETagChangesAcrossServerRestarts()
+    {
+        // Arrange - first server instance
+        await CreateTestFeedAsync();
+        var response1 = await _client.GetAsync($"/{TestFeedId}/feed.xml");
+        var etag1 = response1.Headers.ETag!.Tag;
+
+        // Act - simulate restart by creating a second server instance
+        // (ServerStartTime differs, so ETags must differ even for identical feed data)
+        await Task.Delay(20); // ensure different ServerStartTime ticks
+        using var factory2 = new FeatherPodWebApplicationFactory();
+        using var client2 = factory2.CreateClient();
+        await CreateTestFeedOnClient(client2);
+        var response2 = await client2.GetAsync($"/{TestFeedId}/feed.xml");
+        var etag2 = response2.Headers.ETag!.Tag;
+
+        // Assert - ETags must differ across server lifetimes to prevent stale 304s
+        Assert.NotEqual(etag1, etag2);
+    }
+
+    [AzuriteFact]
+    public async Task GetFeed_OldETagFromPreviousServerLifetime_Returns200()
+    {
+        // Arrange - first server instance
+        await CreateTestFeedAsync();
+        var response1 = await _client.GetAsync($"/{TestFeedId}/feed.xml");
+        var oldEtag = response1.Headers.ETag!;
+
+        // Act - simulate restart, then send the old ETag
+        await Task.Delay(20);
+        using var factory2 = new FeatherPodWebApplicationFactory();
+        using var client2 = factory2.CreateClient();
+        await CreateTestFeedOnClient(client2);
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/{TestFeedId}/feed.xml");
+        request.Headers.IfNoneMatch.Add(oldEtag);
+        var response2 = await client2.SendAsync(request);
+
+        // Assert - must NOT return 304 with a stale ETag from a different server lifetime
+        Assert.Equal(HttpStatusCode.OK, response2.StatusCode);
+    }
+
+    private static async Task CreateTestFeedOnClient(HttpClient client)
+    {
+        var feedJson = $$"""
+        {
+            "id": "{{TestFeedId}}",
+            "title": "Test Podcast",
+            "description": "Test Description",
+            "author": "Test Author",
+            "email": "test@example.com",
+            "language": "en",
+            "category": "Technology"
+        }
+        """;
+
+        var request = new HttpRequestMessage(HttpMethod.Post, "/api/feeds");
+        request.Content = new StringContent(feedJson, System.Text.Encoding.UTF8, "application/json");
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+    }
 }
 
 internal class FeatherPodWebApplicationFactory : WebApplicationFactory<FeatherPod.Server.ServerAssemblyMarker>
