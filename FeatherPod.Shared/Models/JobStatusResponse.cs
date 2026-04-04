@@ -88,6 +88,31 @@ public record JobStatusResponse
     public string? Title { get; init; }
 
     /// <summary>
+    /// Whether normalization has completed (success or failure).
+    /// </summary>
+    public bool NormalizationComplete { get; init; }
+
+    /// <summary>
+    /// Error message if normalization failed.
+    /// </summary>
+    public string? NormalizationError { get; init; }
+
+    /// <summary>
+    /// Transcription track status: null (disabled), Queued, Running, Completed, Failed.
+    /// </summary>
+    public string? TranscriptionStatus { get; init; }
+
+    /// <summary>
+    /// Transcription progress percentage (0-100).
+    /// </summary>
+    public double? TranscriptionProgress { get; init; }
+
+    /// <summary>
+    /// Error message if transcription failed.
+    /// </summary>
+    public string? TranscriptionError { get; init; }
+
+    /// <summary>
     /// Whether this failure requires YouTube cookie authentication.
     /// Derived from the error message sentinel string.
     /// </summary>
@@ -134,6 +159,11 @@ public record JobStatusResponse
             TotalDurationMs = entity.TotalDurationMs,
             FileName = entity.FileName,
             Title = entity.Title,
+            NormalizationComplete = entity.NormalizationComplete,
+            NormalizationError = entity.NormalizationError,
+            TranscriptionStatus = entity.TranscriptionStatus,
+            TranscriptionProgress = entity.TranscriptionProgress,
+            TranscriptionError = entity.TranscriptionError,
             AuthRequired = string.Equals(entity.Error, YtDlpService.BotDetectionErrorMessage, StringComparison.Ordinal),
             TickMs = entity.QueuedAt.HasValue ? (long)(DateTimeOffset.UtcNow - entity.QueuedAt.Value).TotalMilliseconds : null
         };
