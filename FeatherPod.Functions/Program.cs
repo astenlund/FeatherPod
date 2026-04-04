@@ -34,15 +34,6 @@ builder.Services.Configure<FunctionSettings>(options =>
     }
     options.CleanupSchedule = Environment.GetEnvironmentVariable("CleanupSchedule") ?? options.CleanupSchedule;
     options.AzureOpenAIEndpoint = Environment.GetEnvironmentVariable("AzureOpenAIEndpoint");
-    options.WhisperDeployment = Environment.GetEnvironmentVariable("WhisperDeployment");
-    if (int.TryParse(Environment.GetEnvironmentVariable("WhisperChunkMinutes"), out var chunkMinutes))
-    {
-        options.WhisperChunkMinutes = chunkMinutes;
-    }
-    if (int.TryParse(Environment.GetEnvironmentVariable("WhisperOverlapSeconds"), out var overlapSeconds))
-    {
-        options.WhisperOverlapSeconds = overlapSeconds;
-    }
 });
 
 // Azure Storage clients
@@ -90,15 +81,6 @@ builder.Services.AddSingleton(sp =>
 });
 
 builder.Services.AddSingleton<IAudioNormalizationService, AudioNormalizationService>();
-
-// Whisper transcription (optional, configured via AzureOpenAIEndpoint + WhisperDeployment env vars)
-builder.Services.AddSingleton<ITranscriptionService>(sp =>
-{
-    var settings = sp.GetRequiredService<IOptions<FunctionSettings>>().Value;
-    var logger = sp.GetRequiredService<ILogger<TranscriptionService>>();
-
-    return new TranscriptionService(settings.AzureOpenAIEndpoint, settings.WhisperDeployment, logger, settings.WhisperChunkMinutes, settings.WhisperOverlapSeconds);
-});
 
 // HttpClient for App Service cache refresh
 builder.Services.AddHttpClient();

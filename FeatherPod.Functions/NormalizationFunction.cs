@@ -25,7 +25,6 @@ public class NormalizationFunction
     private readonly BlobServiceClient _blobClient;
     private readonly TableServiceClient _tableClient;
     private readonly IAudioNormalizationService _normalizationService;
-    private readonly ITranscriptionService _transcriptionService;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly TelemetryClient _telemetryClient;
     private readonly FunctionSettings _settings;
@@ -41,7 +40,6 @@ public class NormalizationFunction
         BlobServiceClient blobClient,
         TableServiceClient tableClient,
         IAudioNormalizationService normalizationService,
-        ITranscriptionService transcriptionService,
         IHttpClientFactory httpClientFactory,
         TelemetryClient telemetryClient,
         IOptions<FunctionSettings> settings,
@@ -50,7 +48,6 @@ public class NormalizationFunction
         _blobClient = blobClient;
         _tableClient = tableClient;
         _normalizationService = normalizationService;
-        _transcriptionService = transcriptionService;
         _httpClientFactory = httpClientFactory;
         _telemetryClient = telemetryClient;
         _settings = settings.Value;
@@ -170,9 +167,8 @@ public class NormalizationFunction
     }
 
     /// <summary>
-    /// Downloads, analyzes, normalizes, optionally transcribes, uploads, and creates the episode in a single invocation.
-    /// Progress mapping is dynamic: with Whisper enabled, Analyzing 0-30% / Normalizing 30-70% / Transcribing 70-100%.
-    /// Without Whisper, Analyzing 0-40% / Normalizing 40-100%. Finishing is always indeterminate.
+    /// Downloads, analyzes, normalizes, uploads, and creates the episode in a single invocation.
+    /// Progress mapping: Analyzing 0-35%, Normalizing 35-100%. Finishing is indeterminate.
     /// </summary>
     private async Task ProcessNormalizationAsync(NormalizationJob job, TableClient tableClient, CancellationToken cancellationToken, HubConnection? signalRConnection = null)
     {
@@ -191,8 +187,7 @@ public class NormalizationFunction
             // Download pending blob
             tempInputFile = await DownloadPendingBlobAsync(containerClient, pendingBlobPath, job, tableClient, Preparing, cancellationToken, signalRConnection);
 
-            // Progress mapping: dynamic based on whether transcription is enabled
-            // Analyzing 0-35%, Normalizing 35-100%. Transcribing and Finishing are indeterminate.
+            // Progress mapping: Analyzing 0-35%, Normalizing 35-100%. Finishing is indeterminate.
             var analyzeEnd = 35;
             var normalizeStart = analyzeEnd;
             var normalizeSize = 100 - analyzeEnd;
@@ -304,49 +299,6 @@ public class NormalizationFunction
             var duration = mediaInfo.Duration;
             var normalizedFileSize = new FileInfo(normalizedFile).Length;
 
-            // Transcribe audio (fault-tolerant)
-            var transcribeStart = normalizeStart + normalizeSize;
-            var transcribeSize = 100 - transcribeStart;
-            TranscriptStatus? transcriptStatus = null;
-            string? vttContent = null;
-
-            if (_transcriptionService.IsAvailable)
-            {
-                try
-                {
-                    var transcribeLastUpdate = DateTime.MinValue;
-                    vttContent = await _transcriptionService.TranscribeAsync(normalizedFile, progress =>
-                    {
-                        var now = DateTime.UtcNow;
-                        if (now - transcribeLastUpdate < progressThrottle)
-                        {
-                            return;
-                        }
-                        transcribeLastUpdate = now;
-
-                        var mappedPercent = transcribeStart + progress.ProgressPercent * transcribeSize / 100.0;
-                        _ = UpdateProgressAsync(tableClient, job.JobId, new()
-                        {
-                            Stage = Finishing,
-                            ProgressPercent = mappedPercent,
-                            Message = progress.Message
-                        }, progressMode, signalRConnection).ContinueWith(t => _logger.LogError(t.Exception, "Transcription progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
-                    }, cancellationToken);
-
-                    transcriptStatus = vttContent != null ? TranscriptStatus.Available : TranscriptStatus.Failed;
-                    _logger.LogInformation("Transcription {Status} for job {JobId}", transcriptStatus, job.JobId);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Transcription failed for job {JobId}, publishing without transcript", job.JobId);
-                    transcriptStatus = TranscriptStatus.Failed;
-                }
-            }
-
             // Upload normalized file
             await UpdateProgressAsync(tableClient, job.JobId, new()
             {
@@ -392,16 +344,6 @@ public class NormalizationFunction
                 Message = "Almost done"
             }, progressMode, signalRConnection);
 
-            // Upload transcript blob if available
-            if (vttContent != null)
-            {
-                var transcriptBlobPath = $"{job.FeedId}/transcripts/{job.EpisodeId}.vtt";
-                var transcriptBlob = containerClient.GetBlobClient(transcriptBlobPath);
-                await using var vttStream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(vttContent));
-                await transcriptBlob.UploadAsync(vttStream, overwrite: true, cancellationToken);
-                _logger.LogInformation("Uploaded transcript for episode {EpisodeId}", job.EpisodeId);
-            }
-
             // Check status table for AI-updated title (may have arrived after job was queued)
             var latestStatus = await GetJobEntityAsync(tableClient, job.JobId, cancellationToken);
             var effectiveTitle = !string.IsNullOrEmpty(latestStatus?.Title) ? latestStatus.Title : job.Title;
@@ -420,7 +362,7 @@ public class NormalizationFunction
                 PublishedDate = job.PublishedDate,
                 Source = job.Source,
                 UploadedAt = DateTime.UtcNow,
-                TranscriptStatus = transcriptStatus
+                TranscriptStatus = null
             };
 
             await UpdateProgressAsync(tableClient, job.JobId, new()
