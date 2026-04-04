@@ -25,7 +25,21 @@ public interface IJobService
     /// <summary>
     /// Create initial job status entry (Queued state).
     /// </summary>
-    Task CreateJobStatusAsync(string jobId, string feedId, string? fileName = null, string? title = null, string? progressMode = null, int? progressIntervalMs = null, CancellationToken cancellationToken = default);
+    Task CreateJobStatusAsync(
+        string jobId,
+        string feedId,
+        string? fileName = null,
+        string? title = null,
+        string? progressMode = null,
+        int? progressIntervalMs = null,
+        string? description = null,
+        string? summary = null,
+        DateTimeOffset? publishedDate = null,
+        string? source = null,
+        long? originalFileSize = null,
+        string? episodeId = null,
+        string? transcriptionStatus = null,
+        CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Get all active (non-terminal) jobs for a feed.
@@ -48,4 +62,12 @@ public interface IJobService
     /// Returns the updated entity, or null if the job was not found.
     /// </summary>
     Task<JobStatusEntity?> UpdateJobStatusAsync(string jobId, Action<JobStatusEntity> mutate, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Merge specific fields into a job entity without stomping concurrent writes.
+    /// The <paramref name="configure"/> action populates a blank entity with only the fields to write.
+    /// Reads the entity first for terminal-state guard and ETag, then Merges the partial entity.
+    /// Returns the merged view (read entity with partial applied), or null if not found or already terminal.
+    /// </summary>
+    Task<JobStatusEntity?> MergeJobFieldsAsync(string jobId, Action<JobStatusEntity> configure, CancellationToken cancellationToken = default);
 }

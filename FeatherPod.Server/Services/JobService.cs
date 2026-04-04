@@ -81,9 +81,23 @@ public class JobService : IJobService
         }
     }
 
-    public async Task CreateJobStatusAsync(string jobId, string feedId, string? fileName = null, string? title = null, string? progressMode = null, int? progressIntervalMs = null, CancellationToken cancellationToken = default)
+    public async Task CreateJobStatusAsync(
+        string jobId,
+        string feedId,
+        string? fileName = null,
+        string? title = null,
+        string? progressMode = null,
+        int? progressIntervalMs = null,
+        string? description = null,
+        string? summary = null,
+        DateTimeOffset? publishedDate = null,
+        string? source = null,
+        long? originalFileSize = null,
+        string? episodeId = null,
+        string? transcriptionStatus = null,
+        CancellationToken cancellationToken = default)
     {
-        var entity = JobStatusEntity.CreateQueued(jobId, feedId, fileName, title, progressMode, progressIntervalMs);
+        var entity = JobStatusEntity.CreateQueued(jobId, feedId, fileName, title, progressMode, progressIntervalMs, description, summary, publishedDate, source, originalFileSize, episodeId, transcriptionStatus);
         try
         {
             await _tableClient.AddEntityAsync(entity, cancellationToken);
@@ -148,7 +162,7 @@ public class JobService : IJobService
                 }
 
                 entity.Status = nameof(JobStatus.Cancelled);
-                entity.Stage = nameof(NormalizationStage.Cancelled);
+                entity.NormalizationStage = nameof(NormalizationStage.Cancelled);
                 entity.CompletedAt = DateTimeOffset.UtcNow;
 
                 await _tableClient.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace, cancellationToken);
@@ -205,6 +219,52 @@ public class JobService : IJobService
         }
 
         _logger.LogWarning("Failed to update job {JobId} after {MaxRetries} ETag conflicts", jobId, maxRetries);
+
+        return null;
+    }
+
+    public async Task<JobStatusEntity?> MergeJobFieldsAsync(string jobId, Action<JobStatusEntity> configure, CancellationToken cancellationToken = default)
+    {
+        const int maxRetries = 3;
+        for (var attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            try
+            {
+                var response = await _tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+                var entity = response.Value;
+
+                // Don't write to terminal jobs
+                if (entity.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+                {
+                    _logger.LogDebug("Skipping merge for job {JobId} — already in terminal state {Status}", jobId, entity.Status);
+
+                    return null;
+                }
+
+                // Build partial entity with only the fields to merge
+                var partial = new JobStatusEntity { PartitionKey = "jobs", RowKey = jobId };
+                configure(partial);
+
+                await _tableClient.UpdateEntityAsync(partial, entity.ETag, TableUpdateMode.Merge, cancellationToken);
+
+                // Apply partial fields to the read entity so callers see merged state
+                configure(entity);
+
+                return entity;
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+            {
+                _logger.LogWarning("Job {JobId} not found for merge", jobId);
+
+                return null;
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 412 && attempt <= maxRetries)
+            {
+                _logger.LogDebug("ETag conflict merging job {JobId}, attempt {Attempt}", jobId, attempt);
+            }
+        }
+
+        _logger.LogWarning("Failed to merge job {JobId} after {MaxRetries} ETag conflicts", jobId, maxRetries);
 
         return null;
     }

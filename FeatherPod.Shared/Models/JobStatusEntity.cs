@@ -50,14 +50,56 @@ public class JobStatusEntity : ITableEntity
     public DateTimeOffset? CompletedAt { get; set; }
 
     /// <summary>
-    /// Current processing stage (Queued, Preparing, Analyzing, Normalizing, Finishing, Completed, Failed, Cancelled).
+    /// Current normalization stage (Queued, Preparing, Analyzing, Normalizing, Finishing, Completed, Failed, Cancelled).
+    /// Renamed from Stage for disambiguation in the parallel model.
     /// </summary>
-    public string? Stage { get; set; }
+    public string? NormalizationStage { get; set; }
 
     /// <summary>
-    /// Progress percentage within current stage (0-100).
+    /// Normalization progress percentage (0-100).
+    /// Renamed from ProgressPercent for disambiguation in the parallel model.
     /// </summary>
-    public double? ProgressPercent { get; set; }
+    public double? NormalizationProgress { get; set; }
+
+    /// <summary>
+    /// Whether normalization has completed (success or failure). Set by Function via normalization-complete endpoint.
+    /// </summary>
+    public bool NormalizationComplete { get; set; }
+
+    /// <summary>
+    /// Error message if normalization failed.
+    /// </summary>
+    public string? NormalizationError { get; set; }
+
+    /// <summary>
+    /// Post-normalization file size in bytes.
+    /// </summary>
+    public long? NormalizedFileSize { get; set; }
+
+    /// <summary>
+    /// Audio duration in milliseconds (from FFprobe, set by Function on success).
+    /// </summary>
+    public long? AudioDurationMs { get; set; }
+
+    /// <summary>
+    /// Transcription track status: null (disabled), Queued, Running, Completed, Failed.
+    /// </summary>
+    public string? TranscriptionStatus { get; set; }
+
+    /// <summary>
+    /// Transcription progress percentage (0-100), audio-position-based.
+    /// </summary>
+    public double? TranscriptionProgress { get; set; }
+
+    /// <summary>
+    /// Error message if transcription failed.
+    /// </summary>
+    public string? TranscriptionError { get; set; }
+
+    /// <summary>
+    /// When transcription started (for velocity calculation and stale job detection).
+    /// </summary>
+    public DateTimeOffset? TranscriptionStartedAt { get; set; }
 
     /// <summary>
     /// Human-readable progress message.
@@ -83,6 +125,31 @@ public class JobStatusEntity : ITableEntity
     /// Episode title (AI-generated or from YouTube metadata). Set at job creation time.
     /// </summary>
     public string? Title { get; set; }
+
+    /// <summary>
+    /// Episode description (carried from upload for join-time episode creation).
+    /// </summary>
+    public string? Description { get; set; }
+
+    /// <summary>
+    /// Episode summary.
+    /// </summary>
+    public string? Summary { get; set; }
+
+    /// <summary>
+    /// Episode publish date.
+    /// </summary>
+    public DateTimeOffset? PublishedDate { get; set; }
+
+    /// <summary>
+    /// Upload source (Browser, CLI).
+    /// </summary>
+    public string? Source { get; set; }
+
+    /// <summary>
+    /// Pre-normalization file size (for episode ID verification).
+    /// </summary>
+    public long? OriginalFileSize { get; set; }
 
     /// <summary>
     /// Progress delivery mode: "poll", "push", or "signalr" (null = poll).
@@ -123,22 +190,42 @@ public class JobStatusEntity : ITableEntity
     /// <summary>
     /// Create a new JobStatusEntity for a queued job.
     /// </summary>
-    public static JobStatusEntity CreateQueued(string jobId, string feedId, string? fileName = null, string? title = null, string? progressMode = null, int? progressIntervalMs = null)
+    public static JobStatusEntity CreateQueued(
+        string jobId,
+        string feedId,
+        string? fileName = null,
+        string? title = null,
+        string? progressMode = null,
+        int? progressIntervalMs = null,
+        string? description = null,
+        string? summary = null,
+        DateTimeOffset? publishedDate = null,
+        string? source = null,
+        long? originalFileSize = null,
+        string? episodeId = null,
+        string? transcriptionStatus = null)
     {
         return new JobStatusEntity
         {
             PartitionKey = "jobs",
             RowKey = jobId,
             Status = nameof(JobStatus.Queued),
-            Stage = nameof(NormalizationStage.Queued),
+            NormalizationStage = nameof(Models.NormalizationStage.Queued),
             FeedId = feedId,
             FileName = fileName,
             Title = title,
+            EpisodeId = episodeId,
             ProgressMode = progressMode,
             ProgressIntervalMs = progressIntervalMs,
             QueuedAt = DateTimeOffset.UtcNow,
-            ProgressPercent = 0,
-            ProgressMessage = "Waiting in queue"
+            NormalizationProgress = 0,
+            ProgressMessage = "Waiting in queue",
+            Description = description,
+            Summary = summary,
+            PublishedDate = publishedDate,
+            Source = source,
+            OriginalFileSize = originalFileSize,
+            TranscriptionStatus = transcriptionStatus
         };
     }
 }

@@ -307,8 +307,8 @@ public class YouTubeDownloadService : BackgroundService
                     return;
                 }
 
-                e.Stage = stage.ToString();
-                e.ProgressPercent = progressPercent;
+                e.NormalizationStage = stage.ToString();
+                e.NormalizationProgress = progressPercent;
                 e.ProgressMessage = message;
 
                 if (stage == NormalizationStage.Completed)
@@ -353,7 +353,7 @@ public class YouTubeDownloadService : BackgroundService
                 }
 
                 e.Status = nameof(JobStatus.Failed);
-                e.Stage = nameof(NormalizationStage.Failed);
+                e.NormalizationStage = nameof(NormalizationStage.Failed);
                 e.Error = error;
                 e.CompletedAt = DateTimeOffset.UtcNow;
             });

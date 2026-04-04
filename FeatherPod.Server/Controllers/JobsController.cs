@@ -380,8 +380,8 @@ public class JobsController : ControllerBase
     private static bool HasChanged(JobStatusEntity old, JobStatusEntity current)
     {
         return old.Status != current.Status ||
-               old.Stage != current.Stage ||
-               old.ProgressPercent != current.ProgressPercent ||
+               old.NormalizationStage != current.NormalizationStage ||
+               old.NormalizationProgress != current.NormalizationProgress ||
                old.ProgressMessage != current.ProgressMessage ||
                old.Error != current.Error ||
                old.Title != current.Title;

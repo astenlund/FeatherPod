@@ -184,7 +184,7 @@ public class EpisodesController : ControllerBase
                 };
 
                 await _jobService.QueueNormalizationJobAsync(job, HttpContext.RequestAborted);
-                await _jobService.CreateJobStatusAsync(jobId, feedId, file.FileName, effectiveTitle, _progressMode, _progressIntervalMs, HttpContext.RequestAborted);
+                await _jobService.CreateJobStatusAsync(jobId, feedId, file.FileName, effectiveTitle, _progressMode, _progressIntervalMs, cancellationToken: HttpContext.RequestAborted);
 
                 var response = new JobStatusResponse
                 {

@@ -576,43 +576,44 @@ public class NormalizationFunction
         string? error = null,
         CancellationToken cancellationToken = default)
     {
-        // Read existing entity to preserve progress fields
-        JobStatusEntity entity;
-        try
-        {
-            var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
-            entity = existingResponse.Value;
+        // Read existing entity for terminal-state guard and ETag
+        var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+        var entity = existingResponse.Value;
 
-            // Don't overwrite a terminal state — first terminal state wins (e.g., user cancelled)
-            var currentStatus = entity.GetJobStatus();
-            if (currentStatus is JobStatus.Cancelled or JobStatus.Completed or JobStatus.Failed)
-            {
-                _logger.LogDebug("Skipping status update to {NewStatus} for job {JobId} — already in terminal state {Status}", status, jobId, currentStatus);
-
-                return;
-            }
-        }
-        catch (RequestFailedException ex) when (ex.Status == 404)
+        // Don't overwrite a terminal state — first terminal state wins (e.g., user cancelled)
+        var currentStatus = entity.GetJobStatus();
+        if (currentStatus is JobStatus.Cancelled or JobStatus.Completed or JobStatus.Failed)
         {
-            entity = new()
-            {
-                PartitionKey = "jobs",
-                RowKey = jobId,
-                FeedId = feedId,
-                QueuedAt = DateTimeOffset.UtcNow
-            };
+            _logger.LogDebug("Skipping status update to {NewStatus} for job {JobId} — already in terminal state {Status}", status, jobId, currentStatus);
+
+            return;
         }
 
-        entity.Status = status.ToString();
-        entity.EpisodeId = episodeId;
-        entity.Error = error;
+        // Partial entity Merge — only write the fields we're changing
+        var partial = new JobStatusEntity
+        {
+            PartitionKey = "jobs",
+            RowKey = jobId,
+            Status = status.ToString(),
+            EpisodeId = episodeId,
+            Error = error
+        };
 
         if (status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
         {
-            entity.CompletedAt = DateTimeOffset.UtcNow;
+            partial.CompletedAt = DateTimeOffset.UtcNow;
         }
 
-        await tableClient.UpsertEntityAsync(entity, TableUpdateMode.Replace, cancellationToken);
+        await tableClient.UpdateEntityAsync(partial, entity.ETag, TableUpdateMode.Merge, cancellationToken);
+
+        // Apply partial fields to the read entity for push notifications
+        entity.Status = partial.Status;
+        entity.EpisodeId = partial.EpisodeId;
+        entity.Error = partial.Error;
+        if (partial.CompletedAt.HasValue)
+        {
+            entity.CompletedAt = partial.CompletedAt;
+        }
 
         // Fire-and-forget push for terminal states
         if (progressMode == "push")
@@ -650,35 +651,54 @@ public class NormalizationFunction
                 return;
             }
 
-            // Update progress fields
-            entity.Stage = progress.Stage.ToString();
-            entity.ProgressPercent = progress.ProgressPercent;
-            entity.ProgressMessage = progress.Message;
-            entity.CurrentPositionMs = progress.CurrentPosition.HasValue ? (long)progress.CurrentPosition.Value.TotalMilliseconds : null;
+            // Partial entity Merge — only write normalization progress fields
+            var partial = new JobStatusEntity
+            {
+                PartitionKey = "jobs",
+                RowKey = jobId,
+                NormalizationStage = progress.Stage.ToString(),
+                NormalizationProgress = progress.ProgressPercent,
+                ProgressMessage = progress.Message,
+                CurrentPositionMs = progress.CurrentPosition.HasValue ? (long)progress.CurrentPosition.Value.TotalMilliseconds : null,
+                Status = progress.Stage switch
+                {
+                    Completed => nameof(JobStatus.Completed),
+                    Failed => nameof(JobStatus.Failed),
+                    Cancelled => nameof(JobStatus.Cancelled),
+                    Queued => nameof(JobStatus.Queued),
+                    _ => nameof(JobStatus.Processing)
+                }
+            };
 
             // Only update TotalDurationMs if provided (preserve existing value from Normalizing stage)
             if (progress.TotalDuration.HasValue)
             {
-                entity.TotalDurationMs = (long)progress.TotalDuration.Value.TotalMilliseconds;
+                partial.TotalDurationMs = (long)progress.TotalDuration.Value.TotalMilliseconds;
             }
-
-            // Update Status based on stage
-            entity.Status = progress.Stage switch
-            {
-                Completed => nameof(JobStatus.Completed),
-                Failed => nameof(JobStatus.Failed),
-                Cancelled => nameof(JobStatus.Cancelled),
-                Queued => nameof(JobStatus.Queued),
-                _ => nameof(JobStatus.Processing)
-            };
 
             if (progress.Stage is Completed or Failed or Cancelled)
             {
-                entity.CompletedAt = DateTimeOffset.UtcNow;
+                partial.CompletedAt = DateTimeOffset.UtcNow;
             }
 
-            await tableClient.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace);
+            await tableClient.UpdateEntityAsync(partial, entity.ETag, TableUpdateMode.Merge);
             _logger.LogDebug("Progress update saved: {Stage} {Percent}%", progress.Stage, progress.ProgressPercent);
+
+            // Apply partial fields to the read entity for push notifications
+            entity.NormalizationStage = partial.NormalizationStage;
+            entity.NormalizationProgress = partial.NormalizationProgress;
+            entity.ProgressMessage = partial.ProgressMessage;
+            entity.CurrentPositionMs = partial.CurrentPositionMs;
+            entity.Status = partial.Status;
+            if (partial.TotalDurationMs.HasValue)
+            {
+                entity.TotalDurationMs = partial.TotalDurationMs;
+            }
+
+            if (partial.CompletedAt.HasValue)
+            {
+                entity.CompletedAt = partial.CompletedAt;
+            }
 
             // Fire-and-forget push after successful Table Storage write
             if (progressMode == "push")
@@ -913,11 +933,16 @@ public class NormalizationFunction
             return true;
         }
 
-        entity.Status = nameof(JobStatus.Processing);
+        var partial = new JobStatusEntity
+        {
+            PartitionKey = "jobs",
+            RowKey = job.JobId,
+            Status = nameof(JobStatus.Processing)
+        };
 
         try
         {
-            await tableClient.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace, cancellationToken);
+            await tableClient.UpdateEntityAsync(partial, entity.ETag, TableUpdateMode.Merge, cancellationToken);
 
             return true;
         }
