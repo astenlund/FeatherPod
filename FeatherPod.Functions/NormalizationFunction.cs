@@ -327,7 +327,7 @@ public class NormalizationFunction
                         var mappedPercent = transcribeStart + progress.ProgressPercent * transcribeSize / 100.0;
                         _ = UpdateProgressAsync(tableClient, job.JobId, new()
                         {
-                            Stage = Transcribing,
+                            Stage = Finishing,
                             ProgressPercent = mappedPercent,
                             Message = progress.Message
                         }, progressMode, signalRConnection).ContinueWith(t => _logger.LogError(t.Exception, "Transcription progress update failed"), TaskContinuationOptions.OnlyOnFaulted);

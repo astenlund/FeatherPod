@@ -63,7 +63,7 @@ public class TranscriptionService : ITranscriptionService
             _logger.LogDebug("Audio {Duration} fits in a single chunk ({Size} bytes), transcribing without chunking", totalDuration, fileSize);
             progressCallback?.Invoke(new()
             {
-                Stage = NormalizationStage.Transcribing,
+                Stage = NormalizationStage.Normalizing,
                 ProgressPercent = 0,
                 Message = "Transcribing"
             });
@@ -72,7 +72,7 @@ public class TranscriptionService : ITranscriptionService
 
             progressCallback?.Invoke(new()
             {
-                Stage = NormalizationStage.Transcribing,
+                Stage = NormalizationStage.Normalizing,
                 ProgressPercent = 100,
                 Message = "Transcribing"
             });
@@ -120,7 +120,7 @@ public class TranscriptionService : ITranscriptionService
                     : 0.0;
                 progressCallback?.Invoke(new()
                 {
-                    Stage = NormalizationStage.Transcribing,
+                    Stage = NormalizationStage.Normalizing,
                     ProgressPercent = progressPercent,
                     Message = $"Transcribing ({i + 1}/{chunks.Count})"
                 });
@@ -154,7 +154,7 @@ public class TranscriptionService : ITranscriptionService
 
             progressCallback?.Invoke(new()
             {
-                Stage = NormalizationStage.Transcribing,
+                Stage = NormalizationStage.Normalizing,
                 ProgressPercent = 100,
                 Message = "Transcribing"
             });
