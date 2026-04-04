@@ -92,4 +92,48 @@ public class InternalController : ControllerBase
 
         return Ok();
     }
+
+    /// <summary>
+    /// Receive normalization completion signal from Azure Function.
+    /// Delegates to JobCompletionService for join logic (built in Task 8).
+    /// </summary>
+    [HttpPost("jobs/{jobId}/normalization-complete")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public IActionResult NormalizationComplete(string jobId, [FromBody] NormalizationCompleteRequest request)
+    {
+        if (!string.IsNullOrEmpty(_internalKey))
+        {
+            var providedKey = Request.Headers["X-Internal-Key"].FirstOrDefault();
+            if (!ConstantTimeEquals(providedKey, _internalKey))
+            {
+                return Unauthorized(new { error = "Invalid or missing X-Internal-Key header" });
+            }
+        }
+
+        // Stub: JobCompletionService wired in Task 8
+        return Ok();
+    }
+
+    /// <summary>
+    /// Trigger join-logic check for a job (idempotent).
+    /// Called by CleanupFunction after marking stale transcriptions as failed.
+    /// </summary>
+    [HttpPost("jobs/{jobId}/check-completion")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public IActionResult CheckCompletion(string jobId)
+    {
+        if (!string.IsNullOrEmpty(_internalKey))
+        {
+            var providedKey = Request.Headers["X-Internal-Key"].FirstOrDefault();
+            if (!ConstantTimeEquals(providedKey, _internalKey))
+            {
+                return Unauthorized(new { error = "Invalid or missing X-Internal-Key header" });
+            }
+        }
+
+        // Stub: JobCompletionService wired in Task 8
+        return Ok();
+    }
 }

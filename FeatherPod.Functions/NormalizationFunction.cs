@@ -2,7 +2,6 @@ using System.Text.Json;
 using Azure;
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
-using Azure.Storage.Blobs.Specialized;
 using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
 using FFMpegCore;
@@ -32,7 +31,6 @@ public class NormalizationFunction
 
     private const string TableName = "normalizationjobs";
     private const string QueueName = "normalization-jobs";
-    private static readonly TimeSpan LeaseDuration = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan DefaultProgressThrottle = TimeSpan.FromMilliseconds(500);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
 
@@ -85,8 +83,7 @@ public class NormalizationFunction
         var currentEntity = await GetJobEntityAsync(tableClient, job.JobId, cancellationToken);
         if (currentEntity?.GetJobStatus() == JobStatus.Cancelled)
         {
-            _logger.LogInformation("Job {JobId} was cancelled before processing started, cleaning up", job.JobId);
-            await CleanupPendingBlobAsync(job, cancellationToken);
+            _logger.LogInformation("Job {JobId} was cancelled before processing started, skipping", job.JobId);
 
             return;
         }
@@ -148,8 +145,7 @@ public class NormalizationFunction
             var entity = await GetJobEntityAsync(tableClient, job.JobId, CancellationToken.None);
             if (entity?.GetJobStatus() == JobStatus.Cancelled)
             {
-                _logger.LogInformation("Job {JobId} was cancelled by user during processing, cleaning up", job.JobId);
-                await CleanupPendingBlobAsync(job, CancellationToken.None);
+                _logger.LogInformation("Job {JobId} was cancelled by user during processing, skipping", job.JobId);
 
                 return;
             }
@@ -175,7 +171,6 @@ public class NormalizationFunction
         var containerClient = _blobClient.GetBlobContainerClient(_settings.ContainerName);
         var pendingBlobPath = $"{job.FeedId}/pending/{job.JobId}/{job.FileName}";
         var finalBlobPath = $"{job.FeedId}/audio/{job.FileName}";
-        var episodesJsonPath = $"{job.FeedId}/episodes.json";
         var progressThrottle = job.ProgressIntervalMs.HasValue ? TimeSpan.FromMilliseconds(job.ProgressIntervalMs.Value) : DefaultProgressThrottle;
         var progressMode = job.ProgressMode;
 
@@ -344,56 +339,15 @@ public class NormalizationFunction
                 Message = "Almost done"
             }, progressMode, signalRConnection);
 
-            // Check status table for AI-updated title (may have arrived after job was queued)
-            var latestStatus = await GetJobEntityAsync(tableClient, job.JobId, cancellationToken);
-            var effectiveTitle = !string.IsNullOrEmpty(latestStatus?.Title) ? latestStatus.Title : job.Title;
-
-            // Create episode entry
-            var episode = new Episode
+            // Signal App Service that normalization succeeded (join logic creates the episode)
+            await CallNormalizationCompleteAsync(job.JobId, new NormalizationCompleteRequest
             {
-                Id = job.EpisodeId,
-                FeedId = job.FeedId,
-                Title = effectiveTitle,
-                Description = job.Description,
-                Summary = job.Summary,
-                FileName = job.FileName,
-                FileSize = normalizedFileSize,
-                Duration = duration,
-                PublishedDate = job.PublishedDate,
-                Source = job.Source,
-                UploadedAt = DateTime.UtcNow,
-                TranscriptStatus = null
-            };
+                Success = true,
+                NormalizedFileSize = normalizedFileSize,
+                AudioDurationMs = (long)duration.TotalMilliseconds
+            }, cancellationToken);
 
-            await UpdateProgressAsync(tableClient, job.JobId, new()
-            {
-                Stage = Finishing,
-                ProgressPercent = 0,
-                Message = "Updating episode list"
-            }, progressMode, signalRConnection);
-
-            await AddEpisodeToFeedAsync(containerClient, episodesJsonPath, episode, _logger, cancellationToken);
-
-            // Refresh app service cache BEFORE notifying the client, so the episode
-            // is available when the client fetches browser uploads on completion.
-            await RefreshAppServiceCacheAsync(job.FeedId, cancellationToken);
-
-            // Update job status to Completed
-            await UpdateProgressAsync(tableClient, job.JobId, new()
-            {
-                Stage = Completed,
-                ProgressPercent = 100,
-                Message = "Normalization complete",
-                TotalDuration = duration
-            }, progressMode, signalRConnection);
-
-            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Completed, progressMode, signalRConnection, episodeId: job.EpisodeId, cancellationToken: cancellationToken);
-
-            // Delete pending blob
-            _logger.LogDebug("Deleting pending blob {PendingPath}", pendingBlobPath);
-            await containerClient.GetBlobClient(pendingBlobPath).DeleteIfExistsAsync(cancellationToken: cancellationToken);
-
-            _logger.LogInformation("Normalization job {JobId} completed successfully. Episode {EpisodeId} created.", job.JobId, job.EpisodeId);
+            _logger.LogInformation("Normalization job {JobId} completed successfully, signaled App Service", job.JobId);
         }
         catch (Exception ex)
         {
@@ -402,7 +356,32 @@ public class NormalizationFunction
             _telemetryClient.Flush();
 
             var sanitizedError = SanitizeErrorMessage(ex);
-            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Failed, progressMode, signalRConnection, error: sanitizedError, cancellationToken: cancellationToken);
+
+            // Signal App Service that normalization failed (join logic decides overall job status)
+            try
+            {
+                await CallNormalizationCompleteAsync(job.JobId, new NormalizationCompleteRequest
+                {
+                    Success = false,
+                    Error = sanitizedError
+                }, cancellationToken);
+            }
+            catch (Exception signalEx)
+            {
+                // Safety net: if App Service is unreachable, write failure directly to Table Storage
+                _logger.LogWarning(signalEx, "Failed to signal App Service for job {JobId}, falling back to direct write", job.JobId);
+                var fallbackPartial = new JobStatusEntity
+                {
+                    PartitionKey = "jobs",
+                    RowKey = job.JobId,
+                    Status = nameof(JobStatus.Failed),
+                    NormalizationComplete = true,
+                    NormalizationError = sanitizedError,
+                    Error = sanitizedError,
+                    CompletedAt = DateTimeOffset.UtcNow
+                };
+                await tableClient.UpdateEntityAsync(fallbackPartial, Azure.ETag.All, TableUpdateMode.Merge, cancellationToken);
+            }
 
             throw;
         }
@@ -495,16 +474,34 @@ public class NormalizationFunction
 
         var tableClient = _tableClient.GetTableClient(TableName);
 
-        // Ensure status is marked as Failed
-        await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Failed, job.ProgressMode, error: "Job failed after maximum retry attempts", cancellationToken: cancellationToken);
+        // Signal normalization failure to App Service (join logic decides overall job status)
+        var error = "Job failed after maximum retry attempts";
+        try
+        {
+            await CallNormalizationCompleteAsync(job.JobId, new NormalizationCompleteRequest
+            {
+                Success = false,
+                Error = error
+            }, cancellationToken);
+        }
+        catch (Exception signalEx)
+        {
+            // Safety net: if App Service is unreachable, write failure directly
+            _logger.LogWarning(signalEx, "Failed to signal App Service for poison job {JobId}, falling back to direct write", job.JobId);
+            var fallbackPartial = new JobStatusEntity
+            {
+                PartitionKey = "jobs",
+                RowKey = job.JobId,
+                Status = nameof(JobStatus.Failed),
+                NormalizationComplete = true,
+                NormalizationError = error,
+                Error = error,
+                CompletedAt = DateTimeOffset.UtcNow
+            };
+            await tableClient.UpdateEntityAsync(fallbackPartial, Azure.ETag.All, TableUpdateMode.Merge, cancellationToken);
+        }
 
-        // Clean up pending blob
-        var containerClient = _blobClient.GetBlobContainerClient(_settings.ContainerName);
-        var pendingBlobPath = $"{job.FeedId}/pending/{job.JobId}/{job.FileName}";
-        var pendingBlob = containerClient.GetBlobClient(pendingBlobPath);
-        await pendingBlob.DeleteIfExistsAsync(cancellationToken: cancellationToken);
-
-        _logger.LogInformation("Poison job {JobId} cleanup completed", job.JobId);
+        _logger.LogInformation("Poison job {JobId} handled, signaled normalization failure", job.JobId);
     }
 
     private async Task UpdateJobStatusAsync(
@@ -736,120 +733,27 @@ public class NormalizationFunction
         }
     }
 
-    /// <summary>
-    /// Add episode to feed with blob lease for concurrency safety.
-    /// Uses optimistic concurrency with retry on conflict.
-    /// </summary>
-    private static async Task AddEpisodeToFeedAsync(
-        BlobContainerClient containerClient,
-        string episodesJsonPath,
-        Episode episode,
-        ILogger logger,
-        CancellationToken cancellationToken)
-    {
-        var blob = containerClient.GetBlobClient(episodesJsonPath);
-        var leaseClient = blob.GetBlobLeaseClient();
-
-        const int maxRetries = 3;
-        for (var attempt = 1; attempt <= maxRetries; attempt++)
-        {
-            string? leaseId = null;
-            try
-            {
-                // Ensure blob exists before acquiring lease
-                if (!await blob.ExistsAsync(cancellationToken))
-                {
-                    // Create empty episodes.json if it doesn't exist
-                    await blob.UploadAsync(BinaryData.FromString("[]"), overwrite: false, cancellationToken);
-                }
-
-                // Acquire lease for exclusive access
-                var lease = await leaseClient.AcquireAsync(LeaseDuration, cancellationToken: cancellationToken);
-                leaseId = lease.Value.LeaseId;
-
-                // Download current episodes
-                var response = await blob.DownloadContentAsync(cancellationToken);
-                var existingJson = response.Value.Content.ToString();
-                var episodes = JsonSerializer.Deserialize<List<Episode>>(existingJson) ?? [];
-
-                // Remove existing episode with same ID (update case)
-                episodes.RemoveAll(e => e.Id == episode.Id);
-
-                // Add new episode
-                episodes.Add(episode);
-
-                // Upload with lease condition
-                var json = JsonSerializer.Serialize(episodes, new JsonSerializerOptions { WriteIndented = true });
-                await blob.UploadAsync(
-                    BinaryData.FromString(json),
-                    new Azure.Storage.Blobs.Models.BlobUploadOptions
-                    {
-                        Conditions = new() { LeaseId = leaseId }
-                    },
-                    cancellationToken);
-
-                logger.LogDebug("Successfully updated episodes.json for feed");
-                return;
-            }
-            catch (RequestFailedException ex) when (ex.ErrorCode == "LeaseAlreadyPresent" && attempt < maxRetries)
-            {
-                logger.LogWarning("Lease conflict on attempt {Attempt}, retrying...", attempt);
-                await Task.Delay(TimeSpan.FromMilliseconds(500 * attempt), cancellationToken);
-            }
-            finally
-            {
-                // Release lease if we acquired it
-                if (leaseId != null)
-                {
-                    try
-                    {
-                        await leaseClient.ReleaseAsync(cancellationToken: cancellationToken);
-                    }
-                    catch (RequestFailedException)
-                    {
-                        // Lease may have expired, ignore
-                    }
-                }
-            }
-        }
-
-        throw new InvalidOperationException("Failed to update episodes.json after maximum retries");
-    }
-
-    private async Task RefreshAppServiceCacheAsync(string feedId, CancellationToken cancellationToken)
+    private async Task CallNormalizationCompleteAsync(string jobId, NormalizationCompleteRequest request, CancellationToken cancellationToken)
     {
         if (string.IsNullOrEmpty(_settings.AppServiceUrl))
         {
-            _logger.LogWarning("AppServiceUrl not configured, skipping cache refresh");
-            return;
+            throw new InvalidOperationException("AppServiceUrl not configured, cannot signal normalization completion");
         }
 
-        try
+        using var client = _httpClientFactory.CreateClient();
+        client.Timeout = TimeSpan.FromSeconds(30);
+
+        if (!string.IsNullOrEmpty(_settings.InternalKey))
         {
-            using var client = _httpClientFactory.CreateClient();
-            client.Timeout = TimeSpan.FromSeconds(30);
-
-            if (!string.IsNullOrEmpty(_settings.InternalKey))
-            {
-                client.DefaultRequestHeaders.Add("X-Internal-Key", _settings.InternalKey);
-            }
-
-            var response = await client.PostAsync($"{_settings.AppServiceUrl}/api/internal/feeds/{feedId}/refresh", null, cancellationToken);
-
-            if (response.IsSuccessStatusCode)
-            {
-                _logger.LogDebug("Cache refresh successful for feed {FeedId}", feedId);
-            }
-            else
-            {
-                _logger.LogWarning("Cache refresh failed for feed {FeedId}: {StatusCode}", feedId, response.StatusCode);
-            }
+            client.DefaultRequestHeaders.Add("X-Internal-Key", _settings.InternalKey);
         }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to refresh cache for feed {FeedId}", feedId);
-            // Don't fail the job if cache refresh fails - episode is already created
-        }
+
+        var json = JsonSerializer.Serialize(request, JsonOptions);
+        using var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        var response = await client.PostAsync($"{_settings.AppServiceUrl}/api/internal/jobs/{jobId}/normalization-complete", content, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        _logger.LogInformation("Signaled normalization-complete for job {JobId} (success={Success})", jobId, request.Success);
     }
 
     private static async Task<JobStatusEntity?> GetJobEntityAsync(TableClient tableClient, string jobId, CancellationToken cancellationToken)
@@ -894,8 +798,7 @@ public class NormalizationFunction
             var refreshed = await GetJobEntityAsync(tableClient, job.JobId, cancellationToken);
             if (refreshed?.GetJobStatus() == JobStatus.Cancelled)
             {
-                _logger.LogInformation("Job {JobId} was cancelled during transition to Processing, cleaning up", job.JobId);
-                await CleanupPendingBlobAsync(job, cancellationToken);
+                _logger.LogInformation("Job {JobId} was cancelled during transition to Processing, skipping", job.JobId);
 
                 return false;
             }
@@ -905,13 +808,6 @@ public class NormalizationFunction
 
             return true;
         }
-    }
-
-    private async Task CleanupPendingBlobAsync(NormalizationJob job, CancellationToken cancellationToken)
-    {
-        var containerClient = _blobClient.GetBlobContainerClient(_settings.ContainerName);
-        var pendingBlobPath = $"{job.FeedId}/pending/{job.JobId}/{job.FileName}";
-        await containerClient.GetBlobClient(pendingBlobPath).DeleteIfExistsAsync(cancellationToken: cancellationToken);
     }
 
     private CancellationTokenSource CreateCancellationCheckingSource(TableClient tableClient, string jobId, CancellationToken parentToken)
