@@ -50,7 +50,7 @@ public class JobCompletionServiceTests
 
         // Assert - job still Processing (transcription not done)
         var entity = _jobService.GetEntity(jobId)!;
-        Assert.True(entity.NormalizationComplete);
+        Assert.Equal(true, entity.NormalizationComplete);
         Assert.Equal(nameof(JobStatus.Processing), entity.Status);
         Assert.Null(entity.EpisodeId);
     }
@@ -274,6 +274,7 @@ public class JobCompletionServiceTests
         public Task DeleteIconAsync(string feedId) => Task.CompletedTask;
         public Task SaveEpisodeMetadataAsync(string feedId, string metadataJson) => Task.CompletedTask;
         public Task<string?> LoadEpisodeMetadataAsync(string feedId) => Task.FromResult<string?>(null);
+        public Task<Stream> DownloadPendingBlobAsync(string feedId, string jobId, string fileName) => Task.FromResult<Stream>(Stream.Null);
         public Task DeletePendingJobBlobsAsync(string feedId, string jobId) => Task.CompletedTask;
         public Task<string?> LoadPushSubscriptionsAsync(string feedId) => Task.FromResult<string?>(null);
         public Task SavePushSubscriptionsAsync(string feedId, string subscriptionsJson) => Task.CompletedTask;

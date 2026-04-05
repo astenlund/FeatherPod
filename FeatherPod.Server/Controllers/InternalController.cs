@@ -97,7 +97,7 @@ public class InternalController : ControllerBase
 
     /// <summary>
     /// Receive normalization completion signal from Azure Function.
-    /// Delegates to JobCompletionService for join logic (built in Task 8).
+    /// Delegates to JobCompletionService for fork-join episode creation.
     /// </summary>
     [HttpPost("jobs/{jobId}/normalization-complete")]
     [ProducesResponseType(StatusCodes.Status200OK)]

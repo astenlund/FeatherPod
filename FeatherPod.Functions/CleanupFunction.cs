@@ -162,7 +162,7 @@ public class CleanupFunction
                     var job = jobResponse.Value;
 
                     // Active transcription — don't delete pending blob
-                    if (job.TranscriptionStatus == "Running")
+                    if (job.TranscriptionStatus == TranscriptionStatuses.Running)
                     {
                         if (job.TranscriptionStartedAt.HasValue &&
                             job.TranscriptionStartedAt.Value >= DateTimeOffset.UtcNow.AddHours(-24))
@@ -171,7 +171,7 @@ public class CleanupFunction
                         }
 
                         // Stale transcription (>24h) — mark failed, then trigger join
-                        job.TranscriptionStatus = "Failed";
+                        job.TranscriptionStatus = TranscriptionStatuses.Failed;
                         job.TranscriptionError = "Transcription timed out";
                         await tableClient.UpdateEntityAsync(job, job.ETag, TableUpdateMode.Merge, cancellationToken);
                         _logger.LogWarning("Marked stale transcription as failed for job {JobId}", job.RowKey);

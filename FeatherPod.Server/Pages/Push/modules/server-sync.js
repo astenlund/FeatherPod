@@ -189,6 +189,7 @@ export function mergeServerJobs(serverJobs) {
             stale.eventSource = null;
         }
         progressAnimator.removeSlot(stale.id);
+        progressAnimator.removeSlot(stale.id + '-trans');
         removeQueueItemFromDOM(stale.id);
         uploadQueue.splice(uploadQueue.indexOf(stale), 1);
         if (stale._resolveMonitor) {
@@ -217,6 +218,7 @@ export function mergeServerJobs(serverJobs) {
             }
             existing.status = 'cancelled';
             progressAnimator.removeSlot(existing.id);
+            progressAnimator.removeSlot(existing.id + '-trans');
             removeQueueItemFromDOM(existing.id);
             uploadQueue.splice(uploadQueue.indexOf(existing), 1);
             if (existing._resolveMonitor) {
@@ -237,6 +239,9 @@ export function mergeServerJobs(serverJobs) {
             existing.title = serverJob.title || existing.title;
             existing.stage = serverJob.stage || existing.stage;
             existing.progress = 100;
+            existing.transcriptionStatus = serverJob.transcriptionStatus || null;
+            existing.transcriptionProgress = serverJob.transcriptionProgress ?? null;
+            existing.transcriptionError = serverJob.transcriptionError || null;
             if (existing.status === 'completed' && existing.localSourceIndex != null) {
                 notifyLocalSourceUploaded(existing.localSourceIndex);
             }
@@ -245,6 +250,7 @@ export function mergeServerJobs(serverJobs) {
                 existing._resolveMonitor = null;
             }
             progressAnimator.removeSlot(existing.id);
+            progressAnimator.removeSlot(existing.id + '-trans');
             changedEntryIds.add(existing.id);
         } else if (existing.status === 'normalizing') {
             existing.title = serverJob.title || existing.title;
@@ -253,6 +259,13 @@ export function mergeServerJobs(serverJobs) {
             if (existing.stage !== newStage || existing.progress !== newProgress) {
                 existing.stage = newStage;
                 existing.progress = newProgress;
+                changedEntryIds.add(existing.id);
+            }
+            // Reconcile transcription state (independent track)
+            if (serverJob.transcriptionStatus && serverJob.transcriptionStatus !== existing.transcriptionStatus) {
+                existing.transcriptionStatus = serverJob.transcriptionStatus;
+                existing.transcriptionProgress = serverJob.transcriptionProgress ?? null;
+                existing.transcriptionError = serverJob.transcriptionError || null;
                 changedEntryIds.add(existing.id);
             }
         } else if (existing.status === 'failed' && !isServerTerminal) {
@@ -270,15 +283,20 @@ export function mergeServerJobs(serverJobs) {
             existing.episodeId = serverJob.episodeId || existing.episodeId;
             existing.stage = serverJob.stage || existing.stage;
             existing.progress = 100;
+            existing.transcriptionStatus = serverJob.transcriptionStatus || null;
+            existing.transcriptionProgress = serverJob.transcriptionProgress ?? null;
+            existing.transcriptionError = serverJob.transcriptionError || null;
             if (existing.localSourceIndex != null) {
                 notifyLocalSourceUploaded(existing.localSourceIndex);
             }
             progressAnimator.removeSlot(existing.id);
+            progressAnimator.removeSlot(existing.id + '-trans');
             changedEntryIds.add(existing.id);
         } else if (existing.status === 'failed' && serverStatus === 'Cancelled') {
             // Server says cancelled - remove from queue
             existing.status = 'cancelled';
             progressAnimator.removeSlot(existing.id);
+            progressAnimator.removeSlot(existing.id + '-trans');
             removeQueueItemFromDOM(existing.id);
             uploadQueue.splice(uploadQueue.indexOf(existing), 1);
             removedEntries = true;
@@ -315,6 +333,9 @@ export function mergeServerJobs(serverJobs) {
                 title: serverJob.title || null,
                 validationError: false,
                 startedAt: serverJob.queuedAt ? new Date(serverJob.queuedAt).getTime() : Date.now(),
+                transcriptionStatus: serverJob.transcriptionStatus || null,
+                transcriptionProgress: serverJob.transcriptionProgress ?? null,
+                transcriptionError: serverJob.transcriptionError || null,
                 _resolveMonitor: null
             });
         }

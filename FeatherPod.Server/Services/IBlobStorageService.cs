@@ -34,6 +34,7 @@ public interface IBlobStorageService
     Task<string?> LoadEpisodeMetadataAsync(string feedId);
 
     // Pending blob operations
+    Task<Stream> DownloadPendingBlobAsync(string feedId, string jobId, string fileName);
     Task DeletePendingJobBlobsAsync(string feedId, string jobId);
 
     // Push subscription operations (feed-aware)

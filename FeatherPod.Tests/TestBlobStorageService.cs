@@ -229,6 +229,13 @@ public class TestBlobStorageService : IBlobStorageService
         await File.WriteAllTextAsync(Path.Combine(feedDir, "push-subscriptions.json"), subscriptionsJson);
     }
 
+    public Task<Stream> DownloadPendingBlobAsync(string feedId, string jobId, string fileName)
+    {
+        var filePath = Path.Combine(_rootPath, feedId, "pending", jobId, fileName);
+
+        return Task.FromResult<Stream>(File.OpenRead(filePath));
+    }
+
     public async Task DeletePendingJobBlobsAsync(string feedId, string jobId)
     {
         var pendingPath = Path.Combine(_rootPath, feedId, "pending", jobId);

@@ -277,6 +277,7 @@ export async function dismissEntry(entryId) {
     uploadQueue.splice(index, 1);
     removeQueueItemFromDOM(entryId);
     progressAnimator.removeSlot(entryId);
+    progressAnimator.removeSlot(entryId + '-trans');
 
     saveQueueState();
     checkAllComplete();
@@ -497,11 +498,13 @@ async function processEntry(entry) {
  * @param {QueueEntry} entry
  * @param {Object} job
  */
+/**
+ * Update a queue entry from a job status event. Delegates to the independent
+ * normalization and transcription track handlers.
+ * @param {QueueEntry} entry
+ * @param {Object} job - JobStatusResponse from server
+ */
 export function updateEntryFromJobStatus(entry, job) {
-    if (!job.stage) {
-        return;
-    }
-
     if (job.title && job.title !== entry.title) {
         entry.title = job.title;
         const nameEl = document.querySelector('#queue-item-' + entry.id + ' .queue-item-name');
@@ -509,6 +512,21 @@ export function updateEntryFromJobStatus(entry, job) {
             nameEl.textContent = truncate(job.title, 50);
             nameEl.title = entry.fileName;
         }
+    }
+
+    updateNormalizationProgress(entry, job);
+    updateTranscriptionProgress(entry, job);
+}
+
+/**
+ * Update the normalization progress bar from a job status event.
+ * Requires job.stage to be set by the Function; no-ops if stage is absent.
+ * @param {QueueEntry} entry
+ * @param {Object} job
+ */
+function updateNormalizationProgress(entry, job) {
+    if (!job.stage) {
+        return;
     }
 
     entry.stage = job.stage;
@@ -538,32 +556,41 @@ export function updateEntryFromJobStatus(entry, job) {
             progressBar.style.width = '';
         }
     }
+}
 
-    // Transcription track (independent from normalization)
-    if (job.transcriptionStatus) {
-        entry.transcriptionStatus = job.transcriptionStatus;
-        entry.transcriptionProgress = job.transcriptionProgress;
-        entry.transcriptionError = job.transcriptionError;
+/**
+ * Update the transcription progress bar from a job status event.
+ * Independent from normalization -- processes regardless of normalization stage.
+ * @param {QueueEntry} entry
+ * @param {Object} job
+ */
+function updateTranscriptionProgress(entry, job) {
+    if (!job.transcriptionStatus) {
+        return;
+    }
 
-        const transSlotId = entry.id + '-trans';
-        const transBar = getTranscriptionProgressBar(entry.id);
+    entry.transcriptionStatus = job.transcriptionStatus;
+    entry.transcriptionProgress = job.transcriptionProgress;
+    entry.transcriptionError = job.transcriptionError;
 
-        if (job.transcriptionStatus === 'Running') {
-            showTranscriptionBar(entry.id);
+    const transSlotId = entry.id + '-trans';
+    const transBar = getTranscriptionProgressBar(entry.id);
 
-            if (job.transcriptionProgress != null && transBar) {
-                progressAnimator.setTarget(job.transcriptionProgress, 'Transcribing', transSlotId, job.tickMs);
-                progressAnimator.start(transBar, transSlotId);
-            }
-        } else if (job.transcriptionStatus === 'Failed') {
-            progressAnimator.removeSlot(transSlotId);
-            setTranscriptionBarFailed(entry.id);
-        } else if (job.transcriptionStatus === 'Completed') {
-            progressAnimator.removeSlot(transSlotId);
-            showTranscriptionBar(entry.id);
-            if (transBar) {
-                transBar.style.width = '100%';
-            }
+    if (job.transcriptionStatus === 'Running') {
+        showTranscriptionBar(entry.id);
+
+        if (job.transcriptionProgress != null && transBar) {
+            progressAnimator.setTarget(job.transcriptionProgress, 'Transcribing', transSlotId, job.tickMs);
+            progressAnimator.start(transBar, transSlotId);
+        }
+    } else if (job.transcriptionStatus === 'Failed') {
+        progressAnimator.removeSlot(transSlotId);
+        setTranscriptionBarFailed(entry.id);
+    } else if (job.transcriptionStatus === 'Completed') {
+        progressAnimator.removeSlot(transSlotId);
+        showTranscriptionBar(entry.id);
+        if (transBar) {
+            transBar.style.width = '100%';
         }
     }
 }
@@ -827,6 +854,7 @@ async function pollEntryNormalization(entry) {
             // Stop polling but don't mark as failed - mergeServerJobs on
             // visibility change will resolve the actual status from the server
             progressAnimator.removeSlot(entry.id);
+            progressAnimator.removeSlot(entry.id + '-trans');
 
             return;
         }
@@ -869,6 +897,7 @@ export async function cancelEntry(entryId) {
         entry.status = 'cancelled';
         progressAnimator.reset(entry.id);
         progressAnimator.removeSlot(entry.id);
+        progressAnimator.removeSlot(entry.id + '-trans');
         removeQueueItemFromDOM(entryId);
         uploadQueue.splice(uploadQueue.indexOf(entry), 1);
 
@@ -973,6 +1002,7 @@ export function clearTerminalEntries() {
         }
         removeQueueItemFromDOM(entry.id);
         progressAnimator.removeSlot(entry.id);
+        progressAnimator.removeSlot(entry.id + '-trans');
         const idx = uploadQueue.indexOf(entry);
         if (idx !== -1) {
             uploadQueue.splice(idx, 1);
@@ -1002,7 +1032,10 @@ export function saveQueueState() {
             error: e.error,
             localSourceIndex: e.localSourceIndex,
             validationError: e.validationError,
-            startedAt: e.startedAt
+            startedAt: e.startedAt,
+            transcriptionStatus: e.transcriptionStatus || null,
+            transcriptionProgress: e.transcriptionProgress ?? null,
+            transcriptionError: e.transcriptionError || null
         }));
         localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(serialized));
     } catch (e) {

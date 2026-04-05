@@ -22,7 +22,7 @@ public class JobStatusEntity : ITableEntity
     /// <summary>
     /// Current status of the job.
     /// </summary>
-    public string Status { get; set; } = nameof(JobStatus.Queued);
+    public string? Status { get; set; }
 
     /// <summary>
     /// The Episode ID once created (only set when Completed).
@@ -64,7 +64,7 @@ public class JobStatusEntity : ITableEntity
     /// <summary>
     /// Whether normalization has completed (success or failure). Set by Function via normalization-complete endpoint.
     /// </summary>
-    public bool NormalizationComplete { get; set; }
+    public bool? NormalizationComplete { get; set; }
 
     /// <summary>
     /// Error message if normalization failed.

@@ -1148,7 +1148,7 @@ h1 {
 
 .queue-item-progress-wrap--trans.trans-failed .queue-item-progress {
     width: 100%;
-    background: var(--error);
+    background: var(--error-500);
     opacity: 0.4;
 }
 

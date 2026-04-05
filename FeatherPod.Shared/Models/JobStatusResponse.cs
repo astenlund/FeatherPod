@@ -144,7 +144,7 @@ public record JobStatusResponse
         return new()
         {
             JobId = entity.RowKey,
-            Status = entity.Status,
+            Status = entity.Status ?? nameof(JobStatus.Queued),
             EpisodeId = entity.EpisodeId,
             FeedId = entity.FeedId,
             Error = entity.Error,
@@ -159,7 +159,7 @@ public record JobStatusResponse
             TotalDurationMs = entity.TotalDurationMs,
             FileName = entity.FileName,
             Title = entity.Title,
-            NormalizationComplete = entity.NormalizationComplete,
+            NormalizationComplete = entity.NormalizationComplete ?? false,
             NormalizationError = entity.NormalizationError,
             TranscriptionStatus = entity.TranscriptionStatus,
             TranscriptionProgress = entity.TranscriptionProgress,

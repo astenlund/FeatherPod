@@ -13,6 +13,7 @@ namespace FeatherPod.Server.Services;
 public class SpeechTranscriptionService
 {
     private readonly string? _endpoint;
+    private readonly DefaultAzureCredential _credential = new();
     private readonly ILogger<SpeechTranscriptionService> _logger;
 
     /// <summary>
@@ -50,7 +51,7 @@ public class SpeechTranscriptionService
             throw new InvalidOperationException("Speech transcription is not configured");
         }
 
-        var speechConfig = SpeechConfig.FromEndpoint(new Uri(_endpoint!), new DefaultAzureCredential());
+        var speechConfig = SpeechConfig.FromEndpoint(new Uri(_endpoint!), _credential);
         speechConfig.SpeechRecognitionLanguage = "en-US";
 
         // 16kHz mono 16-bit PCM

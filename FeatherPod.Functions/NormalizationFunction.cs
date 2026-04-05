@@ -368,19 +368,8 @@ public class NormalizationFunction
             }
             catch (Exception signalEx)
             {
-                // Safety net: if App Service is unreachable, write failure directly to Table Storage
                 _logger.LogWarning(signalEx, "Failed to signal App Service for job {JobId}, falling back to direct write", job.JobId);
-                var fallbackPartial = new JobStatusEntity
-                {
-                    PartitionKey = "jobs",
-                    RowKey = job.JobId,
-                    Status = nameof(JobStatus.Failed),
-                    NormalizationComplete = true,
-                    NormalizationError = sanitizedError,
-                    Error = sanitizedError,
-                    CompletedAt = DateTimeOffset.UtcNow
-                };
-                await tableClient.UpdateEntityAsync(fallbackPartial, Azure.ETag.All, TableUpdateMode.Merge, cancellationToken);
+                await WriteFallbackFailureAsync(tableClient, job.JobId, sanitizedError, cancellationToken);
             }
 
             throw;
@@ -486,91 +475,33 @@ public class NormalizationFunction
         }
         catch (Exception signalEx)
         {
-            // Safety net: if App Service is unreachable, write failure directly
             _logger.LogWarning(signalEx, "Failed to signal App Service for poison job {JobId}, falling back to direct write", job.JobId);
-            var fallbackPartial = new JobStatusEntity
-            {
-                PartitionKey = "jobs",
-                RowKey = job.JobId,
-                Status = nameof(JobStatus.Failed),
-                NormalizationComplete = true,
-                NormalizationError = error,
-                Error = error,
-                CompletedAt = DateTimeOffset.UtcNow
-            };
-            await tableClient.UpdateEntityAsync(fallbackPartial, Azure.ETag.All, TableUpdateMode.Merge, cancellationToken);
+            await WriteFallbackFailureAsync(tableClient, job.JobId, error, cancellationToken);
         }
 
         _logger.LogInformation("Poison job {JobId} handled, signaled normalization failure", job.JobId);
     }
 
-    private async Task UpdateJobStatusAsync(
-        TableClient tableClient,
-        string jobId,
-        string feedId,
-        JobStatus status,
-        string? progressMode = null,
-        HubConnection? signalRConnection = null,
-        string? episodeId = null,
-        string? error = null,
-        CancellationToken cancellationToken = default)
+    private async Task TransitionToProcessingAsync(TableClient tableClient, string jobId, CancellationToken cancellationToken)
     {
-        // Read existing entity for terminal-state guard and ETag
         var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
         var entity = existingResponse.Value;
 
-        // Don't overwrite a terminal state — first terminal state wins (e.g., user cancelled)
-        var currentStatus = entity.GetJobStatus();
-        if (currentStatus is JobStatus.Cancelled or JobStatus.Completed or JobStatus.Failed)
+        if (entity.GetJobStatus() is JobStatus.Cancelled or JobStatus.Completed or JobStatus.Failed)
         {
-            _logger.LogDebug("Skipping status update to {NewStatus} for job {JobId} — already in terminal state {Status}", status, jobId, currentStatus);
+            _logger.LogDebug("Skipping transition to Processing for job {JobId} — already in terminal state {Status}", jobId, entity.Status);
 
             return;
         }
 
-        // Partial entity Merge — only write the fields we're changing
         var partial = new JobStatusEntity
         {
             PartitionKey = "jobs",
             RowKey = jobId,
-            Status = status.ToString(),
-            EpisodeId = episodeId,
-            Error = error
+            Status = nameof(JobStatus.Processing)
         };
 
-        if (status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
-        {
-            partial.CompletedAt = DateTimeOffset.UtcNow;
-        }
-
         await tableClient.UpdateEntityAsync(partial, entity.ETag, TableUpdateMode.Merge, cancellationToken);
-
-        // Apply partial fields to the read entity for push notifications
-        entity.Status = partial.Status;
-        entity.EpisodeId = partial.EpisodeId;
-        entity.Error = partial.Error;
-        if (partial.CompletedAt.HasValue)
-        {
-            entity.CompletedAt = partial.CompletedAt;
-        }
-
-        // Fire-and-forget push for terminal states
-        if (progressMode == "push")
-        {
-            _ = PushProgressToServerAsync(jobId, entity);
-        }
-        else if (progressMode == "signalr" && signalRConnection != null)
-        {
-            // Await terminal states to ensure delivery before HubConnection disposal
-            if (status is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
-            {
-                await PushProgressViaSignalRAsync(signalRConnection, jobId, entity);
-            }
-            else
-            {
-                _ = PushProgressViaSignalRAsync(signalRConnection, jobId, entity);
-            }
-        }
     }
 
     private async Task UpdateProgressAsync(TableClient tableClient, string jobId, ProgressUpdate progress, string? progressMode = null, HubConnection? signalRConnection = null)
@@ -756,6 +687,21 @@ public class NormalizationFunction
         _logger.LogInformation("Signaled normalization-complete for job {JobId} (success={Success})", jobId, request.Success);
     }
 
+    private static async Task WriteFallbackFailureAsync(TableClient tableClient, string jobId, string error, CancellationToken cancellationToken)
+    {
+        var partial = new JobStatusEntity
+        {
+            PartitionKey = "jobs",
+            RowKey = jobId,
+            Status = nameof(JobStatus.Failed),
+            NormalizationComplete = true,
+            NormalizationError = error,
+            Error = error,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+        await tableClient.UpdateEntityAsync(partial, Azure.ETag.All, TableUpdateMode.Merge, cancellationToken);
+    }
+
     private static async Task<JobStatusEntity?> GetJobEntityAsync(TableClient tableClient, string jobId, CancellationToken cancellationToken)
     {
         try
@@ -774,7 +720,7 @@ public class NormalizationFunction
     {
         if (entity == null)
         {
-            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Processing, cancellationToken: cancellationToken);
+            await TransitionToProcessingAsync(tableClient, job.JobId, cancellationToken);
 
             return true;
         }
@@ -804,7 +750,7 @@ public class NormalizationFunction
             }
 
             // Not cancelled, fall back to unconditional upsert
-            await UpdateJobStatusAsync(tableClient, job.JobId, job.FeedId, JobStatus.Processing, cancellationToken: cancellationToken);
+            await TransitionToProcessingAsync(tableClient, job.JobId, cancellationToken);
 
             return true;
         }

@@ -52,7 +52,7 @@ public class JobCompletionService
                 return;
             }
 
-            if (entity.NormalizationComplete)
+            if (entity.NormalizationComplete == true)
             {
                 _logger.LogDebug("Normalization already marked complete for job {JobId}, skipping", jobId);
 
@@ -102,7 +102,7 @@ public class JobCompletionService
         }
 
         // Already completed by another caller
-        if (entity.GetJobStatus() is JobStatus.Completed or JobStatus.Failed)
+        if (entity.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
         {
             _logger.LogDebug("Job {JobId} already in terminal state {Status}", jobId, entity.Status);
 
@@ -110,13 +110,13 @@ public class JobCompletionService
         }
 
         // Check if both tracks are terminal
-        if (!entity.NormalizationComplete)
+        if (entity.NormalizationComplete != true)
         {
             return;
         }
 
         // Transcription: null = disabled (terminal for join), Completed/Failed = terminal
-        var transcriptionTerminal = entity.TranscriptionStatus is null or "Completed" or "Failed";
+        var transcriptionTerminal = entity.TranscriptionStatus is null or TranscriptionStatuses.Completed or TranscriptionStatuses.Failed;
         if (!transcriptionTerminal)
         {
             return;
@@ -189,8 +189,8 @@ public class JobCompletionService
 
             var transcriptStatus = entity.TranscriptionStatus switch
             {
-                "Completed" => (TranscriptStatus?)TranscriptStatus.Available,
-                "Failed" => TranscriptStatus.Failed,
+                TranscriptionStatuses.Completed => (TranscriptStatus?)TranscriptStatus.Available,
+                TranscriptionStatuses.Failed => TranscriptStatus.Failed,
                 _ => null
             };
 

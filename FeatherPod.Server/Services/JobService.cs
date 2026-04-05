@@ -173,9 +173,9 @@ public class JobService : IJobService
                 };
 
                 // Cancel transcription if it's running or queued
-                if (entity.TranscriptionStatus is "Running" or "Queued")
+                if (entity.TranscriptionStatus is TranscriptionStatuses.Running or TranscriptionStatuses.Queued)
                 {
-                    partial.TranscriptionStatus = "Failed";
+                    partial.TranscriptionStatus = TranscriptionStatuses.Failed;
                     partial.TranscriptionError = "Cancelled by user";
                 }
 

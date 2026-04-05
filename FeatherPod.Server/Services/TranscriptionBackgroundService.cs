@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using Azure.Storage.Blobs;
 using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
 using FFMpegCore;
@@ -16,19 +15,16 @@ public class TranscriptionBackgroundService : BackgroundService
     private readonly ITranscriptionChannel _channel;
     private readonly SpeechTranscriptionService _speechService;
     private readonly IBlobStorageService _blobService;
-    private readonly BlobServiceClient _blobClient;
     private readonly IJobService _jobService;
     private readonly IJobProgressChannel _progressChannel;
     private readonly JobCompletionService _completionService;
     private readonly ILogger<TranscriptionBackgroundService> _logger;
-    private readonly string _containerName;
     private readonly SemaphoreSlim _concurrency;
 
     public TranscriptionBackgroundService(
         ITranscriptionChannel channel,
         SpeechTranscriptionService speechService,
         IBlobStorageService blobService,
-        BlobServiceClient blobClient,
         IJobService jobService,
         IJobProgressChannel progressChannel,
         JobCompletionService completionService,
@@ -39,7 +35,6 @@ public class TranscriptionBackgroundService : BackgroundService
         _channel = channel;
         _speechService = speechService;
         _blobService = blobService;
-        _blobClient = blobClient;
         _jobService = jobService;
         _progressChannel = progressChannel;
         _completionService = completionService;
@@ -53,7 +48,6 @@ public class TranscriptionBackgroundService : BackgroundService
                 tc.Complete();
             }
         });
-        _containerName = configuration.GetSection("Azure").GetValue<string>("ContainerName") ?? "featherpod";
 
         var maxConcurrent = configuration.GetValue("AzureSpeech:MaxConcurrent", 3);
         _concurrency = new SemaphoreSlim(maxConcurrent, maxConcurrent);
@@ -67,9 +61,6 @@ public class TranscriptionBackgroundService : BackgroundService
 
             return;
         }
-
-        // Startup recovery: re-submit interrupted jobs
-        await RecoverInterruptedJobsAsync(stoppingToken);
 
         _logger.LogInformation("TranscriptionBackgroundService started, processing requests");
 
@@ -105,11 +96,12 @@ public class TranscriptionBackgroundService : BackgroundService
         _logger.LogInformation("Starting transcription for job {JobId}", request.JobId);
 
         // Mark transcription as running
-        await _jobService.MergeJobFieldsAsync(request.JobId, e =>
+        var running = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
         {
-            e.TranscriptionStatus = "Running";
+            e.TranscriptionStatus = TranscriptionStatuses.Running;
             e.TranscriptionStartedAt = DateTimeOffset.UtcNow;
         }, ct);
+        PublishProgress(request.JobId, running);
 
         string? tempInputFile = null;
         string? tempWavFile = null;
@@ -117,12 +109,8 @@ public class TranscriptionBackgroundService : BackgroundService
         try
         {
             // Download pending blob to temp file
-            var containerClient = _blobClient.GetBlobContainerClient(_containerName);
-            var pendingBlobPath = $"{request.FeedId}/pending/{request.JobId}/{request.FileName}";
-            var blobClient = containerClient.GetBlobClient(pendingBlobPath);
-
             tempInputFile = Path.Combine(Path.GetTempPath(), $"transcribe-{request.JobId}{Path.GetExtension(request.FileName)}");
-            await using (var downloadStream = await blobClient.OpenReadAsync(cancellationToken: ct))
+            await using (var downloadStream = await _blobService.DownloadPendingBlobAsync(request.FeedId, request.JobId, request.FileName))
             await using (var fileStream = File.Create(tempInputFile))
             {
                 await downloadStream.CopyToAsync(fileStream, ct);
@@ -147,38 +135,50 @@ public class TranscriptionBackgroundService : BackgroundService
             };
 
             process.Start();
+            // Read stderr before WaitForExit to avoid pipe buffer deadlock
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
             await process.WaitForExitAsync(ct);
+            var stderr = await stderrTask;
 
             if (process.ExitCode != 0)
             {
-                var stderr = await process.StandardError.ReadToEndAsync(ct);
                 throw new InvalidOperationException($"FFmpeg WAV conversion failed (exit {process.ExitCode}): {stderr[..Math.Min(500, stderr.Length)]}");
             }
 
             // Get duration from converted WAV for progress calculation
-            var mediaInfo = await FFProbe.AnalyseAsync(tempWavFile, cancellationToken: ct);
+            var ffprobeBinaryDir = Path.GetDirectoryName(FFmpegBinaryManager.GetFFprobePath());
+            var ffOptions = new FFOptions { BinaryFolder = ffprobeBinaryDir ?? string.Empty };
+            var mediaInfo = await FFProbe.AnalyseAsync(tempWavFile, ffOptions, ct);
             var totalDuration = mediaInfo.Duration;
 
             _logger.LogDebug("WAV conversion complete: {Duration}", totalDuration);
 
-            // Transcribe with progress
+            // Transcribe with progress (throttled to avoid hammering Table Storage)
             await using var wavStream = File.OpenRead(tempWavFile);
+            var lastProgressUpdate = DateTime.MinValue;
+            var progressThrottle = TimeSpan.FromMilliseconds(500);
             var vtt = await _speechService.TranscribeAsync(wavStream, totalDuration, progress =>
             {
-                _ = _jobService.MergeJobFieldsAsync(request.JobId, e =>
+                var now = DateTime.UtcNow;
+                if (progress < 100 && now - lastProgressUpdate < progressThrottle)
                 {
-                    e.TranscriptionProgress = progress;
-                }, CancellationToken.None);
+                    return;
+                }
 
-                // Publish progress to SSE/SignalR consumers
-                var entity = new JobStatusEntity
+                lastProgressUpdate = now;
+
+                _ = Task.Run(async () =>
                 {
-                    PartitionKey = "jobs",
-                    RowKey = request.JobId,
-                    TranscriptionStatus = "Running",
-                    TranscriptionProgress = progress
-                };
-                _progressChannel.Publish(request.JobId, JobStatusResponse.FromEntity(entity));
+                    var merged = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
+                    {
+                        e.TranscriptionProgress = progress;
+                    }, CancellationToken.None);
+
+                    if (merged != null)
+                    {
+                        _progressChannel.Publish(request.JobId, JobStatusResponse.FromEntity(merged));
+                    }
+                });
             }, ct);
 
             if (vtt != null)
@@ -186,21 +186,23 @@ public class TranscriptionBackgroundService : BackgroundService
                 // Upload VTT to blob storage
                 await _blobService.UploadTranscriptAsync(request.FeedId, request.EpisodeId, vtt);
 
-                await _jobService.MergeJobFieldsAsync(request.JobId, e =>
+                var completed = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
                 {
-                    e.TranscriptionStatus = "Completed";
+                    e.TranscriptionStatus = TranscriptionStatuses.Completed;
                     e.TranscriptionProgress = 100;
                 }, ct);
+                PublishProgress(request.JobId, completed);
 
                 _logger.LogInformation("Transcription completed for job {JobId}", request.JobId);
             }
             else
             {
-                await _jobService.MergeJobFieldsAsync(request.JobId, e =>
+                var noOutput = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
                 {
-                    e.TranscriptionStatus = "Failed";
+                    e.TranscriptionStatus = TranscriptionStatuses.Failed;
                     e.TranscriptionError = "Transcription produced no output";
                 }, ct);
+                PublishProgress(request.JobId, noOutput);
 
                 _logger.LogWarning("Transcription produced no output for job {JobId}", request.JobId);
             }
@@ -213,11 +215,12 @@ public class TranscriptionBackgroundService : BackgroundService
         {
             _logger.LogError(ex, "Transcription failed for job {JobId}", request.JobId);
 
-            await _jobService.MergeJobFieldsAsync(request.JobId, e =>
+            var failed = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
             {
-                e.TranscriptionStatus = "Failed";
+                e.TranscriptionStatus = TranscriptionStatuses.Failed;
                 e.TranscriptionError = ex.Message.Length > 500 ? ex.Message[..500] : ex.Message;
             }, CancellationToken.None);
+            PublishProgress(request.JobId, failed);
         }
         finally
         {
@@ -229,38 +232,17 @@ public class TranscriptionBackgroundService : BackgroundService
         await _completionService.TryCompleteJobAsync(request.JobId, CancellationToken.None);
     }
 
-    private async Task RecoverInterruptedJobsAsync(CancellationToken ct)
+    private void PublishProgress(string jobId, JobStatusEntity? entity)
     {
-        try
+        if (entity != null)
         {
-            // Scan for jobs with TranscriptionStatus == "Running" or "Queued"
-            // This is a simple linear scan of the table; acceptable since it runs once on startup
-            var tableClient = new Azure.Data.Tables.TableClient(
-                _blobClient.Uri.ToString().Replace(".blob.", ".table."),
-                "normalizationjobs");
-
-            // Use IJobService to query instead of raw table client
-            // For startup recovery, we scan all non-terminal jobs
-            _logger.LogInformation("Scanning for interrupted transcription jobs...");
-
-            var cutoff = DateTimeOffset.UtcNow.AddHours(-1);
-            var staleLimit = DateTimeOffset.UtcNow.AddHours(-1);
-            var recovered = 0;
-            var failed = 0;
-
-            // Query all jobs via the existing job service's table scan
-            // Since IJobService doesn't expose a general query, we'll use GetActiveJobsByFeedAsync
-            // across all feeds. This is impractical. Instead, skip startup recovery for now
-            // and let the CleanupFunction handle stale transcriptions.
-            // TODO: Add a query method to IJobService for startup recovery
-
-            _logger.LogInformation("Startup recovery: recovered {Recovered}, marked failed {Failed}", recovered, failed);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Startup recovery scan failed, will rely on CleanupFunction for stale jobs");
+            _progressChannel.Publish(jobId, JobStatusResponse.FromEntity(entity));
         }
     }
+
+    // TODO: Add startup recovery for interrupted transcription jobs
+    // Requires a general query method on IJobService to scan for TranscriptionStatus == "Running"/"Queued".
+    // Until then, the CleanupFunction handles stale transcriptions (>24h timeout).
 
     private void CleanupTempFile(string? path)
     {

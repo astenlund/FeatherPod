@@ -314,6 +314,15 @@ public class BlobStorageService : IBlobStorageService
         _logger.LogInformation("Saved push subscriptions for feed: {FeedId}", feedId);
     }
 
+    public async Task<Stream> DownloadPendingBlobAsync(string feedId, string jobId, string fileName)
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+        var blobPath = $"{feedId}/pending/{jobId}/{fileName}";
+        var blobClient = containerClient.GetBlobClient(blobPath);
+
+        return await blobClient.OpenReadAsync();
+    }
+
     public async Task DeletePendingJobBlobsAsync(string feedId, string jobId)
     {
         var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
