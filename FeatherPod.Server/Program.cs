@@ -73,6 +73,12 @@ class Program
         builder.Services.AddSingleton(Channel.CreateUnbounded<YouTubeDownloadJob>());
         builder.Services.AddHostedService<YouTubeDownloadService>();
 
+        // Speech transcription services
+        builder.Services.AddSingleton<SpeechTranscriptionService>();
+        builder.Services.AddSingleton<TranscriptionChannel>();
+        builder.Services.AddSingleton<ITranscriptionChannel>(sp => sp.GetRequiredService<TranscriptionChannel>());
+        builder.Services.AddHostedService<TranscriptionBackgroundService>();
+
         // Add background services
         builder.Services.AddHostedService<BlobSyncBackgroundService>();
         builder.Services.AddHostedService<TempFileCleanupService>();
