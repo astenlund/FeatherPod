@@ -161,11 +161,36 @@ public class JobService : IJobService
                     return null;
                 }
 
-                entity.Status = nameof(JobStatus.Cancelled);
-                entity.NormalizationStage = nameof(NormalizationStage.Cancelled);
-                entity.CompletedAt = DateTimeOffset.UtcNow;
+                // Partial Merge: set job-level and track-level terminal fields
+                var partial = new JobStatusEntity
+                {
+                    PartitionKey = "jobs",
+                    RowKey = jobId,
+                    Status = nameof(JobStatus.Cancelled),
+                    NormalizationStage = nameof(NormalizationStage.Cancelled),
+                    NormalizationComplete = true,
+                    CompletedAt = DateTimeOffset.UtcNow
+                };
 
-                await _tableClient.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace, cancellationToken);
+                // Cancel transcription if it's running or queued
+                if (entity.TranscriptionStatus is "Running" or "Queued")
+                {
+                    partial.TranscriptionStatus = "Failed";
+                    partial.TranscriptionError = "Cancelled by user";
+                }
+
+                await _tableClient.UpdateEntityAsync(partial, entity.ETag, TableUpdateMode.Merge, cancellationToken);
+
+                // Apply partial to entity for return value
+                entity.Status = partial.Status;
+                entity.NormalizationStage = partial.NormalizationStage;
+                entity.NormalizationComplete = partial.NormalizationComplete;
+                entity.CompletedAt = partial.CompletedAt;
+                if (partial.TranscriptionStatus != null)
+                {
+                    entity.TranscriptionStatus = partial.TranscriptionStatus;
+                    entity.TranscriptionError = partial.TranscriptionError;
+                }
                 _logger.LogInformation("Cancelled job {JobId}", jobId);
 
                 return entity;

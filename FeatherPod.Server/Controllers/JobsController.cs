@@ -192,11 +192,7 @@ public class JobsController : ControllerBase
         _progressChannel.Publish(jobId, cancelledResponse);
         _pushNotificationService.TryNotifyJobTerminal(cancelledResponse);
 
-        // Clean up pending blobs (idempotent — safe even if Function also deletes)
-        if (cancelled.FeedId != null)
-        {
-            await _blobService.DeletePendingJobBlobsAsync(cancelled.FeedId, jobId);
-        }
+        // Pending blob cleanup deferred to CleanupFunction (TranscriptionBackgroundService may still be reading)
 
         return Ok(cancelledResponse);
     }
@@ -383,6 +379,10 @@ public class JobsController : ControllerBase
                old.NormalizationStage != current.NormalizationStage ||
                old.NormalizationProgress != current.NormalizationProgress ||
                old.ProgressMessage != current.ProgressMessage ||
+               old.TranscriptionStatus != current.TranscriptionStatus ||
+               old.TranscriptionProgress != current.TranscriptionProgress ||
+               old.NormalizationComplete != current.NormalizationComplete ||
+               old.EpisodeId != current.EpisodeId ||
                old.Error != current.Error ||
                old.Title != current.Title;
     }
@@ -398,6 +398,10 @@ public class JobsController : ControllerBase
                last.Stage != current.Stage ||
                last.ProgressPercent != current.ProgressPercent ||
                last.ProgressMessage != current.ProgressMessage ||
+               last.TranscriptionStatus != current.TranscriptionStatus ||
+               last.TranscriptionProgress != current.TranscriptionProgress ||
+               last.NormalizationComplete != current.NormalizationComplete ||
+               last.EpisodeId != current.EpisodeId ||
                last.Error != current.Error ||
                last.Title != current.Title;
     }
