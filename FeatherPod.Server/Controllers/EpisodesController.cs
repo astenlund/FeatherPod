@@ -19,12 +19,14 @@ public class EpisodesController : ControllerBase
     private readonly IUserService _userService;
     private readonly IFeedEventChannel _feedEventChannel;
     private readonly IAiService _aiService;
+    private readonly ITranscriptionChannel _transcriptionChannel;
+    private readonly SpeechTranscriptionService _speechService;
     private readonly ILogger<EpisodesController> _logger;
     private readonly string _baseUrl;
     private readonly string? _progressMode;
     private readonly int _progressIntervalMs;
 
-    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IAiService aiService, ILogger<EpisodesController> logger, IConfiguration configuration)
+    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IAiService aiService, ITranscriptionChannel transcriptionChannel, SpeechTranscriptionService speechService, ILogger<EpisodesController> logger, IConfiguration configuration)
     {
         _episodeService = episodeService;
         _blobStorageService = blobStorageService;
@@ -32,6 +34,8 @@ public class EpisodesController : ControllerBase
         _userService = userService;
         _feedEventChannel = feedEventChannel;
         _aiService = aiService;
+        _transcriptionChannel = transcriptionChannel;
+        _speechService = speechService;
         _logger = logger;
         _baseUrl = configuration.GetSection("Podcast")["BaseUrl"]
             ?? throw new InvalidOperationException("Podcast.BaseUrl must be configured in appsettings.json");
@@ -164,8 +168,6 @@ public class EpisodesController : ControllerBase
 
                 var effectiveTitle = ResolveDeferredTitle(title, jobId, file.FileName);
 
-                // Queue the normalization job first, then create status entry
-                // This order prevents orphaned status entries if queue send fails
                 var job = new NormalizationJob
                 {
                     JobId = jobId,
@@ -183,8 +185,33 @@ public class EpisodesController : ControllerBase
                     ProgressIntervalMs = _progressIntervalMs
                 };
 
+                // Create entity BEFORE queue send (entity must exist when Function processes the message)
+                var transcriptionStatus = _speechService.IsAvailable ? "Queued" : null;
+                await _jobService.CreateJobStatusAsync(
+                    jobId, feedId, file.FileName, effectiveTitle,
+                    _progressMode, _progressIntervalMs,
+                    description: description,
+                    summary: summary,
+                    publishedDate: effectivePublishedDate,
+                    source: source.ToString(),
+                    originalFileSize: fileSize,
+                    episodeId: effectiveEpisodeId,
+                    transcriptionStatus: transcriptionStatus,
+                    cancellationToken: HttpContext.RequestAborted);
+
                 await _jobService.QueueNormalizationJobAsync(job, HttpContext.RequestAborted);
-                await _jobService.CreateJobStatusAsync(jobId, feedId, file.FileName, effectiveTitle, _progressMode, _progressIntervalMs, cancellationToken: HttpContext.RequestAborted);
+
+                // Submit transcription request if Speech is available
+                if (_speechService.IsAvailable)
+                {
+                    await _transcriptionChannel.SubmitAsync(new TranscriptionRequest
+                    {
+                        JobId = jobId,
+                        FeedId = feedId,
+                        FileName = file.FileName,
+                        EpisodeId = effectiveEpisodeId
+                    }, HttpContext.RequestAborted);
+                }
 
                 var response = new JobStatusResponse
                 {
