@@ -32,6 +32,7 @@ public class TranscriptionBackgroundService : BackgroundService
         IJobService jobService,
         IJobProgressChannel progressChannel,
         JobCompletionService completionService,
+        IHostApplicationLifetime lifetime,
         IConfiguration configuration,
         ILogger<TranscriptionBackgroundService> logger)
     {
@@ -43,6 +44,15 @@ public class TranscriptionBackgroundService : BackgroundService
         _progressChannel = progressChannel;
         _completionService = completionService;
         _logger = logger;
+
+        // Stop accepting new requests on shutdown; in-flight sessions get stoppingToken cancellation
+        lifetime.ApplicationStopping.Register(() =>
+        {
+            if (_channel is TranscriptionChannel tc)
+            {
+                tc.Complete();
+            }
+        });
         _containerName = configuration.GetSection("Azure").GetValue<string>("ContainerName") ?? "featherpod";
 
         var maxConcurrent = configuration.GetValue("AzureSpeech:MaxConcurrent", 3);
