@@ -19,14 +19,16 @@ public class InternalController : ControllerBase
     private readonly IJobProgressChannel _progressChannel;
     private readonly IFeedEventChannel _feedEventChannel;
     private readonly PushNotificationService _pushNotificationService;
+    private readonly JobCompletionService _jobCompletionService;
     private readonly string? _internalKey;
 
-    public InternalController(EpisodeService episodeService, IJobProgressChannel progressChannel, IFeedEventChannel feedEventChannel, PushNotificationService pushNotificationService, IConfiguration configuration)
+    public InternalController(EpisodeService episodeService, IJobProgressChannel progressChannel, IFeedEventChannel feedEventChannel, PushNotificationService pushNotificationService, JobCompletionService jobCompletionService, IConfiguration configuration)
     {
         _episodeService = episodeService;
         _progressChannel = progressChannel;
         _feedEventChannel = feedEventChannel;
         _pushNotificationService = pushNotificationService;
+        _jobCompletionService = jobCompletionService;
         _internalKey = configuration["Internal:Key"];
     }
 
@@ -100,7 +102,7 @@ public class InternalController : ControllerBase
     [HttpPost("jobs/{jobId}/normalization-complete")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public IActionResult NormalizationComplete(string jobId, [FromBody] NormalizationCompleteRequest request)
+    public async Task<IActionResult> NormalizationComplete(string jobId, [FromBody] NormalizationCompleteRequest request)
     {
         if (!string.IsNullOrEmpty(_internalKey))
         {
@@ -111,7 +113,8 @@ public class InternalController : ControllerBase
             }
         }
 
-        // Stub: JobCompletionService wired in Task 8
+        await _jobCompletionService.HandleNormalizationCompleteAsync(jobId, request, HttpContext.RequestAborted);
+
         return Ok();
     }
 
@@ -122,7 +125,7 @@ public class InternalController : ControllerBase
     [HttpPost("jobs/{jobId}/check-completion")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public IActionResult CheckCompletion(string jobId)
+    public async Task<IActionResult> CheckCompletion(string jobId)
     {
         if (!string.IsNullOrEmpty(_internalKey))
         {
@@ -133,7 +136,8 @@ public class InternalController : ControllerBase
             }
         }
 
-        // Stub: JobCompletionService wired in Task 8
+        await _jobCompletionService.TryCompleteJobAsync(jobId, HttpContext.RequestAborted);
+
         return Ok();
     }
 }

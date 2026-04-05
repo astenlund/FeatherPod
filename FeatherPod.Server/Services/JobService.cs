@@ -268,4 +268,12 @@ public class JobService : IJobService
 
         return null;
     }
+
+    public async Task MergeWithETagAsync(string jobId, Action<JobStatusEntity> configure, Azure.ETag etag, CancellationToken cancellationToken = default)
+    {
+        var partial = new JobStatusEntity { PartitionKey = "jobs", RowKey = jobId };
+        configure(partial);
+
+        await _tableClient.UpdateEntityAsync(partial, etag, TableUpdateMode.Merge, cancellationToken);
+    }
 }

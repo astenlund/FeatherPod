@@ -19,6 +19,7 @@ public class TranscriptionBackgroundService : BackgroundService
     private readonly BlobServiceClient _blobClient;
     private readonly IJobService _jobService;
     private readonly IJobProgressChannel _progressChannel;
+    private readonly JobCompletionService _completionService;
     private readonly ILogger<TranscriptionBackgroundService> _logger;
     private readonly string _containerName;
     private readonly SemaphoreSlim _concurrency;
@@ -30,6 +31,7 @@ public class TranscriptionBackgroundService : BackgroundService
         BlobServiceClient blobClient,
         IJobService jobService,
         IJobProgressChannel progressChannel,
+        JobCompletionService completionService,
         IConfiguration configuration,
         ILogger<TranscriptionBackgroundService> logger)
     {
@@ -39,6 +41,7 @@ public class TranscriptionBackgroundService : BackgroundService
         _blobClient = blobClient;
         _jobService = jobService;
         _progressChannel = progressChannel;
+        _completionService = completionService;
         _logger = logger;
         _containerName = configuration.GetSection("Azure").GetValue<string>("ContainerName") ?? "featherpod";
 
@@ -212,8 +215,8 @@ public class TranscriptionBackgroundService : BackgroundService
             CleanupTempFile(tempWavFile);
         }
 
-        // Trigger join logic (JobCompletionService wired in Task 8)
-        // For now this is a no-op; TryCompleteJobAsync will be called here
+        // Trigger join logic — if normalization is also done, this creates the episode
+        await _completionService.TryCompleteJobAsync(request.JobId, CancellationToken.None);
     }
 
     private async Task RecoverInterruptedJobsAsync(CancellationToken ct)

@@ -70,4 +70,11 @@ public interface IJobService
     /// Returns the merged view (read entity with partial applied), or null if not found or already terminal.
     /// </summary>
     Task<JobStatusEntity?> MergeJobFieldsAsync(string jobId, Action<JobStatusEntity> configure, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Merge specific fields using a caller-provided ETag (no re-read).
+    /// Used by CAS guards that need the ETag from a prior read.
+    /// Throws RequestFailedException(412) on conflict — caller must handle.
+    /// </summary>
+    Task MergeWithETagAsync(string jobId, Action<JobStatusEntity> configure, Azure.ETag etag, CancellationToken cancellationToken = default);
 }

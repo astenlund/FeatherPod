@@ -73,7 +73,8 @@ class Program
         builder.Services.AddSingleton(Channel.CreateUnbounded<YouTubeDownloadJob>());
         builder.Services.AddHostedService<YouTubeDownloadService>();
 
-        // Speech transcription services
+        // Speech transcription and join logic
+        builder.Services.AddSingleton<JobCompletionService>();
         builder.Services.AddSingleton<SpeechTranscriptionService>();
         builder.Services.AddSingleton<TranscriptionChannel>();
         builder.Services.AddSingleton<ITranscriptionChannel>(sp => sp.GetRequiredService<TranscriptionChannel>());

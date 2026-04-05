@@ -143,5 +143,6 @@ public class PushNotificationServiceTests : IDisposable
         public Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default) => Task.FromResult<JobStatusEntity?>(null);
         public Task<JobStatusEntity?> UpdateJobStatusAsync(string jobId, Action<JobStatusEntity> mutate, CancellationToken cancellationToken = default) => Task.FromResult<JobStatusEntity?>(null);
         public Task<JobStatusEntity?> MergeJobFieldsAsync(string jobId, Action<JobStatusEntity> configure, CancellationToken cancellationToken = default) => Task.FromResult<JobStatusEntity?>(null);
+        public Task MergeWithETagAsync(string jobId, Action<JobStatusEntity> configure, Azure.ETag etag, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

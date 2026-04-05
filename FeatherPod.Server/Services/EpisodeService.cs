@@ -441,6 +441,41 @@ public sealed partial class EpisodeService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Add a pre-built episode to the feed cache and save to blob storage.
+    /// Used by the join logic when both normalization and transcription tracks are complete.
+    /// The audio blob is already uploaded by the Function; this only updates episodes.json.
+    /// </summary>
+    public async Task AddEpisodeFromEntityAsync(Episode episode, CancellationToken cancellationToken = default)
+    {
+        await _lock.WaitAsync(cancellationToken);
+        try
+        {
+            if (!_episodesByFeed.TryGetValue(episode.FeedId, out var episodes))
+            {
+                episodes = [];
+                _episodesByFeed[episode.FeedId] = episodes;
+            }
+
+            var existing = episodes.FirstOrDefault(e => e.Id == episode.Id);
+            if (existing != null)
+            {
+                _logger.LogInformation("Episode {Id} already exists in feed {FeedId}, replacing", episode.Id, episode.FeedId);
+                episodes.Remove(existing);
+            }
+
+            episodes.Add(episode);
+            BumpFeedModifiedAt(episode.FeedId);
+            await SaveEpisodesAsync(episode.FeedId);
+
+            _logger.LogInformation("Added episode from entity to feed {FeedId}: {Title} ({FileName})", episode.FeedId, episode.Title, episode.FileName);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     public async Task<bool> DeleteEpisodeAsync(string feedId, string id)
     {
         await _lock.WaitAsync();
