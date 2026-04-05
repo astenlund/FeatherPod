@@ -275,6 +275,7 @@ public class JobCompletionServiceTests
         public Task SaveEpisodeMetadataAsync(string feedId, string metadataJson) => Task.CompletedTask;
         public Task<string?> LoadEpisodeMetadataAsync(string feedId) => Task.FromResult<string?>(null);
         public Task<Stream> DownloadPendingBlobAsync(string feedId, string jobId, string fileName) => Task.FromResult<Stream>(Stream.Null);
+        public Task<string> GeneratePendingBlobSasUrlAsync(string feedId, string jobId, string fileName) => Task.FromResult(string.Empty);
         public Task DeletePendingJobBlobsAsync(string feedId, string jobId) => Task.CompletedTask;
         public Task<string?> LoadPushSubscriptionsAsync(string feedId) => Task.FromResult<string?>(null);
         public Task SavePushSubscriptionsAsync(string feedId, string subscriptionsJson) => Task.CompletedTask;

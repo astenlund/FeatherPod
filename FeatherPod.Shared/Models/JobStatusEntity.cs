@@ -87,11 +87,6 @@ public class JobStatusEntity : ITableEntity
     public string? TranscriptionStatus { get; set; }
 
     /// <summary>
-    /// Transcription progress percentage (0-100), audio-position-based.
-    /// </summary>
-    public double? TranscriptionProgress { get; set; }
-
-    /// <summary>
     /// Error message if transcription failed.
     /// </summary>
     public string? TranscriptionError { get; set; }

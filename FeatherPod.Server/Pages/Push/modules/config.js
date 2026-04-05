@@ -14,7 +14,7 @@ export const VELOCITY_OVERRIDES = IS_DEV ? parseVelocityOverrides() : {};
 function parseVelocityOverrides() {
     const params = new URLSearchParams(window.location.search);
     const overrides = {};
-    const mapping = { vup: 'Uploading', vanal: 'Analyzing', vnorm: 'Normalizing', vdown: 'Downloading', vtrans: 'Transcribing' };
+    const mapping = { vup: 'Uploading', vanal: 'Analyzing', vnorm: 'Normalizing', vdown: 'Downloading' };
     for (const [param, stage] of Object.entries(mapping)) {
         const value = params.get(param);
         if (value != null) {
@@ -44,6 +44,8 @@ export const WAKE_LOCK_KEY = 'featherpod_wake_' + FEED_ID;
 // Constants
 export const MAX_LOCAL_HISTORY = 50;
 export const QUEUE_SYNC_TIMEOUT = 3000;
+export const JOB_TTL_MS = 60 * 60 * 1000;
+export const STAGES_WITH_PROGRESS = ['Analyzing', 'Normalizing', 'Downloading'];
 export const STATES = ['no-key', 'ready', 'queue', 'error'];
 
 // No-key state UI strings

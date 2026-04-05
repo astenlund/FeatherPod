@@ -236,6 +236,13 @@ public class TestBlobStorageService : IBlobStorageService
         return Task.FromResult<Stream>(File.OpenRead(filePath));
     }
 
+    public Task<string> GeneratePendingBlobSasUrlAsync(string feedId, string jobId, string fileName)
+    {
+        var path = Path.Combine(_rootPath, feedId, "pending", jobId, fileName);
+
+        return Task.FromResult(new Uri(path).AbsoluteUri);
+    }
+
     public async Task DeletePendingJobBlobsAsync(string feedId, string jobId)
     {
         var pendingPath = Path.Combine(_rootPath, feedId, "pending", jobId);

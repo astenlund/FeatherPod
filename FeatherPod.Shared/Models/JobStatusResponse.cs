@@ -103,11 +103,6 @@ public record JobStatusResponse
     public string? TranscriptionStatus { get; init; }
 
     /// <summary>
-    /// Transcription progress percentage (0-100).
-    /// </summary>
-    public double? TranscriptionProgress { get; init; }
-
-    /// <summary>
     /// Error message if transcription failed.
     /// </summary>
     public string? TranscriptionError { get; init; }
@@ -162,7 +157,6 @@ public record JobStatusResponse
             NormalizationComplete = entity.NormalizationComplete ?? false,
             NormalizationError = entity.NormalizationError,
             TranscriptionStatus = entity.TranscriptionStatus,
-            TranscriptionProgress = entity.TranscriptionProgress,
             TranscriptionError = entity.TranscriptionError,
             AuthRequired = string.Equals(entity.Error, YtDlpService.BotDetectionErrorMessage, StringComparison.Ordinal),
             TickMs = entity.QueuedAt.HasValue ? (long)(DateTimeOffset.UtcNow - entity.QueuedAt.Value).TotalMilliseconds : null

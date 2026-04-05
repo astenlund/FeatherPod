@@ -1,17 +1,26 @@
 using System.Diagnostics;
 using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
-using FFMpegCore;
 
 namespace FeatherPod.Server.Services;
 
 /// <summary>
 /// Background service that processes transcription requests from the in-memory channel.
-/// Downloads pending blob, converts to 16kHz WAV, transcribes via Speech SDK, uploads VTT.
+/// Submits audio to the batch transcription REST API via SAS URL, polls for completion,
+/// downloads the result, and uploads VTT.
+/// M4A/M4B files are converted to 16kHz mono WAV before submission (the batch API doesn't
+/// support the MP4 container despite listing "AAC" as supported). Other formats (MP3, WAV,
+/// OGG, FLAC) go directly via SAS URL.
 /// Bounded concurrency via SemaphoreSlim.
 /// </summary>
 public class TranscriptionBackgroundService : BackgroundService
 {
+    /// <summary>
+    /// Extensions that need conversion to WAV for the batch Speech API.
+    /// The API doesn't support the MP4/M4A container despite listing "AAC" as supported.
+    /// </summary>
+    private static readonly HashSet<string> ConvertExtensions = new(StringComparer.OrdinalIgnoreCase) { ".m4a", ".m4b", ".mp4" };
+
     private readonly ITranscriptionChannel _channel;
     private readonly SpeechTranscriptionService _speechService;
     private readonly IBlobStorageService _blobService;
@@ -40,7 +49,6 @@ public class TranscriptionBackgroundService : BackgroundService
         _completionService = completionService;
         _logger = logger;
 
-        // Stop accepting new requests on shutdown; in-flight sessions get stoppingToken cancellation
         lifetime.ApplicationStopping.Register(() =>
         {
             if (_channel is TranscriptionChannel tc)
@@ -93,9 +101,8 @@ public class TranscriptionBackgroundService : BackgroundService
 
     private async Task ProcessTranscriptionAsync(TranscriptionRequest request, CancellationToken ct)
     {
-        _logger.LogInformation("Starting transcription for job {JobId}", request.JobId);
+        _logger.LogInformation("Starting batch transcription for job {JobId}", request.JobId);
 
-        // Mark transcription as running
         var running = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
         {
             e.TranscriptionStatus = TranscriptionStatuses.Running;
@@ -103,108 +110,60 @@ public class TranscriptionBackgroundService : BackgroundService
         }, ct);
         PublishProgress(request.JobId, running);
 
+        string? transcriptionUrl = null;
         string? tempInputFile = null;
         string? tempWavFile = null;
 
         try
         {
-            // Download pending blob to temp file
-            tempInputFile = Path.Combine(Path.GetTempPath(), $"transcribe-{request.JobId}{Path.GetExtension(request.FileName)}");
-            await using (var downloadStream = await _blobService.DownloadPendingBlobAsync(request.FeedId, request.JobId, request.FileName))
-            await using (var fileStream = File.Create(tempInputFile))
+            var sasFileName = request.FileName;
+
+            if (NeedsConversion(request.FileName))
             {
-                await downloadStream.CopyToAsync(fileStream, ct);
+                (sasFileName, tempInputFile, tempWavFile) = await ConvertToWavAsync(request, ct);
             }
 
-            _logger.LogDebug("Downloaded pending blob for transcription: {Size} bytes", new FileInfo(tempInputFile).Length);
+            var sasUrl = await _blobService.GeneratePendingBlobSasUrlAsync(request.FeedId, request.JobId, sasFileName);
+            transcriptionUrl = await _speechService.SubmitAsync(sasUrl, ct);
 
-            // Convert to 16kHz mono WAV PCM via FFmpeg
-            tempWavFile = Path.Combine(Path.GetTempPath(), $"transcribe-{request.JobId}.wav");
-            var ffmpegPath = FFmpegBinaryManager.GetFFmpegPath();
+            var (status, filesListUrl, errorMessage) = await _speechService.PollUntilCompleteAsync(transcriptionUrl, ct);
 
-            var process = new Process
+            if (status is "Failed" || filesListUrl is null)
             {
-                StartInfo = new ProcessStartInfo
+                var error = errorMessage ?? "Batch transcription failed on Azure side";
+                var failed = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
                 {
-                    FileName = ffmpegPath,
-                    Arguments = $"-i \"{tempInputFile}\" -ar 16000 -ac 1 -f wav \"{tempWavFile}\" -y",
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-
-            process.Start();
-            // Read stderr before WaitForExit to avoid pipe buffer deadlock
-            var stderrTask = process.StandardError.ReadToEndAsync(ct);
-            await process.WaitForExitAsync(ct);
-            var stderr = await stderrTask;
-
-            if (process.ExitCode != 0)
-            {
-                throw new InvalidOperationException($"FFmpeg WAV conversion failed (exit {process.ExitCode}): {stderr[..Math.Min(500, stderr.Length)]}");
-            }
-
-            // Get duration from converted WAV for progress calculation
-            var ffprobeBinaryDir = Path.GetDirectoryName(FFmpegBinaryManager.GetFFprobePath());
-            var ffOptions = new FFOptions { BinaryFolder = ffprobeBinaryDir ?? string.Empty };
-            var mediaInfo = await FFProbe.AnalyseAsync(tempWavFile, ffOptions, ct);
-            var totalDuration = mediaInfo.Duration;
-
-            _logger.LogDebug("WAV conversion complete: {Duration}", totalDuration);
-
-            // Transcribe with progress (throttled to avoid hammering Table Storage)
-            await using var wavStream = File.OpenRead(tempWavFile);
-            var lastProgressUpdate = DateTime.MinValue;
-            var progressThrottle = TimeSpan.FromMilliseconds(500);
-            var vtt = await _speechService.TranscribeAsync(wavStream, totalDuration, progress =>
-            {
-                var now = DateTime.UtcNow;
-                if (progress < 100 && now - lastProgressUpdate < progressThrottle)
-                {
-                    return;
-                }
-
-                lastProgressUpdate = now;
-
-                _ = Task.Run(async () =>
-                {
-                    var merged = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
-                    {
-                        e.TranscriptionProgress = progress;
-                    }, CancellationToken.None);
-
-                    if (merged != null)
-                    {
-                        _progressChannel.Publish(request.JobId, JobStatusResponse.FromEntity(merged));
-                    }
-                });
-            }, ct);
-
-            if (vtt != null)
-            {
-                // Upload VTT to blob storage
-                await _blobService.UploadTranscriptAsync(request.FeedId, request.EpisodeId, vtt);
-
-                var completed = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
-                {
-                    e.TranscriptionStatus = TranscriptionStatuses.Completed;
-                    e.TranscriptionProgress = 100;
+                    e.TranscriptionStatus = TranscriptionStatuses.Failed;
+                    e.TranscriptionError = error.Length > 500 ? error[..500] : error;
                 }, ct);
-                PublishProgress(request.JobId, completed);
-
-                _logger.LogInformation("Transcription completed for job {JobId}", request.JobId);
+                PublishProgress(request.JobId, failed);
+                _logger.LogWarning("Batch transcription failed for job {JobId}: {Error}", request.JobId, error);
             }
             else
             {
-                var noOutput = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
-                {
-                    e.TranscriptionStatus = TranscriptionStatuses.Failed;
-                    e.TranscriptionError = "Transcription produced no output";
-                }, ct);
-                PublishProgress(request.JobId, noOutput);
+                var vtt = await _speechService.GetResultAsVttAsync(filesListUrl, ct);
 
-                _logger.LogWarning("Transcription produced no output for job {JobId}", request.JobId);
+                if (vtt != null)
+                {
+                    await _blobService.UploadTranscriptAsync(request.FeedId, request.EpisodeId, vtt);
+
+                    var completed = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
+                    {
+                        e.TranscriptionStatus = TranscriptionStatuses.Completed;
+                    }, ct);
+                    PublishProgress(request.JobId, completed);
+                    _logger.LogInformation("Batch transcription completed for job {JobId}", request.JobId);
+                }
+                else
+                {
+                    var noOutput = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
+                    {
+                        e.TranscriptionStatus = TranscriptionStatuses.Failed;
+                        e.TranscriptionError = "Transcription produced no output";
+                    }, ct);
+                    PublishProgress(request.JobId, noOutput);
+                    _logger.LogWarning("Batch transcription produced no output for job {JobId}", request.JobId);
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -213,7 +172,7 @@ public class TranscriptionBackgroundService : BackgroundService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Transcription failed for job {JobId}", request.JobId);
+            _logger.LogError(ex, "Batch transcription failed for job {JobId}", request.JobId);
 
             var failed = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
             {
@@ -224,12 +183,99 @@ public class TranscriptionBackgroundService : BackgroundService
         }
         finally
         {
+            if (transcriptionUrl != null)
+            {
+                try
+                {
+                    await _speechService.DeleteAsync(transcriptionUrl, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to delete batch transcription {Url} for job {JobId}", transcriptionUrl, request.JobId);
+                }
+            }
+
             CleanupTempFile(tempInputFile);
             CleanupTempFile(tempWavFile);
         }
 
-        // Trigger join logic — if normalization is also done, this creates the episode
         await _completionService.TryCompleteJobAsync(request.JobId, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Whether the file extension requires conversion to WAV for the batch Speech API.
+    /// </summary>
+    private static bool NeedsConversion(string fileName)
+    {
+        return ConvertExtensions.Contains(Path.GetExtension(fileName));
+    }
+
+    /// <summary>
+    /// Download the pending blob, convert to 16kHz mono WAV via FFmpeg,
+    /// and upload the result as a sibling blob. Returns the new blob filename for SAS generation.
+    /// </summary>
+    private async Task<(string BlobFileName, string TempInputFile, string TempWavFile)> ConvertToWavAsync(
+        TranscriptionRequest request, CancellationToken ct)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), "FeatherPod");
+        Directory.CreateDirectory(tempDir);
+        var tempInputFile = Path.Combine(tempDir, $"transcribe-{request.JobId}{Path.GetExtension(request.FileName)}");
+        var tempWavFile = Path.Combine(tempDir, $"transcribe-{request.JobId}.wav");
+
+        await using (var downloadStream = await _blobService.DownloadPendingBlobAsync(request.FeedId, request.JobId, request.FileName))
+        await using (var fileStream = File.Create(tempInputFile))
+        {
+            await downloadStream.CopyToAsync(fileStream, ct);
+        }
+
+        var ffmpegPath = FFmpegBinaryManager.GetFFmpegPath();
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = ffmpegPath,
+                ArgumentList = { "-i", tempInputFile, "-ar", "16000", "-ac", "1", "-f", "wav", tempWavFile, "-y" },
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+
+        process.Start();
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+
+        try
+        {
+            await process.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // Process already exited
+            }
+
+            throw;
+        }
+
+        var stderr = await stderrTask;
+
+        if (process.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"FFmpeg WAV conversion failed (exit {process.ExitCode}): {stderr[..Math.Min(500, stderr.Length)]}");
+        }
+
+        _logger.LogInformation("Converted to WAV for transcription job {JobId}: {InputSize} -> {OutputSize} bytes",
+            request.JobId, new FileInfo(tempInputFile).Length, new FileInfo(tempWavFile).Length);
+
+        var wavBlobName = $"_transcription-{request.JobId}.wav";
+        await _blobService.UploadPendingAudioAsync(request.FeedId, request.JobId, wavBlobName, tempWavFile);
+
+        return (wavBlobName, tempInputFile, tempWavFile);
     }
 
     private void PublishProgress(string jobId, JobStatusEntity? entity)
@@ -239,10 +285,6 @@ public class TranscriptionBackgroundService : BackgroundService
             _progressChannel.Publish(jobId, JobStatusResponse.FromEntity(entity));
         }
     }
-
-    // TODO: Add startup recovery for interrupted transcription jobs
-    // Requires a general query method on IJobService to scan for TranscriptionStatus == "Running"/"Queued".
-    // Until then, the CleanupFunction handles stale transcriptions (>24h timeout).
 
     private void CleanupTempFile(string? path)
     {

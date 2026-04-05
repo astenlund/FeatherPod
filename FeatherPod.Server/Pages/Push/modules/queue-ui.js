@@ -1,3 +1,4 @@
+import { STAGES_WITH_PROGRESS } from './config.js';
 import { progressAnimator } from './progress.js';
 import { truncate } from './utils.js';
 
@@ -58,7 +59,13 @@ export function createQueueItemElement(entry) {
     const status = document.createElement('span');
     status.className = 'queue-item-status';
     status.id = 'queue-status-' + entry.id;
-    status.textContent = getStatusText(entry);
+    if (entry.status === 'completed' && entry.transcriptionStatus === 'Failed') {
+        status.classList.add('queue-item-status--trans-failed');
+        status.textContent = '\u26A0 ' + getStatusText(entry);
+        status.title = 'Transcript unavailable: ' + (entry.transcriptionError || 'transcription failed');
+    } else {
+        status.textContent = getStatusText(entry);
+    }
     item.appendChild(status);
 
     const progressWrap = document.createElement('div');
@@ -70,7 +77,10 @@ export function createQueueItemElement(entry) {
     if (entry.status === 'uploading') {
         progressBar.style.width = entry.progress + '%';
     } else if (entry.status === 'normalizing') {
-        if (entry.stage && !['Analyzing', 'Normalizing', 'Downloading'].includes(entry.stage)) {
+        const transcriptionActive = entry.transcriptionStatus === 'Queued' || entry.transcriptionStatus === 'Running';
+        if (transcriptionActive && (entry.normalizationComplete || entry.stage === 'Finishing')) {
+            progressBar.classList.add('indeterminate');
+        } else if (entry.stage && !STAGES_WITH_PROGRESS.includes(entry.stage)) {
             progressBar.classList.add('indeterminate');
         } else {
             progressBar.style.width = entry.progress + '%';
@@ -79,27 +89,6 @@ export function createQueueItemElement(entry) {
 
     progressWrap.appendChild(progressBar);
     item.appendChild(progressWrap);
-
-    // Transcription progress bar (hidden until transcription starts)
-    const transWrap = document.createElement('div');
-    transWrap.className = 'queue-item-progress-wrap queue-item-progress-wrap--trans';
-    transWrap.id = 'queue-trans-wrap-' + entry.id;
-    const transBar = document.createElement('div');
-    transBar.className = 'queue-item-progress';
-    transBar.id = 'queue-progress-trans-' + entry.id;
-
-    if (entry.transcriptionStatus === 'Running' && entry.transcriptionProgress != null) {
-        transWrap.classList.add('active');
-        transBar.style.width = entry.transcriptionProgress + '%';
-    } else if (entry.transcriptionStatus === 'Failed') {
-        transWrap.classList.add('active', 'trans-failed');
-    } else if (entry.transcriptionStatus === 'Completed') {
-        transWrap.classList.add('active');
-        transBar.style.width = '100%';
-    }
-
-    transWrap.appendChild(transBar);
-    item.appendChild(transWrap);
 
     const actionBtn = createActionButton(entry);
     if (actionBtn) {
@@ -143,8 +132,14 @@ function getStatusText(entry) {
     switch (entry.status) {
         case 'uploading':
             return 'Uploading';
-        case 'normalizing':
+        case 'normalizing': {
+            const transcriptionActive = entry.transcriptionStatus === 'Queued' || entry.transcriptionStatus === 'Running';
+            if (transcriptionActive && (entry.normalizationComplete || entry.stage === 'Finishing')) {
+                return 'Transcribing';
+            }
+
             return entry.stage || 'Queued';
+        }
         case 'completed':
             return 'Done';
         case 'failed':
@@ -259,33 +254,6 @@ export function removeQueueItemFromDOM(entryId) {
 
 export function getEntryProgressBar(entryId) {
     return document.getElementById('queue-progress-' + entryId);
-}
-
-export function getTranscriptionProgressBar(entryId) {
-    return document.getElementById('queue-progress-trans-' + entryId);
-}
-
-/**
- * Show the transcription progress bar for an entry.
- * @param {string} entryId
- */
-export function showTranscriptionBar(entryId) {
-    const wrap = document.getElementById('queue-trans-wrap-' + entryId);
-    if (wrap) {
-        wrap.classList.add('active');
-        wrap.classList.remove('trans-failed');
-    }
-}
-
-/**
- * Mark the transcription bar as failed.
- * @param {string} entryId
- */
-export function setTranscriptionBarFailed(entryId) {
-    const wrap = document.getElementById('queue-trans-wrap-' + entryId);
-    if (wrap) {
-        wrap.classList.add('active', 'trans-failed');
-    }
 }
 
 export function rebindProgressAnimator() {

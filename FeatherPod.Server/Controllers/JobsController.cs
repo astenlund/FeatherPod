@@ -380,7 +380,6 @@ public class JobsController : ControllerBase
                old.NormalizationProgress != current.NormalizationProgress ||
                old.ProgressMessage != current.ProgressMessage ||
                old.TranscriptionStatus != current.TranscriptionStatus ||
-               old.TranscriptionProgress != current.TranscriptionProgress ||
                old.NormalizationComplete != current.NormalizationComplete ||
                old.EpisodeId != current.EpisodeId ||
                old.Error != current.Error ||
@@ -399,7 +398,6 @@ public class JobsController : ControllerBase
                last.ProgressPercent != current.ProgressPercent ||
                last.ProgressMessage != current.ProgressMessage ||
                last.TranscriptionStatus != current.TranscriptionStatus ||
-               last.TranscriptionProgress != current.TranscriptionProgress ||
                last.NormalizationComplete != current.NormalizationComplete ||
                last.EpisodeId != current.EpisodeId ||
                last.Error != current.Error ||

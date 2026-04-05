@@ -1,6 +1,7 @@
 using Azure.Identity;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
+using Azure.Storage.Sas;
 
 namespace FeatherPod.Server.Services;
 
@@ -8,6 +9,7 @@ public class BlobStorageService : IBlobStorageService
 {
     private readonly BlobServiceClient _blobServiceClient;
     private readonly string _containerName;
+    private readonly bool _usesConnectionString;
     private readonly ILogger<BlobStorageService> _logger;
 
     public BlobStorageService(IConfiguration config, ILogger<BlobStorageService> logger)
@@ -22,6 +24,7 @@ public class BlobStorageService : IBlobStorageService
         if (!string.IsNullOrEmpty(azureConfig.ConnectionString))
         {
             _blobServiceClient = new(azureConfig.ConnectionString);
+            _usesConnectionString = true;
             _logger.LogInformation("Using connection string for blob storage authentication");
         }
         else if (!string.IsNullOrEmpty(azureConfig.AccountName))
@@ -321,6 +324,33 @@ public class BlobStorageService : IBlobStorageService
         var blobClient = containerClient.GetBlobClient(blobPath);
 
         return await blobClient.OpenReadAsync();
+    }
+
+    public async Task<string> GeneratePendingBlobSasUrlAsync(string feedId, string jobId, string fileName)
+    {
+        var containerClient = _blobServiceClient.GetBlobContainerClient(_containerName);
+        var blobPath = $"{feedId}/pending/{jobId}/{fileName}";
+        var blobClient = containerClient.GetBlobClient(blobPath);
+
+        var builder = new BlobSasBuilder
+        {
+            BlobContainerName = _containerName,
+            BlobName = blobPath,
+            Resource = "b",
+            ExpiresOn = DateTimeOffset.UtcNow.AddHours(1),
+        };
+        builder.SetPermissions(BlobSasPermissions.Read);
+
+        if (_usesConnectionString)
+        {
+            return blobClient.GenerateSasUri(builder).AbsoluteUri;
+        }
+
+        var delegationKey = await _blobServiceClient.GetUserDelegationKeyAsync(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1));
+        var accountName = _blobServiceClient.AccountName;
+        var sasUri = new BlobUriBuilder(blobClient.Uri) { Sas = builder.ToSasQueryParameters(delegationKey, accountName) };
+
+        return sasUri.ToString();
     }
 
     public async Task DeletePendingJobBlobsAsync(string feedId, string jobId)

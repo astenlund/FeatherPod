@@ -1,4 +1,4 @@
-import { FEED_ID, DISMISSED_STORAGE_KEY } from './config.js';
+import { FEED_ID, DISMISSED_STORAGE_KEY, JOB_TTL_MS } from './config.js';
 import { isActiveWork, tryParseJson } from './utils.js';
 import { getApiKey } from './auth.js';
 import { getQueue, getActiveUploadId, generateEntryId, addFilesToQueue, monitorEntryNormalizationInBackground, saveQueueState, checkAllComplete } from './queue.js';
@@ -88,7 +88,7 @@ export function loadDismissedJobIds() {
     if (!entries || !Array.isArray(entries)) {
         return;
     }
-    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    const oneHourAgo = Date.now() - JOB_TTL_MS;
     let pruned = false;
     for (const entry of entries) {
         if (entry.jobId && entry.dismissedAt && entry.dismissedAt >= oneHourAgo) {
@@ -169,6 +169,10 @@ export async function fetchRecentJobs() {
  * If serverJobs is null (fetch failed), skips reconciliation entirely.
  * @param {Array<Object>|null} serverJobs
  */
+function isTerminalStatus(status) {
+    return status === 'Completed' || status === 'Failed' || status === 'Cancelled';
+}
+
 export function mergeServerJobs(serverJobs) {
     if (serverJobs === null) {
         return; // Server fetch failed -- don't reconcile, let SSE handle it
@@ -189,7 +193,7 @@ export function mergeServerJobs(serverJobs) {
             stale.eventSource = null;
         }
         progressAnimator.removeSlot(stale.id);
-        progressAnimator.removeSlot(stale.id + '-trans');
+
         removeQueueItemFromDOM(stale.id);
         uploadQueue.splice(uploadQueue.indexOf(stale), 1);
         if (stale._resolveMonitor) {
@@ -208,7 +212,7 @@ export function mergeServerJobs(serverJobs) {
         }
 
         const serverStatus = serverJob.status;
-        const isServerTerminal = serverStatus === 'Completed' || serverStatus === 'Failed' || serverStatus === 'Cancelled';
+        const isServerTerminal = isTerminalStatus(serverStatus);
 
         if (existing.status === 'normalizing' && serverStatus === 'Cancelled') {
             // Server says cancelled -- remove from queue (consistent with other cancel paths)
@@ -218,7 +222,7 @@ export function mergeServerJobs(serverJobs) {
             }
             existing.status = 'cancelled';
             progressAnimator.removeSlot(existing.id);
-            progressAnimator.removeSlot(existing.id + '-trans');
+
             removeQueueItemFromDOM(existing.id);
             uploadQueue.splice(uploadQueue.indexOf(existing), 1);
             if (existing._resolveMonitor) {
@@ -239,8 +243,8 @@ export function mergeServerJobs(serverJobs) {
             existing.title = serverJob.title || existing.title;
             existing.stage = serverJob.stage || existing.stage;
             existing.progress = 100;
+            existing.normalizationComplete = serverJob.normalizationComplete || false;
             existing.transcriptionStatus = serverJob.transcriptionStatus || null;
-            existing.transcriptionProgress = serverJob.transcriptionProgress ?? null;
             existing.transcriptionError = serverJob.transcriptionError || null;
             if (existing.status === 'completed' && existing.localSourceIndex != null) {
                 notifyLocalSourceUploaded(existing.localSourceIndex);
@@ -250,7 +254,7 @@ export function mergeServerJobs(serverJobs) {
                 existing._resolveMonitor = null;
             }
             progressAnimator.removeSlot(existing.id);
-            progressAnimator.removeSlot(existing.id + '-trans');
+
             changedEntryIds.add(existing.id);
         } else if (existing.status === 'normalizing') {
             existing.title = serverJob.title || existing.title;
@@ -262,9 +266,12 @@ export function mergeServerJobs(serverJobs) {
                 changedEntryIds.add(existing.id);
             }
             // Reconcile transcription state (independent track)
+            if (serverJob.normalizationComplete && !existing.normalizationComplete) {
+                existing.normalizationComplete = true;
+                changedEntryIds.add(existing.id);
+            }
             if (serverJob.transcriptionStatus && serverJob.transcriptionStatus !== existing.transcriptionStatus) {
                 existing.transcriptionStatus = serverJob.transcriptionStatus;
-                existing.transcriptionProgress = serverJob.transcriptionProgress ?? null;
                 existing.transcriptionError = serverJob.transcriptionError || null;
                 changedEntryIds.add(existing.id);
             }
@@ -283,20 +290,20 @@ export function mergeServerJobs(serverJobs) {
             existing.episodeId = serverJob.episodeId || existing.episodeId;
             existing.stage = serverJob.stage || existing.stage;
             existing.progress = 100;
+            existing.normalizationComplete = serverJob.normalizationComplete || false;
             existing.transcriptionStatus = serverJob.transcriptionStatus || null;
-            existing.transcriptionProgress = serverJob.transcriptionProgress ?? null;
             existing.transcriptionError = serverJob.transcriptionError || null;
             if (existing.localSourceIndex != null) {
                 notifyLocalSourceUploaded(existing.localSourceIndex);
             }
             progressAnimator.removeSlot(existing.id);
-            progressAnimator.removeSlot(existing.id + '-trans');
+
             changedEntryIds.add(existing.id);
         } else if (existing.status === 'failed' && serverStatus === 'Cancelled') {
             // Server says cancelled - remove from queue
             existing.status = 'cancelled';
             progressAnimator.removeSlot(existing.id);
-            progressAnimator.removeSlot(existing.id + '-trans');
+
             removeQueueItemFromDOM(existing.id);
             uploadQueue.splice(uploadQueue.indexOf(existing), 1);
             removedEntries = true;
@@ -312,7 +319,7 @@ export function mergeServerJobs(serverJobs) {
     for (const serverJob of serverJobs) {
         if (!existingJobIds.has(serverJob.jobId) && !uploadingFileNames.has(serverJob.fileName) && !dismissedJobIds.has(serverJob.jobId)) {
             const serverStatus = serverJob.status;
-            const isServerTerminal = serverStatus === 'Completed' || serverStatus === 'Failed' || serverStatus === 'Cancelled';
+            const isServerTerminal = isTerminalStatus(serverStatus);
             if (serverStatus === 'Cancelled') {
                 continue;
             }
@@ -333,8 +340,8 @@ export function mergeServerJobs(serverJobs) {
                 title: serverJob.title || null,
                 validationError: false,
                 startedAt: serverJob.queuedAt ? new Date(serverJob.queuedAt).getTime() : Date.now(),
+                normalizationComplete: serverJob.normalizationComplete || false,
                 transcriptionStatus: serverJob.transcriptionStatus || null,
-                transcriptionProgress: serverJob.transcriptionProgress ?? null,
                 transcriptionError: serverJob.transcriptionError || null,
                 _resolveMonitor: null
             });

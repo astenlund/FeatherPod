@@ -35,6 +35,7 @@ public interface IBlobStorageService
 
     // Pending blob operations
     Task<Stream> DownloadPendingBlobAsync(string feedId, string jobId, string fileName);
+    Task<string> GeneratePendingBlobSasUrlAsync(string feedId, string jobId, string fileName);
     Task DeletePendingJobBlobsAsync(string feedId, string jobId);
 
     // Push subscription operations (feed-aware)

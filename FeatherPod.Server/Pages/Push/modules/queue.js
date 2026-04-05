@@ -1,9 +1,9 @@
-import { FEED_ID, QUEUE_STORAGE_KEY, STR_INVALID_KEY, STR_NO_FEED_ACCESS } from './config.js';
+import { FEED_ID, JOB_TTL_MS, QUEUE_STORAGE_KEY, STAGES_WITH_PROGRESS, STR_INVALID_KEY, STR_NO_FEED_ACCESS } from './config.js';
 import { isValidAudioFile, isActiveWork, tryParseJson, truncate } from './utils.js';
 import { getApiKey } from './auth.js';
 import { showState, getCurrentState, updateQueueTitle, getCollapsedHeight, COLLAPSED_WIDTH } from './state.js';
 import { progressAnimator } from './progress.js';
-import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQueueItemFromDOM, getEntryProgressBar, getTranscriptionProgressBar, showTranscriptionBar, setTranscriptionBarFailed, rebindProgressAnimator, registerQueueCallbacks, createQueueItemElement } from './queue-ui.js';
+import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQueueItemFromDOM, getEntryProgressBar, rebindProgressAnimator, registerQueueCallbacks, createQueueItemElement } from './queue-ui.js';
 import { resetNotificationToggle, syncPushSession, notifyQueueComplete, setNotificationToggleVisible } from './notifications.js';
 import { resetWakeLockToggle, setWakeLockToggleVisible } from './wake-lock.js';
 import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetchBrowserUploads, initHistorySection, invalidateBrowserUploadsCache } from './history.js';
@@ -277,7 +277,6 @@ export async function dismissEntry(entryId) {
     uploadQueue.splice(index, 1);
     removeQueueItemFromDOM(entryId);
     progressAnimator.removeSlot(entryId);
-    progressAnimator.removeSlot(entryId + '-trans');
 
     saveQueueState();
     checkAllComplete();
@@ -426,7 +425,7 @@ async function processEntry(entry) {
                 reject(new DOMException('Upload cancelled', 'AbortError'));
             };
 
-            let uploadUrl = '/api/feeds/' + FEED_ID + '/episodes?normalize=true&source=Browser';
+            const uploadUrl = '/api/feeds/' + FEED_ID + '/episodes?normalize=true&source=Browser';
             xhr.open('POST', uploadUrl);
             xhr.setRequestHeader('X-API-Key', getApiKey());
             xhr.send(formData);
@@ -493,14 +492,9 @@ async function processEntry(entry) {
 }
 
 /**
- * Update a queue entry's stage and progress from a job status object.
- * Drives the progressAnimator for stages with progress tracking.
- * @param {QueueEntry} entry
- * @param {Object} job
- */
-/**
- * Update a queue entry from a job status event. Delegates to the independent
- * normalization and transcription track handlers.
+ * Update a queue entry from a job status event. Tracks transcription state,
+ * then updates the normalization progress bar (which also handles the
+ * "Transcribing" indeterminate state when normalization is complete).
  * @param {QueueEntry} entry
  * @param {Object} job - JobStatusResponse from server
  */
@@ -514,8 +508,8 @@ export function updateEntryFromJobStatus(entry, job) {
         }
     }
 
+    updateTranscriptionState(entry, job);
     updateNormalizationProgress(entry, job);
-    updateTranscriptionProgress(entry, job);
 }
 
 /**
@@ -525,14 +519,27 @@ export function updateEntryFromJobStatus(entry, job) {
  * @param {Object} job
  */
 function updateNormalizationProgress(entry, job) {
+    const progressBar = getEntryProgressBar(entry.id);
+
+    // After normalization completes, show indeterminate bar while transcription runs
+    const transcriptionActive = entry.transcriptionStatus === 'Queued' || entry.transcriptionStatus === 'Running';
+    if (transcriptionActive && (entry.normalizationComplete || job.stage === 'Finishing')) {
+        progressAnimator.reset(entry.id);
+        if (progressBar) {
+            progressBar.classList.add('indeterminate');
+            progressBar.style.width = '';
+        }
+        updateQueueItemProgress(entry);
+
+        return;
+    }
+
     if (!job.stage) {
         return;
     }
 
     entry.stage = job.stage;
-    const stagesWithProgress = ['Analyzing', 'Normalizing', 'Downloading'];
-    const isProgressStage = stagesWithProgress.includes(job.stage);
-    const progressBar = getEntryProgressBar(entry.id);
+    const isProgressStage = STAGES_WITH_PROGRESS.includes(job.stage);
 
     if (isProgressStage) {
         if (progressBar) {
@@ -556,42 +563,24 @@ function updateNormalizationProgress(entry, job) {
             progressBar.style.width = '';
         }
     }
+
+    updateQueueItemProgress(entry);
 }
 
 /**
- * Update the transcription progress bar from a job status event.
- * Independent from normalization -- processes regardless of normalization stage.
+ * Track transcription state fields from a job status event.
+ * Must run before updateNormalizationProgress so the indeterminate bar
+ * logic can check normalizationComplete + transcriptionStatus.
  * @param {QueueEntry} entry
  * @param {Object} job
  */
-function updateTranscriptionProgress(entry, job) {
-    if (!job.transcriptionStatus) {
-        return;
+function updateTranscriptionState(entry, job) {
+    if (job.normalizationComplete != null && job.normalizationComplete !== entry.normalizationComplete) {
+        entry.normalizationComplete = job.normalizationComplete;
     }
-
-    entry.transcriptionStatus = job.transcriptionStatus;
-    entry.transcriptionProgress = job.transcriptionProgress;
-    entry.transcriptionError = job.transcriptionError;
-
-    const transSlotId = entry.id + '-trans';
-    const transBar = getTranscriptionProgressBar(entry.id);
-
-    if (job.transcriptionStatus === 'Running') {
-        showTranscriptionBar(entry.id);
-
-        if (job.transcriptionProgress != null && transBar) {
-            progressAnimator.setTarget(job.transcriptionProgress, 'Transcribing', transSlotId, job.tickMs);
-            progressAnimator.start(transBar, transSlotId);
-        }
-    } else if (job.transcriptionStatus === 'Failed') {
-        progressAnimator.removeSlot(transSlotId);
-        setTranscriptionBarFailed(entry.id);
-    } else if (job.transcriptionStatus === 'Completed') {
-        progressAnimator.removeSlot(transSlotId);
-        showTranscriptionBar(entry.id);
-        if (transBar) {
-            transBar.style.width = '100%';
-        }
+    if (job.transcriptionStatus && job.transcriptionStatus !== entry.transcriptionStatus) {
+        entry.transcriptionStatus = job.transcriptionStatus;
+        entry.transcriptionError = job.transcriptionError;
     }
 }
 
@@ -662,7 +651,7 @@ function monitorEntryNormalization(entry) {
                     eventSource.close();
                     entry.status = 'cancelled';
                     progressAnimator.removeSlot(entry.id);
-                    progressAnimator.removeSlot(entry.id + '-trans');
+
                     removeQueueItemFromDOM(entry.id);
                     uploadQueue.splice(uploadQueue.indexOf(entry), 1);
 
@@ -684,7 +673,7 @@ function monitorEntryNormalization(entry) {
             if (lastStatus?.status === 'Cancelled') {
                 entry.status = 'cancelled';
                 progressAnimator.removeSlot(entry.id);
-                progressAnimator.removeSlot(entry.id + '-trans');
+
                 removeQueueItemFromDOM(entry.id);
                 uploadQueue.splice(uploadQueue.indexOf(entry), 1);
 
@@ -716,7 +705,7 @@ function monitorEntryNormalization(entry) {
             }
 
             progressAnimator.removeSlot(entry.id);
-            progressAnimator.removeSlot(entry.id + '-trans');
+
             updateQueueItemInDOM(entry);
             finishMonitoring();
         });
@@ -733,7 +722,7 @@ function monitorEntryNormalization(entry) {
             entry.status = 'failed';
             entry.error = data?.error || 'An error occurred';
             progressAnimator.removeSlot(entry.id);
-            progressAnimator.removeSlot(entry.id + '-trans');
+
             updateQueueItemInDOM(entry);
             finishMonitoring();
         });
@@ -788,7 +777,6 @@ async function pollEntryNormalization(entry) {
                 // Stop polling but don't mark as failed - mergeServerJobs on
                 // visibility change will resolve the actual status from the server
                 progressAnimator.removeSlot(entry.id);
-                progressAnimator.removeSlot(entry.id + '-trans');
 
                 return;
             }
@@ -811,7 +799,7 @@ async function pollEntryNormalization(entry) {
                     saveToLocalHistory(historyEpisode);
                 }
                 progressAnimator.removeSlot(entry.id);
-                progressAnimator.removeSlot(entry.id + '-trans');
+
                 updateQueueItemInDOM(entry);
                 refreshHistoryList(historyEpisode?.id);
 
@@ -823,14 +811,14 @@ async function pollEntryNormalization(entry) {
                     showYouTubeCookieDialog();
                 }
                 progressAnimator.removeSlot(entry.id);
-                progressAnimator.removeSlot(entry.id + '-trans');
+
                 updateQueueItemInDOM(entry);
 
                 return;
             } else if (job.status === 'Cancelled') {
                 entry.status = 'cancelled';
                 progressAnimator.removeSlot(entry.id);
-                progressAnimator.removeSlot(entry.id + '-trans');
+
                 removeQueueItemFromDOM(entry.id);
                 uploadQueue.splice(uploadQueue.indexOf(entry), 1);
 
@@ -854,7 +842,6 @@ async function pollEntryNormalization(entry) {
             // Stop polling but don't mark as failed - mergeServerJobs on
             // visibility change will resolve the actual status from the server
             progressAnimator.removeSlot(entry.id);
-            progressAnimator.removeSlot(entry.id + '-trans');
 
             return;
         }
@@ -897,7 +884,7 @@ export async function cancelEntry(entryId) {
         entry.status = 'cancelled';
         progressAnimator.reset(entry.id);
         progressAnimator.removeSlot(entry.id);
-        progressAnimator.removeSlot(entry.id + '-trans');
+
         removeQueueItemFromDOM(entryId);
         uploadQueue.splice(uploadQueue.indexOf(entry), 1);
 
@@ -980,7 +967,7 @@ export function retryEntry(entryId) {
  * Adds cleared jobIds to dismissedJobIds to prevent mergeServerJobs from re-adding them.
  */
 export function clearTerminalEntries() {
-    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    const oneHourAgo = Date.now() - JOB_TTL_MS;
     const terminalEntries = uploadQueue.filter(e =>
         (e.status === 'completed' || e.status === 'cancelled') && e.startedAt < oneHourAgo
     );
@@ -1002,7 +989,7 @@ export function clearTerminalEntries() {
         }
         removeQueueItemFromDOM(entry.id);
         progressAnimator.removeSlot(entry.id);
-        progressAnimator.removeSlot(entry.id + '-trans');
+
         const idx = uploadQueue.indexOf(entry);
         if (idx !== -1) {
             uploadQueue.splice(idx, 1);
@@ -1033,8 +1020,8 @@ export function saveQueueState() {
             localSourceIndex: e.localSourceIndex,
             validationError: e.validationError,
             startedAt: e.startedAt,
+            normalizationComplete: e.normalizationComplete || false,
             transcriptionStatus: e.transcriptionStatus || null,
-            transcriptionProgress: e.transcriptionProgress ?? null,
             transcriptionError: e.transcriptionError || null
         }));
         localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(serialized));
@@ -1076,7 +1063,7 @@ export async function restoreQueueState() {
     }
 
     // Filter out entries older than 1 hour (or missing startedAt -- pre-migration)
-    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    const oneHourAgo = Date.now() - JOB_TTL_MS;
     const recentEntries = entries.filter(e => e.startedAt && e.startedAt >= oneHourAgo);
     if (recentEntries.length === 0) {
         clearQueueState();
