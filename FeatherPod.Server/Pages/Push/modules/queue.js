@@ -3,7 +3,7 @@ import { isValidAudioFile, isActiveWork, tryParseJson, truncate } from './utils.
 import { getApiKey } from './auth.js';
 import { showState, getCurrentState, updateQueueTitle, getCollapsedHeight, COLLAPSED_WIDTH } from './state.js';
 import { progressAnimator } from './progress.js';
-import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQueueItemFromDOM, getEntryProgressBar, rebindProgressAnimator, registerQueueCallbacks, createQueueItemElement } from './queue-ui.js';
+import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQueueItemFromDOM, getEntryProgressBar, getTranscriptionProgressBar, showTranscriptionBar, setTranscriptionBarFailed, rebindProgressAnimator, registerQueueCallbacks, createQueueItemElement } from './queue-ui.js';
 import { resetNotificationToggle, syncPushSession, notifyQueueComplete, setNotificationToggleVisible } from './notifications.js';
 import { resetWakeLockToggle, setWakeLockToggleVisible } from './wake-lock.js';
 import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetchBrowserUploads, initHistorySection, invalidateBrowserUploadsCache } from './history.js';
@@ -538,6 +538,34 @@ export function updateEntryFromJobStatus(entry, job) {
             progressBar.style.width = '';
         }
     }
+
+    // Transcription track (independent from normalization)
+    if (job.transcriptionStatus) {
+        entry.transcriptionStatus = job.transcriptionStatus;
+        entry.transcriptionProgress = job.transcriptionProgress;
+        entry.transcriptionError = job.transcriptionError;
+
+        const transSlotId = entry.id + '-trans';
+        const transBar = getTranscriptionProgressBar(entry.id);
+
+        if (job.transcriptionStatus === 'Running') {
+            showTranscriptionBar(entry.id);
+
+            if (job.transcriptionProgress != null && transBar) {
+                progressAnimator.setTarget(job.transcriptionProgress, 'Transcribing', transSlotId, job.tickMs);
+                progressAnimator.start(transBar, transSlotId);
+            }
+        } else if (job.transcriptionStatus === 'Failed') {
+            progressAnimator.removeSlot(transSlotId);
+            setTranscriptionBarFailed(entry.id);
+        } else if (job.transcriptionStatus === 'Completed') {
+            progressAnimator.removeSlot(transSlotId);
+            showTranscriptionBar(entry.id);
+            if (transBar) {
+                transBar.style.width = '100%';
+            }
+        }
+    }
 }
 
 /**
@@ -607,6 +635,7 @@ function monitorEntryNormalization(entry) {
                     eventSource.close();
                     entry.status = 'cancelled';
                     progressAnimator.removeSlot(entry.id);
+                    progressAnimator.removeSlot(entry.id + '-trans');
                     removeQueueItemFromDOM(entry.id);
                     uploadQueue.splice(uploadQueue.indexOf(entry), 1);
 
@@ -628,6 +657,7 @@ function monitorEntryNormalization(entry) {
             if (lastStatus?.status === 'Cancelled') {
                 entry.status = 'cancelled';
                 progressAnimator.removeSlot(entry.id);
+                progressAnimator.removeSlot(entry.id + '-trans');
                 removeQueueItemFromDOM(entry.id);
                 uploadQueue.splice(uploadQueue.indexOf(entry), 1);
 
@@ -659,6 +689,7 @@ function monitorEntryNormalization(entry) {
             }
 
             progressAnimator.removeSlot(entry.id);
+            progressAnimator.removeSlot(entry.id + '-trans');
             updateQueueItemInDOM(entry);
             finishMonitoring();
         });
@@ -675,6 +706,7 @@ function monitorEntryNormalization(entry) {
             entry.status = 'failed';
             entry.error = data?.error || 'An error occurred';
             progressAnimator.removeSlot(entry.id);
+            progressAnimator.removeSlot(entry.id + '-trans');
             updateQueueItemInDOM(entry);
             finishMonitoring();
         });
@@ -729,6 +761,7 @@ async function pollEntryNormalization(entry) {
                 // Stop polling but don't mark as failed - mergeServerJobs on
                 // visibility change will resolve the actual status from the server
                 progressAnimator.removeSlot(entry.id);
+                progressAnimator.removeSlot(entry.id + '-trans');
 
                 return;
             }
@@ -751,6 +784,7 @@ async function pollEntryNormalization(entry) {
                     saveToLocalHistory(historyEpisode);
                 }
                 progressAnimator.removeSlot(entry.id);
+                progressAnimator.removeSlot(entry.id + '-trans');
                 updateQueueItemInDOM(entry);
                 refreshHistoryList(historyEpisode?.id);
 
@@ -762,12 +796,14 @@ async function pollEntryNormalization(entry) {
                     showYouTubeCookieDialog();
                 }
                 progressAnimator.removeSlot(entry.id);
+                progressAnimator.removeSlot(entry.id + '-trans');
                 updateQueueItemInDOM(entry);
 
                 return;
             } else if (job.status === 'Cancelled') {
                 entry.status = 'cancelled';
                 progressAnimator.removeSlot(entry.id);
+                progressAnimator.removeSlot(entry.id + '-trans');
                 removeQueueItemFromDOM(entry.id);
                 uploadQueue.splice(uploadQueue.indexOf(entry), 1);
 
