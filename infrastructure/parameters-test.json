@@ -38,6 +38,9 @@
     "openAiAccountName": {
       "value": "featherpod-test-openai"
     },
+    "speechAccountName": {
+      "value": "featherpod-test-speech"
+    },
     "llmModelName": {
       "value": "gpt-4.1-mini"
     },

@@ -66,6 +66,9 @@ param signalRServiceName string
 @description('Name of the Azure OpenAI account')
 param openAiAccountName string
 
+@description('Name of the Azure Speech Services account')
+param speechAccountName string
+
 @description('LLM model name for AI title suggestions')
 param llmModelName string
 
@@ -211,6 +214,8 @@ resource appServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
     Azure__SignalR__ConnectionString: signalRService.listKeys().primaryConnectionString
     AzureOpenAI__Endpoint: 'https://${openAiAccountName}.openai.azure.com/'
     AzureOpenAI__Deployment: gpt4oMiniDeployment.name
+    AzureSpeech__Endpoint: 'https://${speechAccountName}.cognitiveservices.azure.com/'
+    AzureSpeech__MaxConcurrent: '3'
     APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.properties.ConnectionString
   }
 }
@@ -220,6 +225,7 @@ var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
 var storageTableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 var cognitiveServicesOpenAiUserRoleId = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
+var cognitiveServicesSpeechUserRoleId = 'f2dc8367-1007-4938-bd23-fe263f013447'
 
 // Role Assignment: Grant App Service managed identity access to Storage Account (Blob)
 resource appServiceBlobRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -345,7 +351,6 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2023-12-01' = {
     OrphanedBlobRetentionDays: '1'
     CleanupSchedule: '0 0 3 * * *'
     AzureOpenAIEndpoint: 'https://${openAiAccountName}.openai.azure.com/'
-    WhisperDeployment: whisperDeployment.name
     APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.properties.ConnectionString
   }
 }
@@ -435,20 +440,18 @@ resource gpt4oMiniDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
   }
 }
 
-resource whisperDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
-  parent: openAiAccount
-  name: 'whisper'
-  dependsOn: [gpt4oMiniDeployment]
+// Azure Speech Services (for conversation transcription with diarization)
+resource speechAccount 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
+  name: speechAccountName
+  location: location
+  tags: tags
+  kind: 'SpeechServices'
   sku: {
-    name: 'Standard'
-    capacity: 1
+    name: 'S0'
   }
   properties: {
-    model: {
-      format: 'OpenAI'
-      name: 'whisper'
-      version: '001'
-    }
+    customSubDomainName: speechAccountName
+    publicNetworkAccess: 'Enabled'
   }
 }
 
@@ -463,13 +466,13 @@ resource appServiceOpenAiRoleAssignment 'Microsoft.Authorization/roleAssignments
   }
 }
 
-// Role Assignment: Grant Function App managed identity access to Azure OpenAI (for Whisper transcription)
-resource functionAppOpenAiRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(openAiAccount.id, functionApp.id, cognitiveServicesOpenAiUserRoleId)
-  scope: openAiAccount
+// Role Assignment: Grant App Service managed identity access to Azure Speech Services
+resource appServiceSpeechRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(speechAccount.id, appService.id, cognitiveServicesSpeechUserRoleId)
+  scope: speechAccount
   properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cognitiveServicesOpenAiUserRoleId)
-    principalId: functionApp.identity.principalId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cognitiveServicesSpeechUserRoleId)
+    principalId: appService.identity.principalId
     principalType: 'ServicePrincipal'
   }
 }
@@ -487,6 +490,7 @@ output appServicePrincipalId string = appService.identity.principalId
 output functionAppId string = functionApp.id
 output functionAppName string = functionApp.name
 output functionAppDefaultHostname string = functionApp.properties.defaultHostName
+output speechAccountName string = speechAccount.name
 output functionAppPrincipalId string = functionApp.identity.principalId
 output appInsightsName string = appInsights.name
 output signalRServiceName string = signalRService.name
