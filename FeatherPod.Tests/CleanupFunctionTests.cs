@@ -35,7 +35,7 @@ public class CleanupFunctionTests : IAsyncLifetime
         });
 
         var logger = LoggerFactory.Create(b => b.AddConsole()).CreateLogger<CleanupFunction>();
-        _function = new CleanupFunction(_blobClient, _tableClient, settings, logger);
+        _function = new CleanupFunction(_blobClient, _tableClient, new StubHttpClientFactory(), settings, logger);
     }
 
     public async Task InitializeAsync()
@@ -137,7 +137,7 @@ public class CleanupFunctionTests : IAsyncLifetime
             OrphanedBlobRetentionDays = 1
         });
         var logger = LoggerFactory.Create(b => b.AddConsole()).CreateLogger<CleanupFunction>();
-        var function = new CleanupFunction(_blobClient, _tableClient, settings, logger);
+        var function = new CleanupFunction(_blobClient, _tableClient, new StubHttpClientFactory(), settings, logger);
 
         // Act
         var deleted = await function.CleanupOldJobsAsync(_tableClientInstance, CancellationToken.None);
@@ -161,7 +161,7 @@ public class CleanupFunctionTests : IAsyncLifetime
             OrphanedBlobRetentionDays = 0
         });
         var logger = LoggerFactory.Create(b => b.AddConsole()).CreateLogger<CleanupFunction>();
-        var function = new CleanupFunction(_blobClient, _tableClient, settings, logger);
+        var function = new CleanupFunction(_blobClient, _tableClient, new StubHttpClientFactory(), settings, logger);
 
         // Act
         var deleted = await function.CleanupOrphanedBlobsAsync(_tableClientInstance, CancellationToken.None);
@@ -196,7 +196,7 @@ public class CleanupFunctionTests : IAsyncLifetime
             OrphanedBlobRetentionDays = 0
         });
         var logger = LoggerFactory.Create(b => b.AddConsole()).CreateLogger<CleanupFunction>();
-        var function = new CleanupFunction(_blobClient, _tableClient, settings, logger);
+        var function = new CleanupFunction(_blobClient, _tableClient, new StubHttpClientFactory(), settings, logger);
 
         // Act
         var deleted = await function.CleanupOrphanedBlobsAsync(_tableClientInstance, CancellationToken.None);
@@ -232,12 +232,17 @@ public class CleanupFunctionTests : IAsyncLifetime
             OrphanedBlobRetentionDays = 0
         });
         var logger = LoggerFactory.Create(b => b.AddConsole()).CreateLogger<CleanupFunction>();
-        var function = new CleanupFunction(_blobClient, _tableClient, settings, logger);
+        var function = new CleanupFunction(_blobClient, _tableClient, new StubHttpClientFactory(), settings, logger);
 
         // Act
         var deleted = await function.CleanupOrphanedBlobsAsync(_tableClientInstance, CancellationToken.None);
 
         // Assert
         Assert.Equal(1, deleted);
+    }
+
+    private sealed class StubHttpClientFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new();
     }
 }

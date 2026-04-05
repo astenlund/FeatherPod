@@ -15,6 +15,7 @@ public class CleanupFunction
 {
     private readonly BlobServiceClient _blobClient;
     private readonly TableServiceClient _tableClient;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly FunctionSettings _settings;
     private readonly ILogger<CleanupFunction> _logger;
 
@@ -23,11 +24,13 @@ public class CleanupFunction
     public CleanupFunction(
         BlobServiceClient blobClient,
         TableServiceClient tableClient,
+        IHttpClientFactory httpClientFactory,
         IOptions<FunctionSettings> settings,
         ILogger<CleanupFunction> logger)
     {
         _blobClient = blobClient;
         _tableClient = tableClient;
+        _httpClientFactory = httpClientFactory;
         _settings = settings.Value;
         _logger = logger;
     }
@@ -158,6 +161,24 @@ public class CleanupFunction
                     var jobResponse = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
                     var job = jobResponse.Value;
 
+                    // Active transcription — don't delete pending blob
+                    if (job.TranscriptionStatus == "Running")
+                    {
+                        if (job.TranscriptionStartedAt.HasValue &&
+                            job.TranscriptionStartedAt.Value >= DateTimeOffset.UtcNow.AddHours(-24))
+                        {
+                            continue;
+                        }
+
+                        // Stale transcription (>24h) — mark failed, then trigger join
+                        job.TranscriptionStatus = "Failed";
+                        job.TranscriptionError = "Transcription timed out";
+                        await tableClient.UpdateEntityAsync(job, job.ETag, TableUpdateMode.Merge, cancellationToken);
+                        _logger.LogWarning("Marked stale transcription as failed for job {JobId}", job.RowKey);
+
+                        await CallCheckCompletionAsync(job.RowKey, cancellationToken);
+                    }
+
                     // If job is completed, failed, or cancelled, pending blob is orphaned (should have been deleted)
                     if (job.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
                     {
@@ -192,5 +213,34 @@ public class CleanupFunction
         }
 
         return deletedCount;
+    }
+
+    private async Task CallCheckCompletionAsync(string jobId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(_settings.AppServiceUrl))
+        {
+            _logger.LogWarning("AppServiceUrl not configured, skipping check-completion call for job {JobId}", jobId);
+
+            return;
+        }
+
+        try
+        {
+            using var client = _httpClientFactory.CreateClient();
+            client.Timeout = TimeSpan.FromSeconds(30);
+
+            if (!string.IsNullOrEmpty(_settings.InternalKey))
+            {
+                client.DefaultRequestHeaders.Add("X-Internal-Key", _settings.InternalKey);
+            }
+
+            var response = await client.PostAsync($"{_settings.AppServiceUrl}/api/internal/jobs/{jobId}/check-completion", null, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            _logger.LogInformation("Triggered check-completion for stale transcription job {JobId}", jobId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to trigger check-completion for job {JobId}", jobId);
+        }
     }
 }
