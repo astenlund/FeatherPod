@@ -114,6 +114,14 @@ export function connectFeedEvents() {
         feedEventsSource.close();
     }
     feedEventsSource = new EventSource('/api/feeds/' + FEED_ID + '/events');
+    let feedEventsConnected = false;
+    feedEventsSource.onopen = () => {
+        if (feedEventsConnected && navigator.serviceWorker) {
+            // Reconnection after drop (likely server restart from deployment) -- check for SW update
+            navigator.serviceWorker.ready.then(reg => reg.update()).catch(() => {});
+        }
+        feedEventsConnected = true;
+    };
     feedEventsSource.addEventListener('job-added', () => {
         fetchRecentJobs().then(mergeServerJobs).catch(() => {});
     });

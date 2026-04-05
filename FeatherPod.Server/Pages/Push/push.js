@@ -60,6 +60,13 @@ if (navigator.serviceWorker) {
     });
 }
 
+// Force SW update check on page load (browser heuristics are unreliable,
+// especially after hard refresh which bypasses the SW without triggering an update check).
+// Subsequent checks are triggered by feed SSE reconnect (server restart) and tab reactivation.
+if (navigator.serviceWorker) {
+    navigator.serviceWorker.ready.then(reg => reg.update()).catch(() => {});
+}
+
 // Auto-reload on SW update: new deployment detected, reload once uploads finish
 if (navigator.serviceWorker) {
     const hadController = !!navigator.serviceWorker.controller;
@@ -687,6 +694,10 @@ window.addEventListener('beforeunload', () => {
 
 document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
+        // Check for SW update on tab reactivation (catches deploys while tab was backgrounded)
+        if (navigator.serviceWorker) {
+            navigator.serviceWorker.ready.then(reg => reg.update()).catch(() => {});
+        }
         if (progressAnimator.hasActiveSlots()) {
             progressAnimator.setRestoring();
         }

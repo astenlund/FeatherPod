@@ -1,3 +1,4 @@
+const SW_VERSION = '{{SW_VERSION}}'; // eslint-disable-line no-unused-vars -- triggers SW update on new builds
 const CACHE_NAME = 'push-page';
 const SHARE_CACHE_NAME = 'share-target';
 const JS_VALIDATE_TIMEOUT_MS = 3000;

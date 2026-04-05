@@ -368,7 +368,7 @@ class Program
             {
                 context.Response.Headers["Service-Worker-Allowed"] = "/";
 
-                return ServePushAsset(feedId, "push-sw.js", "application/javascript", env, context);
+                return ServeServiceWorker(feedId, env, context);
             })
             .WithName("GetPushServiceWorker")
             .Produces(200, contentType: "application/javascript")
@@ -649,6 +649,47 @@ class Program
     }
 
     static string IconCacheBuster(string? iconETag) => iconETag != null ? $"?v={Uri.EscapeDataString(iconETag)}" : "";
+
+    // MVID changes on every build (code or resource changes), ensuring SW file differs between deployments
+    static readonly string s_swVersion = typeof(Program).Module.ModuleVersionId.ToString("N")[..8];
+
+    static IResult ServeServiceWorker(string feedId, IWebHostEnvironment env, HttpContext context)
+    {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return Results.BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
+        string content;
+        string etag;
+        if (env.IsDevelopment())
+        {
+            var pushDir = Path.Combine(env.ContentRootPath, "Pages", "Push");
+            content = File.ReadAllText(Path.Combine(pushDir, "push-sw.js"))
+                .Replace("{{SW_VERSION}}", "dev");
+            etag = ComputeWeakETag(content);
+        }
+        else
+        {
+            (content, etag) = s_pushAssetCache.GetOrAdd("push-sw-versioned", _ =>
+            {
+                var c = ReadResource(typeof(Program).Assembly, "FeatherPod.Server.Pages.Push.push-sw.js")
+                    .Replace("{{SW_VERSION}}", s_swVersion);
+
+                return (c, ComputeWeakETag(c));
+            });
+        }
+
+        if (IsNotModified(context, etag))
+        {
+            return Results.StatusCode(304);
+        }
+
+        context.Response.Headers.ETag = etag;
+        context.Response.Headers.CacheControl = "no-cache";
+
+        return Results.Content(content, "application/javascript");
+    }
 
     static IResult ServePushAsset(string feedId, string fileName, string contentType, IWebHostEnvironment env, HttpContext context)
     {
