@@ -1,5 +1,6 @@
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
+using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
@@ -18,8 +19,6 @@ public class CleanupFunction
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly FunctionSettings _settings;
     private readonly ILogger<CleanupFunction> _logger;
-
-    private const string TableName = "normalizationjobs";
 
     public CleanupFunction(
         BlobServiceClient blobClient,
@@ -43,7 +42,7 @@ public class CleanupFunction
         _logger.LogInformation("Starting normalization cleanup. Job retention: {JobDays} days, Orphaned blob retention: {BlobDays} days",
             _settings.JobRetentionDays, _settings.OrphanedBlobRetentionDays);
 
-        var tableClient = _tableClient.GetTableClient(TableName);
+        var tableClient = _tableClient.GetTableClient(JobStorageNames.TableName);
         await tableClient.CreateIfNotExistsAsync(cancellationToken);
 
         var deletedJobs = await CleanupOldJobsAsync(tableClient, cancellationToken);
@@ -68,7 +67,7 @@ public class CleanupFunction
         var deletedCount = 0;
 
         // Query for completed/failed jobs older than cutoff
-        var filter = $"PartitionKey eq 'jobs' and CompletedAt lt datetime'{cutoff:yyyy-MM-ddTHH:mm:ssZ}'";
+        var filter = $"PartitionKey eq '{JobStorageNames.JobsPartitionKey}' and CompletedAt lt datetime'{cutoff:yyyy-MM-ddTHH:mm:ssZ}'";
 
         await foreach (var entity in tableClient.QueryAsync<JobStatusEntity>(filter, cancellationToken: cancellationToken))
         {
@@ -86,7 +85,7 @@ public class CleanupFunction
 
         // Also clean up stuck jobs (no CompletedAt but QueuedAt is very old - e.g. 3x retention)
         var stuckCutoff = DateTimeOffset.UtcNow.AddDays(-_settings.JobRetentionDays * 3);
-        var stuckFilter = $"PartitionKey eq 'jobs' and QueuedAt lt datetime'{stuckCutoff:yyyy-MM-ddTHH:mm:ssZ}'";
+        var stuckFilter = $"PartitionKey eq '{JobStorageNames.JobsPartitionKey}' and QueuedAt lt datetime'{stuckCutoff:yyyy-MM-ddTHH:mm:ssZ}'";
 
         await foreach (var entity in tableClient.QueryAsync<JobStatusEntity>(stuckFilter, cancellationToken: cancellationToken))
         {
@@ -158,7 +157,7 @@ public class CleanupFunction
                 var shouldDelete = false;
                 try
                 {
-                    var jobResponse = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+                    var jobResponse = await tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId, cancellationToken: cancellationToken);
                     var job = jobResponse.Value;
 
                     // Active transcription — don't delete pending blob

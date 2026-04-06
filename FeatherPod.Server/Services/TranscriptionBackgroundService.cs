@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
 
@@ -134,7 +135,7 @@ public class TranscriptionBackgroundService : BackgroundService
                 var failed = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
                 {
                     e.TranscriptionStatus = TranscriptionStatuses.Failed;
-                    e.TranscriptionError = error.Length > 500 ? error[..500] : error;
+                    e.TranscriptionError = error.Truncate(500);
                 }, ct);
                 PublishProgress(request.JobId, failed);
                 _logger.LogWarning("Batch transcription failed for job {JobId}: {Error}", request.JobId, error);
@@ -177,7 +178,7 @@ public class TranscriptionBackgroundService : BackgroundService
             var failed = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
             {
                 e.TranscriptionStatus = TranscriptionStatuses.Failed;
-                e.TranscriptionError = ex.Message.Length > 500 ? ex.Message[..500] : ex.Message;
+                e.TranscriptionError = ex.Message.Truncate(500);
             }, CancellationToken.None);
             PublishProgress(request.JobId, failed);
         }
@@ -195,8 +196,8 @@ public class TranscriptionBackgroundService : BackgroundService
                 }
             }
 
-            CleanupTempFile(tempInputFile);
-            CleanupTempFile(tempWavFile);
+            FileHelper.TryDeleteFile(tempInputFile, _logger);
+            FileHelper.TryDeleteFile(tempWavFile, _logger);
         }
 
         await _completionService.TryCompleteJobAsync(request.JobId, CancellationToken.None);
@@ -266,7 +267,7 @@ public class TranscriptionBackgroundService : BackgroundService
 
         if (process.ExitCode != 0)
         {
-            throw new InvalidOperationException($"FFmpeg WAV conversion failed (exit {process.ExitCode}): {stderr[..Math.Min(500, stderr.Length)]}");
+            throw new InvalidOperationException($"FFmpeg WAV conversion failed (exit {process.ExitCode}): {stderr.Truncate(500)}");
         }
 
         _logger.LogInformation("Converted to WAV for transcription job {JobId}: {InputSize} -> {OutputSize} bytes",
@@ -283,26 +284,6 @@ public class TranscriptionBackgroundService : BackgroundService
         if (entity != null)
         {
             _progressChannel.Publish(jobId, JobStatusResponse.FromEntity(entity));
-        }
-    }
-
-    private void CleanupTempFile(string? path)
-    {
-        if (path == null)
-        {
-            return;
-        }
-
-        try
-        {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to clean up temp file {Path}", path);
         }
     }
 }

@@ -104,7 +104,7 @@ public partial class AudioNormalizationService : IAudioNormalizationService
             if (!success)
             {
                 _logger.LogError("Normalization failed for {FileName}", fileName);
-                CleanupTempFile(tempFile);
+                FileHelper.TryDeleteFile(tempFile, _logger);
 
                 return null;
             }
@@ -117,14 +117,14 @@ public partial class AudioNormalizationService : IAudioNormalizationService
         catch (OperationCanceledException)
         {
             _logger.LogWarning("Audio normalization cancelled for {FileName}", fileName);
-            CleanupTempFile(tempFile);
+            FileHelper.TryDeleteFile(tempFile, _logger);
 
             throw;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Audio normalization failed for {FileName}", fileName);
-            CleanupTempFile(tempFile);
+            FileHelper.TryDeleteFile(tempFile, _logger);
 
             return null;
         }
@@ -213,7 +213,7 @@ public partial class AudioNormalizationService : IAudioNormalizationService
             if (!success)
             {
                 _logger.LogError("Normalization failed for {FileName}", fileName);
-                CleanupTempFile(tempFile);
+                FileHelper.TryDeleteFile(tempFile, _logger);
 
                 return null;
             }
@@ -225,14 +225,14 @@ public partial class AudioNormalizationService : IAudioNormalizationService
         catch (OperationCanceledException)
         {
             _logger.LogWarning("Audio normalization cancelled for {FileName}", fileName);
-            CleanupTempFile(tempFile);
+            FileHelper.TryDeleteFile(tempFile, _logger);
 
             throw;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Audio normalization failed for {FileName}", fileName);
-            CleanupTempFile(tempFile);
+            FileHelper.TryDeleteFile(tempFile, _logger);
 
             return null;
         }
@@ -368,7 +368,7 @@ public partial class AudioNormalizationService : IAudioNormalizationService
         if (process.ExitCode != 0)
         {
             _logger.LogError("FFmpeg pass 1 failed with exit code {ExitCode}. Stderr: {Stderr}",
-                process.ExitCode, errorText.Length > 2000 ? errorText[..2000] : errorText);
+                process.ExitCode, errorText.Truncate(2000));
 
             return null;
         }
@@ -485,21 +485,6 @@ public partial class AudioNormalizationService : IAudioNormalizationService
         var localPath = Path.Combine(binDir, ffmpegName);
 
         return File.Exists(localPath) ? localPath : "ffmpeg";
-    }
-
-    private void CleanupTempFile(string path)
-    {
-        if (File.Exists(path))
-        {
-            try
-            {
-                File.Delete(path);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to cleanup temp file: {Path}", path);
-            }
-        }
     }
 
     [GeneratedRegex("""\{[^{}]*"input_i"[^{}]*\}""", RegexOptions.Singleline)]

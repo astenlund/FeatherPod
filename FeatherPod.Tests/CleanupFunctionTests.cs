@@ -1,6 +1,7 @@
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
 using FeatherPod.Functions;
+using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -56,7 +57,7 @@ public class CleanupFunctionTests : IAsyncLifetime
         // Arrange - create an old completed job
         var oldJob = new JobStatusEntity
         {
-            PartitionKey = "jobs",
+            PartitionKey = JobStorageNames.JobsPartitionKey,
             RowKey = Guid.NewGuid().ToString(),
             Status = nameof(JobStatus.Completed),
             FeedId = "test-feed",
@@ -78,7 +79,7 @@ public class CleanupFunctionTests : IAsyncLifetime
         // Arrange - create a recent completed job
         var recentJob = new JobStatusEntity
         {
-            PartitionKey = "jobs",
+            PartitionKey = JobStorageNames.JobsPartitionKey,
             RowKey = Guid.NewGuid().ToString(),
             Status = nameof(JobStatus.Completed),
             FeedId = "test-feed",
@@ -100,7 +101,7 @@ public class CleanupFunctionTests : IAsyncLifetime
         // Arrange - create a very old stuck job (no CompletedAt)
         var stuckJob = new JobStatusEntity
         {
-            PartitionKey = "jobs",
+            PartitionKey = JobStorageNames.JobsPartitionKey,
             RowKey = Guid.NewGuid().ToString(),
             Status = nameof(JobStatus.Processing),
             FeedId = "test-feed",
@@ -121,7 +122,7 @@ public class CleanupFunctionTests : IAsyncLifetime
         // Arrange - create a job completed 30 minutes ago with 0-day retention
         var recentJob = new JobStatusEntity
         {
-            PartitionKey = "jobs",
+            PartitionKey = JobStorageNames.JobsPartitionKey,
             RowKey = Guid.NewGuid().ToString(),
             Status = nameof(JobStatus.Completed),
             FeedId = "test-feed",
@@ -180,7 +181,7 @@ public class CleanupFunctionTests : IAsyncLifetime
 
         var job = new JobStatusEntity
         {
-            PartitionKey = "jobs",
+            PartitionKey = JobStorageNames.JobsPartitionKey,
             RowKey = jobId,
             Status = nameof(JobStatus.Processing),
             FeedId = "test-feed",
@@ -215,7 +216,7 @@ public class CleanupFunctionTests : IAsyncLifetime
 
         var job = new JobStatusEntity
         {
-            PartitionKey = "jobs",
+            PartitionKey = JobStorageNames.JobsPartitionKey,
             RowKey = jobId,
             Status = nameof(JobStatus.Completed),
             FeedId = "test-feed",

@@ -1,5 +1,6 @@
 using System.Threading.Channels;
 using FeatherPod.Server.Services;
+using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -144,7 +145,7 @@ public class JobCompletionServiceTests
     {
         _jobService.SetEntity(new JobStatusEntity
         {
-            PartitionKey = "jobs",
+            PartitionKey = JobStorageNames.JobsPartitionKey,
             RowKey = jobId,
             Status = nameof(JobStatus.Processing),
             FeedId = "test-feed",

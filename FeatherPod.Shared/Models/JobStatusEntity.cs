@@ -10,9 +10,10 @@ namespace FeatherPod.Shared.Models;
 public class JobStatusEntity : ITableEntity
 {
     /// <summary>
-    /// Partition key. Use "jobs" for simplicity, or feedId for high concurrency.
+    /// Partition key. Always <see cref="JobStorageNames.JobsPartitionKey"/> for the
+    /// <see cref="JobStorageNames.TableName"/> table.
     /// </summary>
-    public string PartitionKey { get; set; } = "jobs";
+    public string PartitionKey { get; set; } = JobStorageNames.JobsPartitionKey;
 
     /// <summary>
     /// Row key. The JobId (GUID).
@@ -202,7 +203,7 @@ public class JobStatusEntity : ITableEntity
     {
         return new JobStatusEntity
         {
-            PartitionKey = "jobs",
+            PartitionKey = JobStorageNames.JobsPartitionKey,
             RowKey = jobId,
             Status = nameof(JobStatus.Queued),
             NormalizationStage = nameof(Models.NormalizationStage.Queued),

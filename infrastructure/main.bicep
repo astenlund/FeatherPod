@@ -120,6 +120,7 @@ resource queueService 'Microsoft.Storage/storageAccounts/queueServices@2023-01-0
 }
 
 // Normalization Jobs Queue
+// Name must match FeatherPod.Shared/JobStorageNames.cs (QueueName).
 resource normalizationQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-01-01' = {
   parent: queueService
   name: 'normalization-jobs'
@@ -132,6 +133,7 @@ resource tableService 'Microsoft.Storage/storageAccounts/tableServices@2023-01-0
 }
 
 // Normalization Jobs Status Table
+// Name must match FeatherPod.Shared/JobStorageNames.cs (TableName).
 resource normalizationTable 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-01-01' = {
   parent: tableService
   name: 'normalizationjobs'

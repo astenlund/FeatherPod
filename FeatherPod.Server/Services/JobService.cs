@@ -2,6 +2,7 @@ using System.Text.Json;
 using Azure.Data.Tables;
 using Azure.Identity;
 using Azure.Storage.Queues;
+using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 
 namespace FeatherPod.Server.Services;
@@ -15,9 +16,6 @@ public class JobService : IJobService
     private readonly TableClient _tableClient;
     private readonly ILogger<JobService> _logger;
 
-    private const string QueueName = "normalization-jobs";
-    private const string TableName = "normalizationjobs";
-
     public JobService(IConfiguration config, ILogger<JobService> logger)
     {
         _logger = logger;
@@ -30,18 +28,18 @@ public class JobService : IJobService
 
         if (!string.IsNullOrEmpty(azureConfig.ConnectionString))
         {
-            _queueClient = new(azureConfig.ConnectionString, QueueName, queueOptions);
-            _tableClient = new(azureConfig.ConnectionString, TableName);
+            _queueClient = new(azureConfig.ConnectionString, JobStorageNames.QueueName, queueOptions);
+            _tableClient = new(azureConfig.ConnectionString, JobStorageNames.TableName);
             _logger.LogInformation("Using connection string for queue/table storage authentication");
         }
         else if (!string.IsNullOrEmpty(azureConfig.AccountName))
         {
             var credential = new DefaultAzureCredential();
-            var queueUri = new Uri($"https://{azureConfig.AccountName}.queue.core.windows.net/{QueueName}");
+            var queueUri = new Uri($"https://{azureConfig.AccountName}.queue.core.windows.net/{JobStorageNames.QueueName}");
             var tableUri = new Uri($"https://{azureConfig.AccountName}.table.core.windows.net");
 
             _queueClient = new(queueUri, credential, queueOptions);
-            _tableClient = new(tableUri, TableName, credential);
+            _tableClient = new(tableUri, JobStorageNames.TableName, credential);
             _logger.LogInformation("Using managed identity for queue/table storage authentication");
         }
         else
@@ -58,7 +56,7 @@ public class JobService : IJobService
     {
         await _queueClient.CreateIfNotExistsAsync();
         await _tableClient.CreateIfNotExistsAsync();
-        _logger.LogInformation("Job service initialized. Queue: {Queue}, Table: {Table}", QueueName, TableName);
+        _logger.LogInformation("Job service initialized. Queue: {Queue}, Table: {Table}", JobStorageNames.QueueName, JobStorageNames.TableName);
     }
 
     public async Task QueueNormalizationJobAsync(NormalizationJob job, CancellationToken cancellationToken = default)
@@ -72,7 +70,7 @@ public class JobService : IJobService
     {
         try
         {
-            var response = await _tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+            var response = await _tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId, cancellationToken: cancellationToken);
             return response.Value;
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 404)
@@ -112,7 +110,7 @@ public class JobService : IJobService
 
     public async Task<List<JobStatusEntity>> GetActiveJobsByFeedAsync(string feedId, CancellationToken cancellationToken = default)
     {
-        var filter = $"PartitionKey eq 'jobs' and FeedId eq '{feedId}'";
+        var filter = $"PartitionKey eq '{JobStorageNames.JobsPartitionKey}' and FeedId eq '{feedId}'";
         var results = new List<JobStatusEntity>();
 
         await foreach (var entity in _tableClient.QueryAsync<JobStatusEntity>(filter, cancellationToken: cancellationToken))
@@ -130,7 +128,7 @@ public class JobService : IJobService
     public async Task<List<JobStatusEntity>> GetRecentJobsByFeedAsync(string feedId, TimeSpan since, CancellationToken cancellationToken = default)
     {
         var cutoff = DateTimeOffset.UtcNow - since;
-        var filter = $"PartitionKey eq 'jobs' and FeedId eq '{feedId}'";
+        var filter = $"PartitionKey eq '{JobStorageNames.JobsPartitionKey}' and FeedId eq '{feedId}'";
         var results = new List<JobStatusEntity>();
 
         await foreach (var entity in _tableClient.QueryAsync<JobStatusEntity>(filter, cancellationToken: cancellationToken))
@@ -151,7 +149,7 @@ public class JobService : IJobService
         {
             try
             {
-                var response = await _tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+                var response = await _tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId, cancellationToken: cancellationToken);
                 var entity = response.Value;
 
                 // Already completed or cancelled — not cancellable
@@ -164,7 +162,7 @@ public class JobService : IJobService
                 // Partial Merge: set job-level and track-level terminal fields
                 var partial = new JobStatusEntity
                 {
-                    PartitionKey = "jobs",
+                    PartitionKey = JobStorageNames.JobsPartitionKey,
                     RowKey = jobId,
                     Status = nameof(JobStatus.Cancelled),
                     NormalizationStage = nameof(NormalizationStage.Cancelled),
@@ -203,7 +201,7 @@ public class JobService : IJobService
         }
 
         // Final attempt: re-read to see if it became terminal
-        var finalResponse = await _tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+        var finalResponse = await _tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId, cancellationToken: cancellationToken);
         var finalEntity = finalResponse.Value;
         if (finalEntity.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
         {
@@ -222,7 +220,7 @@ public class JobService : IJobService
         {
             try
             {
-                var response = await _tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+                var response = await _tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId, cancellationToken: cancellationToken);
                 var entity = response.Value;
 
                 mutate(entity);
@@ -255,7 +253,7 @@ public class JobService : IJobService
         {
             try
             {
-                var response = await _tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+                var response = await _tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId, cancellationToken: cancellationToken);
                 var entity = response.Value;
 
                 // Don't write to terminal jobs
@@ -267,7 +265,7 @@ public class JobService : IJobService
                 }
 
                 // Build partial entity with only the fields to merge
-                var partial = new JobStatusEntity { PartitionKey = "jobs", RowKey = jobId };
+                var partial = new JobStatusEntity { PartitionKey = JobStorageNames.JobsPartitionKey, RowKey = jobId };
                 configure(partial);
 
                 await _tableClient.UpdateEntityAsync(partial, entity.ETag, TableUpdateMode.Merge, cancellationToken);
@@ -296,7 +294,7 @@ public class JobService : IJobService
 
     public async Task MergeWithETagAsync(string jobId, Action<JobStatusEntity> configure, Azure.ETag etag, CancellationToken cancellationToken = default)
     {
-        var partial = new JobStatusEntity { PartitionKey = "jobs", RowKey = jobId };
+        var partial = new JobStatusEntity { PartitionKey = JobStorageNames.JobsPartitionKey, RowKey = jobId };
         configure(partial);
 
         await _tableClient.UpdateEntityAsync(partial, etag, TableUpdateMode.Merge, cancellationToken);

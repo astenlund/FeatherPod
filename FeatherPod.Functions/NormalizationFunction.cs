@@ -2,6 +2,7 @@ using System.Text.Json;
 using Azure;
 using Azure.Data.Tables;
 using Azure.Storage.Blobs;
+using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
 using FFMpegCore;
@@ -29,8 +30,6 @@ public class NormalizationFunction
     private readonly FunctionSettings _settings;
     private readonly ILogger<NormalizationFunction> _logger;
 
-    private const string TableName = "normalizationjobs";
-    private const string QueueName = "normalization-jobs";
     private static readonly TimeSpan DefaultProgressThrottle = TimeSpan.FromMilliseconds(500);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true };
 
@@ -53,7 +52,7 @@ public class NormalizationFunction
     }
 
     [Function("ProcessNormalizationJob")]
-    public async Task ProcessNormalizationJob([QueueTrigger(QueueName, Connection = "AzureWebJobsStorage")] string? message, CancellationToken cancellationToken)
+    public async Task ProcessNormalizationJob([QueueTrigger(JobStorageNames.QueueName, Connection = "AzureWebJobsStorage")] string? message, CancellationToken cancellationToken)
     {
         _logger.LogInformation("Queue trigger received message: {MessageLength} chars", message?.Length ?? 0);
 
@@ -76,7 +75,7 @@ public class NormalizationFunction
             FFmpegBinaryManager.GetBinaryDirectory());
         _telemetryClient.Flush();
 
-        var tableClient = _tableClient.GetTableClient(TableName);
+        var tableClient = _tableClient.GetTableClient(JobStorageNames.TableName);
         await tableClient.CreateIfNotExistsAsync(cancellationToken);
 
         // Check if the job was cancelled before we start processing
@@ -376,8 +375,8 @@ public class NormalizationFunction
         }
         finally
         {
-            CleanupTempFile(tempInputFile);
-            CleanupTempFile(normalizedFile);
+            FileHelper.TryDeleteFile(tempInputFile, _logger);
+            FileHelper.TryDeleteFile(normalizedFile, _logger);
         }
     }
 
@@ -450,7 +449,7 @@ public class NormalizationFunction
     /// Handle messages that have failed all retry attempts.
     /// </summary>
     [Function("ProcessPoisonNormalizationJob")]
-    public async Task ProcessPoisonJob([QueueTrigger($"{QueueName}-poison", Connection = "AzureWebJobsStorage")] string message, CancellationToken cancellationToken)
+    public async Task ProcessPoisonJob([QueueTrigger($"{JobStorageNames.QueueName}-poison", Connection = "AzureWebJobsStorage")] string message, CancellationToken cancellationToken)
     {
         var job = JsonSerializer.Deserialize<NormalizationJob>(message);
         if (job == null)
@@ -461,7 +460,7 @@ public class NormalizationFunction
 
         _logger.LogWarning("Processing poison queue message for job {JobId}", job.JobId);
 
-        var tableClient = _tableClient.GetTableClient(TableName);
+        var tableClient = _tableClient.GetTableClient(JobStorageNames.TableName);
 
         // Signal normalization failure to App Service (join logic decides overall job status)
         var error = "Job failed after maximum retry attempts";
@@ -484,7 +483,7 @@ public class NormalizationFunction
 
     private async Task TransitionToProcessingAsync(TableClient tableClient, string jobId, CancellationToken cancellationToken)
     {
-        var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+        var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId, cancellationToken: cancellationToken);
         var entity = existingResponse.Value;
 
         if (entity.GetJobStatus() is JobStatus.Cancelled or JobStatus.Completed or JobStatus.Failed)
@@ -496,7 +495,7 @@ public class NormalizationFunction
 
         var partial = new JobStatusEntity
         {
-            PartitionKey = "jobs",
+            PartitionKey = JobStorageNames.JobsPartitionKey,
             RowKey = jobId,
             Status = nameof(JobStatus.Processing)
         };
@@ -509,7 +508,7 @@ public class NormalizationFunction
         try
         {
             // Read existing entity to preserve QueuedAt and other fields
-            var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId);
+            var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId);
             var entity = existingResponse.Value;
 
             // Don't overwrite terminal states (e.g., user cancelled the job)
@@ -524,7 +523,7 @@ public class NormalizationFunction
             // Partial entity Merge — only write normalization progress fields
             var partial = new JobStatusEntity
             {
-                PartitionKey = "jobs",
+                PartitionKey = JobStorageNames.JobsPartitionKey,
                 RowKey = jobId,
                 NormalizationStage = progress.Stage.ToString(),
                 NormalizationProgress = progress.ProgressPercent,
@@ -691,7 +690,7 @@ public class NormalizationFunction
     {
         var partial = new JobStatusEntity
         {
-            PartitionKey = "jobs",
+            PartitionKey = JobStorageNames.JobsPartitionKey,
             RowKey = jobId,
             Status = nameof(JobStatus.Failed),
             NormalizationComplete = true,
@@ -706,7 +705,7 @@ public class NormalizationFunction
     {
         try
         {
-            var response = await tableClient.GetEntityAsync<JobStatusEntity>("jobs", jobId, cancellationToken: cancellationToken);
+            var response = await tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId, cancellationToken: cancellationToken);
 
             return response.Value;
         }
@@ -727,7 +726,7 @@ public class NormalizationFunction
 
         var partial = new JobStatusEntity
         {
-            PartitionKey = "jobs",
+            PartitionKey = JobStorageNames.JobsPartitionKey,
             RowKey = job.JobId,
             Status = nameof(JobStatus.Processing)
         };
@@ -788,22 +787,5 @@ public class NormalizationFunction
         }, CancellationToken.None);
 
         return linkedCts;
-    }
-
-    private void CleanupTempFile(string? path)
-    {
-        if (string.IsNullOrEmpty(path) || !File.Exists(path))
-        {
-            return;
-        }
-
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to cleanup temp file: {Path}", path);
-        }
     }
 }

@@ -317,7 +317,7 @@ class Program
 
                 var iconETag = await blobStorageService.GetIconETagAsync(feedId);
                 var iconCacheBuster = IconCacheBuster(iconETag);
-                var shortName = feed.Title.Length <= 12 ? feed.Title : feed.Title[..12];
+                var shortName = feed.Title.Truncate(12);
                 var manifest = new
                 {
                     id = $"/{feedId}/push",
