@@ -123,6 +123,7 @@ internal sealed class SingleInstanceCoordinator : IDisposable
         }
         catch
         {
+            // Corrupt or unreadable lock file; treat as absent so a fresh host can take over.
             return null;
         }
     }
@@ -142,6 +143,7 @@ internal sealed class SingleInstanceCoordinator : IDisposable
         }
         catch
         {
+            // Mutex may already be disposed or owned by another holder; nothing actionable on shutdown.
         }
 
         _mutex = null;
@@ -159,6 +161,7 @@ internal sealed class SingleInstanceCoordinator : IDisposable
         }
         catch
         {
+            // Process not found or access denied; existing host is gone.
             return false;
         }
 
@@ -171,6 +174,7 @@ internal sealed class SingleInstanceCoordinator : IDisposable
         }
         catch
         {
+            // Health check failed (timeout, refused, network); existing host is unreachable.
             return false;
         }
     }
@@ -185,6 +189,7 @@ internal sealed class SingleInstanceCoordinator : IDisposable
             }
             catch
             {
+                // Not currently owned or already released; clear ownership flag regardless.
             }
 
             _isMutexOwner = false;
