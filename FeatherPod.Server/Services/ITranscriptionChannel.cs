@@ -11,4 +11,6 @@ public interface ITranscriptionChannel
     ValueTask SubmitAsync(TranscriptionRequest request, CancellationToken cancellationToken = default);
 
     IAsyncEnumerable<TranscriptionRequest> ReadAllAsync(CancellationToken cancellationToken);
+
+    void Complete();
 }

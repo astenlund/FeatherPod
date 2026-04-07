@@ -50,13 +50,7 @@ public class TranscriptionBackgroundService : BackgroundService
         _completionService = completionService;
         _logger = logger;
 
-        lifetime.ApplicationStopping.Register(() =>
-        {
-            if (_channel is TranscriptionChannel tc)
-            {
-                tc.Complete();
-            }
-        });
+        lifetime.ApplicationStopping.Register(() => _channel.Complete());
 
         var maxConcurrent = configuration.GetValue("AzureSpeech:MaxConcurrent", 3);
         _concurrency = new SemaphoreSlim(maxConcurrent, maxConcurrent);
