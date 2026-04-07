@@ -361,9 +361,17 @@ export function checkAllComplete() {
 /**
  * Fire-and-forget wrapper around monitorEntryNormalization for background monitoring.
  * When the promise resolves: updates DOM, saves state, calls checkAllComplete().
+ * Pass `isResuming: true` for any caller that picks up an in-progress server job
+ * mid-stream (page reload restore, failed-entry recovery, server-discovered jobs)
+ * so the first SSE update snaps to the live value via the animator's restoring
+ * branch instead of being treated as a fresh stage start.
  * @param {QueueEntry} entry
+ * @param {{ isResuming?: boolean }} [options]
  */
-export function monitorEntryNormalizationInBackground(entry) {
+export function monitorEntryNormalizationInBackground(entry, { isResuming = false } = {}) {
+    if (isResuming) {
+        progressAnimator.markRestoring(entry.id, entry.fileSize);
+    }
     monitorEntryNormalization(entry).then(() => {
         if (uploadQueue.includes(entry)) {
             updateQueueItemInDOM(entry);
@@ -1099,9 +1107,11 @@ export async function restoreQueueState() {
     }
 
     // Data restored -- caller decides when to show state (after server sync completes)
-    // Start SSE monitors now so progress updates arrive during the sync wait
+    // Start SSE monitors now so progress updates arrive during the sync wait.
+    // isResuming=true so the animator snaps to the live server value instead of
+    // computing an inflated velocity from a fake stage start at 0.
     for (const entry of uploadQueue.filter(e => e.status === 'normalizing' && e.jobId)) {
-        monitorEntryNormalizationInBackground(entry);
+        monitorEntryNormalizationInBackground(entry, { isResuming: true });
     }
 
     return true;

@@ -459,9 +459,9 @@ export const progressAnimator = {
         let slot = this.slots.get(entryId);
         if (!slot) {
             slot = createSlot();
+            this.slots.set(entryId, slot);
         }
         slot.currentFileSize = fileSize;
-        this.slots.set(entryId, slot);
     },
 
     /**
@@ -489,6 +489,8 @@ export const progressAnimator = {
 
     /**
      * Mark all active slots as restoring (awaiting first real update).
+     * Used by the visibilitychange handler when the tab regains focus and
+     * slots already have a stage from prior in-session activity.
      */
     setRestoring() {
         for (const slot of this.slots.values()) {
@@ -497,6 +499,31 @@ export const progressAnimator = {
                 slot.isRestoring = true;
             }
         }
+    },
+
+    /**
+     * Mark a single slot as restoring before any stage has been observed,
+     * creating the slot with the saved file size if needed. Used by every
+     * code path that resumes monitoring of an in-progress server job
+     * (page reload, failed-entry recovery, server-discovered jobs):
+     * subsequent startWithAssumption + setTarget will then take the
+     * restoring branch and snap to the live server value instead of
+     * treating the picked-up-mid-stream progress as a fresh start
+     * (which would compute an inflated velocity from stageStartValue=0).
+     * @param {string} entryId
+     * @param {number} [fileSize] - Skipped if 0/undefined to avoid clobbering a known-good value
+     */
+    markRestoring(entryId, fileSize) {
+        let slot = this.slots.get(entryId);
+        if (!slot) {
+            slot = createSlot();
+            this.slots.set(entryId, slot);
+        }
+        if (typeof fileSize === 'number' && fileSize > 0) {
+            slot.currentFileSize = fileSize;
+        }
+        slot.isRestoring = true;
+        slot.awaitingFirstUpdate = true;
     },
 
     /**

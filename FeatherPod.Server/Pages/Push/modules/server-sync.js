@@ -290,7 +290,7 @@ export function mergeServerJobs(serverJobs) {
             existing.progress = serverJob.progressPercent ?? 0;
             existing.error = null;
             changedEntryIds.add(existing.id);
-            monitorEntryNormalizationInBackground(existing);
+            monitorEntryNormalizationInBackground(existing, { isResuming: true });
         } else if (existing.status === 'failed' && serverStatus === 'Completed') {
             // Recover locally-failed entries that actually completed on server
             existing.status = 'completed';
@@ -394,10 +394,13 @@ export function mergeServerJobs(serverJobs) {
         }
     }
 
-    // Start SSE monitoring for new normalizing entries only
+    // Start SSE monitoring for new normalizing entries only.
+    // isResuming=true: these jobs were already in progress on the server when we
+    // discovered them, so the animator must snap to the live value rather than
+    // treat the first SSE update as a fresh stage start.
     for (const entry of newEntries) {
         if (entry.status === 'normalizing') {
-            monitorEntryNormalizationInBackground(entry);
+            monitorEntryNormalizationInBackground(entry, { isResuming: true });
         }
     }
 
