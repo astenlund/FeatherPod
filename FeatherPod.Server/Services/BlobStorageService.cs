@@ -1,3 +1,5 @@
+using System.Text;
+
 using Azure.Identity;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
@@ -66,10 +68,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task SaveFeedsConfigAsync(string feedsJson)
     {
-        var blobClient = _container.GetBlobClient("feeds.json");
-
-        await using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(feedsJson));
-        await blobClient.UploadAsync(stream, overwrite: true);
+        await UploadTextAsync("feeds.json", feedsJson);
 
         _logger.LogInformation("Saved feeds configuration to blob storage");
     }
@@ -92,10 +91,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task SaveUsersConfigAsync(string usersJson)
     {
-        var blobClient = _container.GetBlobClient("users.json");
-
-        await using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(usersJson));
-        await blobClient.UploadAsync(stream, overwrite: true);
+        await UploadTextAsync("users.json", usersJson);
 
         _logger.LogInformation("Saved users configuration to blob storage");
     }
@@ -246,11 +242,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task SaveEpisodeMetadataAsync(string feedId, string metadataJson)
     {
-        var blobPath = $"{feedId}/episodes.json";
-        var blobClient = _container.GetBlobClient(blobPath);
-
-        await using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(metadataJson));
-        await blobClient.UploadAsync(stream, overwrite: true);
+        await UploadTextAsync($"{feedId}/episodes.json", metadataJson);
 
         _logger.LogInformation("Saved episode metadata for feed: {FeedId}", feedId);
     }
@@ -290,10 +282,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task SavePushSubscriptionsAsync(string feedId, string subscriptionsJson)
     {
-        var blobClient = _container.GetBlobClient($"{feedId}/push-subscriptions.json");
-
-        await using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(subscriptionsJson));
-        await blobClient.UploadAsync(stream, overwrite: true);
+        await UploadTextAsync($"{feedId}/push-subscriptions.json", subscriptionsJson);
 
         _logger.LogInformation("Saved push subscriptions for feed: {FeedId}", feedId);
     }
@@ -345,11 +334,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task UploadTranscriptAsync(string feedId, string episodeId, string vttContent)
     {
-        var blobPath = $"{feedId}/transcripts/{episodeId}.vtt";
-        var blobClient = _container.GetBlobClient(blobPath);
-
-        await using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(vttContent));
-        await blobClient.UploadAsync(stream, overwrite: true);
+        await UploadTextAsync($"{feedId}/transcripts/{episodeId}.vtt", vttContent);
 
         _logger.LogInformation("Uploaded transcript to blob storage: {FeedId}/{EpisodeId}", feedId, episodeId);
     }
@@ -427,6 +412,14 @@ public class BlobStorageService : IBlobStorageService
         }
 
         _logger.LogInformation("Deleted all blobs for feed: {FeedId}", feedId);
+    }
+
+    private async Task UploadTextAsync(string blobPath, string content)
+    {
+        var blobClient = _container.GetBlobClient(blobPath);
+
+        await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(content));
+        await blobClient.UploadAsync(stream, overwrite: true);
     }
 }
 
