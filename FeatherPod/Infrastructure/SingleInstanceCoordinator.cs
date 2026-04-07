@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Runtime.Versioning;
 using System.Text.Json;
 using FeatherPod.Shared;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FeatherPod.Infrastructure;
 
@@ -130,7 +129,7 @@ internal sealed class SingleInstanceCoordinator : IDisposable
 
     public void DeleteLockFile()
     {
-        FileHelper.TryDeleteFile(_lockFilePath, NullLogger.Instance);
+        FileHelper.TryDeleteFile(_lockFilePath);
     }
 
     public void Dispose()

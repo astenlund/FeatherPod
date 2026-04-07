@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace FeatherPod.Shared;
 
@@ -7,6 +8,12 @@ namespace FeatherPod.Shared;
 /// </summary>
 public static class FileHelper
 {
+    /// <summary>
+    /// Best-effort temp file cleanup with no logging. Silently no-ops on null/empty/missing paths
+    /// and swallows delete failures. Intended for fire-and-forget callers (e.g., CLI) that have no logger.
+    /// </summary>
+    public static void TryDeleteFile(string? path) => TryDeleteFile(path, NullLogger.Instance);
+
     /// <summary>
     /// Best-effort temp file cleanup. Silently no-ops on null/empty/missing paths
     /// and logs a warning (without rethrowing) on delete failures. Intended for

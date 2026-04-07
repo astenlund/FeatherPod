@@ -7,7 +7,6 @@ using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
 using FFMpegCore;
-using Microsoft.Extensions.Logging.Abstractions;
 using Spectre.Console;
 
 using static FeatherPod.Infrastructure.ConsoleWriter;
@@ -80,7 +79,7 @@ internal static partial class FFmpegService
         catch (Exception)
         {
             // Normalization failed; clean up partial output and surface as null to the caller.
-            FileHelper.TryDeleteFile(tempFile, NullLogger.Instance);
+            FileHelper.TryDeleteFile(tempFile);
 
             return null;
         }
