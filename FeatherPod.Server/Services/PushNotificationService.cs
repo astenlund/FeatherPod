@@ -199,7 +199,7 @@ public class PushNotificationService
                 continue;
             }
 
-            if (entity.Status is nameof(JobStatus.Completed) or nameof(JobStatus.Failed) or nameof(JobStatus.Cancelled))
+            if (entity.Status.IsTerminal())
             {
                 var title = await ResolveEpisodeTitleAsync(feedId, entity.EpisodeId, entity.FileName);
                 terminalJobs.Add(new CompletedJobInfo(entity.Status, title));
@@ -254,7 +254,7 @@ public class PushNotificationService
                 return;
             }
 
-            if (progress.Status is not (nameof(JobStatus.Completed) or nameof(JobStatus.Failed) or nameof(JobStatus.Cancelled)))
+            if (!progress.Status.IsTerminal())
             {
                 return;
             }

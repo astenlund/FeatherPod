@@ -486,7 +486,7 @@ public class NormalizationFunction
         var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId, cancellationToken: cancellationToken);
         var entity = existingResponse.Value;
 
-        if (entity.GetJobStatus() is JobStatus.Cancelled or JobStatus.Completed or JobStatus.Failed)
+        if (entity.GetJobStatus().IsTerminal())
         {
             _logger.LogDebug("Skipping transition to Processing for job {JobId} — already in terminal state {Status}", jobId, entity.Status);
 
@@ -513,7 +513,7 @@ public class NormalizationFunction
 
             // Don't overwrite terminal states (e.g., user cancelled the job)
             var currentStatus = entity.GetJobStatus();
-            if (currentStatus is JobStatus.Cancelled or JobStatus.Completed or JobStatus.Failed)
+            if (currentStatus.IsTerminal())
             {
                 _logger.LogDebug("Skipping progress update for job {JobId} — already in terminal state {Status}", jobId, currentStatus);
 

@@ -102,7 +102,7 @@ public class JobCompletionService
         }
 
         // Already completed by another caller
-        if (entity.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+        if (entity.GetJobStatus().IsTerminal())
         {
             _logger.LogDebug("Job {JobId} already in terminal state {Status}", jobId, entity.Status);
 

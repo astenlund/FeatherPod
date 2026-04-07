@@ -156,7 +156,7 @@ public class YouTubeDownloadService : BackgroundService
             {
                 await _jobService.UpdateJobStatusAsync(job.JobId, e =>
                 {
-                    if (e.GetJobStatus() is not (JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled))
+                    if (!e.GetJobStatus().IsTerminal())
                     {
                         e.Title = title;
                     }
@@ -302,7 +302,7 @@ public class YouTubeDownloadService : BackgroundService
             var entity = await _jobService.UpdateJobStatusAsync(job.JobId, e =>
             {
                 // Don't overwrite terminal states
-                if (e.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+                if (e.GetJobStatus().IsTerminal())
                 {
                     return;
                 }
@@ -347,7 +347,7 @@ public class YouTubeDownloadService : BackgroundService
             var entity = await _jobService.UpdateJobStatusAsync(job.JobId, e =>
             {
                 // Don't overwrite terminal states (e.g., already Cancelled or Completed)
-                if (e.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+                if (e.GetJobStatus().IsTerminal())
                 {
                     return;
                 }

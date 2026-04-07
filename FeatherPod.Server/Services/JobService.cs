@@ -115,8 +115,7 @@ public class JobService : IJobService
 
         await foreach (var entity in _tableClient.QueryAsync<JobStatusEntity>(filter, cancellationToken: cancellationToken))
         {
-            var status = entity.GetJobStatus();
-            if (status is not (JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled))
+            if (!entity.GetJobStatus().IsTerminal())
             {
                 results.Add(entity);
             }
@@ -203,7 +202,7 @@ public class JobService : IJobService
         // Final attempt: re-read to see if it became terminal
         var finalResponse = await _tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId, cancellationToken: cancellationToken);
         var finalEntity = finalResponse.Value;
-        if (finalEntity.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+        if (finalEntity.GetJobStatus().IsTerminal())
         {
             return null;
         }
@@ -257,7 +256,7 @@ public class JobService : IJobService
                 var entity = response.Value;
 
                 // Don't write to terminal jobs
-                if (entity.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+                if (entity.GetJobStatus().IsTerminal())
                 {
                     _logger.LogDebug("Skipping merge for job {JobId} — already in terminal state {Status}", jobId, entity.Status);
 

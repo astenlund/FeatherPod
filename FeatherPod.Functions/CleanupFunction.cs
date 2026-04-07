@@ -179,7 +179,7 @@ public class CleanupFunction
                     }
 
                     // If job is completed, failed, or cancelled, pending blob is orphaned (should have been deleted)
-                    if (job.GetJobStatus() is JobStatus.Completed or JobStatus.Failed or JobStatus.Cancelled)
+                    if (job.GetJobStatus().IsTerminal())
                     {
                         shouldDelete = true;
                     }

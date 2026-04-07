@@ -225,7 +225,7 @@ public class JobsController : ControllerBase
         var initialResponse = JobStatusResponse.FromEntity(entity);
         await WriteEventAsync("progress", JsonSerializer.Serialize(initialResponse, JsonOptions), cancellationToken);
 
-        if (IsTerminal(entity.Status))
+        if (entity.Status.IsTerminal())
         {
             await WriteEventAsync("done", "{}", cancellationToken);
 
@@ -266,7 +266,7 @@ public class JobsController : ControllerBase
                     lastEntity = entity;
                 }
 
-                if (IsTerminal(entity.Status))
+                if (entity.Status.IsTerminal())
                 {
                     _pushNotificationService.TryNotifyJobTerminal(response ?? JobStatusResponse.FromEntity(entity));
                     await WriteEventAsync("done", "{}", cancellationToken);
@@ -330,7 +330,7 @@ public class JobsController : ControllerBase
                     lastResponse = update;
                 }
 
-                if (update != null && IsTerminal(update.Status))
+                if (update != null && update.Status.IsTerminal())
                 {
                     // Only notify from fallback poll -- channel updates already triggered
                     // TryNotifyJobTerminal at the ingestion point (ProgressHub/InternalController)
@@ -402,10 +402,5 @@ public class JobsController : ControllerBase
                last.EpisodeId != current.EpisodeId ||
                last.Error != current.Error ||
                last.Title != current.Title;
-    }
-
-    private static bool IsTerminal(string? status)
-    {
-        return status is nameof(JobStatus.Completed) or nameof(JobStatus.Failed) or nameof(JobStatus.Cancelled);
     }
 }
