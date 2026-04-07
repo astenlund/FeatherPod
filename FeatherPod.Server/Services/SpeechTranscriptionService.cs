@@ -223,7 +223,7 @@ public class SpeechTranscriptionService
         _logger.LogInformation("Batch transcription complete: {SegmentCount} segments from {SpeakerCount} speakers",
             segments.Count, segments.Select(s => s.SpeakerId).Distinct().Count());
 
-        return SerializeDiarizedVtt(segments);
+        return VttSerializer.Serialize(segments);
     }
 
     /// <summary>
@@ -246,42 +246,9 @@ public class SpeechTranscriptionService
         }
     }
 
-    /// <summary>
-    /// Serialize diarized segments to VTT with speaker voice tags.
-    /// Public and static for testability.
-    /// </summary>
-    public static string SerializeDiarizedVtt(IReadOnlyList<DiarizedSegment> segments)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine("WEBVTT");
-        sb.AppendLine();
-
-        foreach (var segment in segments)
-        {
-            var start = TimeSpan.FromTicks(segment.OffsetTicks);
-            var end = start + TimeSpan.FromTicks(segment.DurationTicks);
-
-            sb.AppendLine($"{FormatVttTimestamp(start)} --> {FormatVttTimestamp(end)}");
-            sb.AppendLine($"<v {segment.SpeakerId}>{segment.Text}</v>");
-            sb.AppendLine();
-        }
-
-        return sb.ToString();
-    }
-
-    internal static string FormatVttTimestamp(TimeSpan ts)
-    {
-        return $"{(int)ts.TotalHours:D2}:{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
-    }
-
     private async Task SetAuthHeaderAsync(HttpRequestMessage request, CancellationToken ct)
     {
         var token = await _credential.GetTokenAsync(SpeechTokenScope, ct);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
     }
-
-    /// <summary>
-    /// A single diarized speech segment.
-    /// </summary>
-    public record DiarizedSegment(long OffsetTicks, long DurationTicks, string SpeakerId, string Text);
 }

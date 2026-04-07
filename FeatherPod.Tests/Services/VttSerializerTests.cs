@@ -1,14 +1,11 @@
 using FeatherPod.Server.Services;
 
-using static FeatherPod.Server.Services.SpeechTranscriptionService;
-
 namespace FeatherPod.Tests.Services;
 
-[Collection("Sequential")]
-public class SpeechTranscriptionServiceTests
+public class VttSerializerTests
 {
     [Fact]
-    public void SerializeDiarizedVtt_BasicSegments_ProducesValidVtt()
+    public void Serialize_BasicSegments_ProducesValidVtt()
     {
         // Arrange
         var segments = new List<DiarizedSegment>
@@ -18,7 +15,7 @@ public class SpeechTranscriptionServiceTests
         };
 
         // Act
-        var vtt = SerializeDiarizedVtt(segments);
+        var vtt = VttSerializer.Serialize(segments);
 
         // Assert
         Assert.StartsWith("WEBVTT", vtt);
@@ -29,13 +26,13 @@ public class SpeechTranscriptionServiceTests
     }
 
     [Fact]
-    public void SerializeDiarizedVtt_EmptySegments_ReturnsHeaderOnly()
+    public void Serialize_EmptySegments_ReturnsHeaderOnly()
     {
         // Arrange
         var segments = new List<DiarizedSegment>();
 
         // Act
-        var vtt = SerializeDiarizedVtt(segments);
+        var vtt = VttSerializer.Serialize(segments);
 
         // Assert
         Assert.StartsWith("WEBVTT", vtt);
@@ -43,7 +40,7 @@ public class SpeechTranscriptionServiceTests
     }
 
     [Fact]
-    public void SerializeDiarizedVtt_MultipleSpeakers_LabelsCorrectly()
+    public void Serialize_MultipleSpeakers_LabelsCorrectly()
     {
         // Arrange
         var segments = new List<DiarizedSegment>
@@ -54,7 +51,7 @@ public class SpeechTranscriptionServiceTests
         };
 
         // Act
-        var vtt = SerializeDiarizedVtt(segments);
+        var vtt = VttSerializer.Serialize(segments);
 
         // Assert
         var lines = vtt.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
@@ -64,17 +61,17 @@ public class SpeechTranscriptionServiceTests
     }
 
     [Fact]
-    public void FormatVttTimestamp_VariousValues_FormatsCorrectly()
+    public void FormatTimestamp_VariousValues_FormatsCorrectly()
     {
         // Arrange / Act / Assert
-        Assert.Equal("00:00:01.000", FormatVttTimestamp(TimeSpan.FromSeconds(1)));
-        Assert.Equal("01:30:00.000", FormatVttTimestamp(TimeSpan.FromMinutes(90)));
-        Assert.Equal("00:01:30.500", FormatVttTimestamp(TimeSpan.Parse("00:01:30.500")));
-        Assert.Equal("00:00:00.000", FormatVttTimestamp(TimeSpan.Zero));
+        Assert.Equal("00:00:01.000", VttSerializer.FormatTimestamp(TimeSpan.FromSeconds(1)));
+        Assert.Equal("01:30:00.000", VttSerializer.FormatTimestamp(TimeSpan.FromMinutes(90)));
+        Assert.Equal("00:01:30.500", VttSerializer.FormatTimestamp(TimeSpan.Parse("00:01:30.500")));
+        Assert.Equal("00:00:00.000", VttSerializer.FormatTimestamp(TimeSpan.Zero));
     }
 
     [Fact]
-    public void SerializeDiarizedVtt_LongTimestamps_FormatsCorrectly()
+    public void Serialize_LongTimestamps_FormatsCorrectly()
     {
         // Arrange
         var segments = new List<DiarizedSegment>
@@ -86,7 +83,7 @@ public class SpeechTranscriptionServiceTests
         };
 
         // Act
-        var vtt = SerializeDiarizedVtt(segments);
+        var vtt = VttSerializer.Serialize(segments);
 
         // Assert
         Assert.Contains("01:23:45.678", vtt);
