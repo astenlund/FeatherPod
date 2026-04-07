@@ -105,7 +105,7 @@ public class PushNotificationService
         if (changed)
         {
             await PersistAsync(feedId);
-            _logger.LogInformation("Push subscription registered for feed {FeedId}: {Endpoint}", feedId, Truncate(request.Endpoint));
+            _logger.LogInformation("Push subscription registered for feed {FeedId}: {Endpoint}", feedId, TruncateEndpoint(request.Endpoint));
         }
     }
 
@@ -136,7 +136,7 @@ public class PushNotificationService
         if (removed > 0)
         {
             await PersistAsync(feedId);
-            _logger.LogInformation("Push subscription removed for feed {FeedId}: {Endpoint}", feedId, Truncate(endpoint));
+            _logger.LogInformation("Push subscription removed for feed {FeedId}: {Endpoint}", feedId, TruncateEndpoint(endpoint));
         }
 
         if (!hasRemainingSubscriptions)
@@ -396,11 +396,11 @@ public class PushNotificationService
                     {
                         staleEndpoints.Add(sub.Endpoint);
                     }
-                    _logger.LogInformation("Removing stale push subscription (410 Gone): {Endpoint}", Truncate(sub.Endpoint));
+                    _logger.LogInformation("Removing stale push subscription (410 Gone): {Endpoint}", TruncateEndpoint(sub.Endpoint));
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "Failed to send push notification to {Endpoint}", Truncate(sub.Endpoint));
+                    _logger.LogWarning(ex, "Failed to send push notification to {Endpoint}", TruncateEndpoint(sub.Endpoint));
                 }
             });
             await Task.WhenAll(tasks);
@@ -550,8 +550,8 @@ public class PushNotificationService
         await _blobStorageService.SavePushSubscriptionsAsync(feedId, json);
     }
 
-    private static string Truncate(string endpoint) =>
-        endpoint.Length > 60 ? $"{endpoint[..60].TrimEnd()}..." : endpoint;
+    private static string TruncateEndpoint(string endpoint) =>
+        endpoint.Length > 60 ? $"{endpoint.Truncate(60).TrimEnd()}..." : endpoint;
 
     private class NotificationSession
     {
