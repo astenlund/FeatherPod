@@ -43,14 +43,9 @@ public class InternalController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> RefreshFeedCache(string feedId)
     {
-        // Validate internal key if configured
-        if (!string.IsNullOrEmpty(_internalKey))
+        if (ValidateInternalKey() is { } authError)
         {
-            var providedKey = Request.Headers["X-Internal-Key"].FirstOrDefault();
-            if (!ConstantTimeEquals(providedKey, _internalKey))
-            {
-                return Unauthorized(new { error = "Invalid or missing X-Internal-Key header" });
-            }
+            return authError;
         }
 
         if (!InputValidation.IsValidFeedId(feedId))
@@ -80,13 +75,9 @@ public class InternalController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public IActionResult PushJobProgress(string jobId, [FromBody] JobStatusResponse progress)
     {
-        if (!string.IsNullOrEmpty(_internalKey))
+        if (ValidateInternalKey() is { } authError)
         {
-            var providedKey = Request.Headers["X-Internal-Key"].FirstOrDefault();
-            if (!ConstantTimeEquals(providedKey, _internalKey))
-            {
-                return Unauthorized(new { error = "Invalid or missing X-Internal-Key header" });
-            }
+            return authError;
         }
 
         _progressChannel.Publish(jobId, progress);
@@ -104,13 +95,9 @@ public class InternalController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> NormalizationComplete(string jobId, [FromBody] NormalizationCompleteRequest request)
     {
-        if (!string.IsNullOrEmpty(_internalKey))
+        if (ValidateInternalKey() is { } authError)
         {
-            var providedKey = Request.Headers["X-Internal-Key"].FirstOrDefault();
-            if (!ConstantTimeEquals(providedKey, _internalKey))
-            {
-                return Unauthorized(new { error = "Invalid or missing X-Internal-Key header" });
-            }
+            return authError;
         }
 
         await _jobCompletionService.HandleNormalizationCompleteAsync(jobId, request, HttpContext.RequestAborted);
@@ -127,17 +114,34 @@ public class InternalController : ControllerBase
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> CheckCompletion(string jobId)
     {
-        if (!string.IsNullOrEmpty(_internalKey))
+        if (ValidateInternalKey() is { } authError)
         {
-            var providedKey = Request.Headers["X-Internal-Key"].FirstOrDefault();
-            if (!ConstantTimeEquals(providedKey, _internalKey))
-            {
-                return Unauthorized(new { error = "Invalid or missing X-Internal-Key header" });
-            }
+            return authError;
         }
 
         await _jobCompletionService.TryCompleteJobAsync(jobId, HttpContext.RequestAborted);
 
         return Ok();
+    }
+
+    /// <summary>
+    /// Validates the X-Internal-Key header against the configured internal key.
+    /// Returns <c>null</c> when the request is authorized (or when no internal key
+    /// is configured, which disables the check), otherwise an <see cref="UnauthorizedObjectResult"/>.
+    /// </summary>
+    private IActionResult? ValidateInternalKey()
+    {
+        if (string.IsNullOrEmpty(_internalKey))
+        {
+            return null;
+        }
+
+        var providedKey = Request.Headers["X-Internal-Key"].FirstOrDefault();
+        if (ConstantTimeEquals(providedKey, _internalKey))
+        {
+            return null;
+        }
+
+        return Unauthorized(new { error = "Invalid or missing X-Internal-Key header" });
     }
 }
