@@ -6,6 +6,7 @@ using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using FeatherPod.Settings.Episode;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using Spectre.Console;
 
 using static FeatherPod.Infrastructure.ConsoleWriter;
@@ -326,18 +327,7 @@ internal static class EpisodeHelpers
         }
         finally
         {
-            // Clean up normalized temp file
-            if (normalizedTempFile != null && File.Exists(normalizedTempFile))
-            {
-                try
-                {
-                    File.Delete(normalizedTempFile);
-                }
-                catch
-                {
-                    // Ignore cleanup errors
-                }
-            }
+            FileHelper.TryDeleteFile(normalizedTempFile, NullLogger.Instance);
         }
     }
 
