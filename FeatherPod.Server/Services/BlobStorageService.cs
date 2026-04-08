@@ -10,9 +10,18 @@ namespace FeatherPod.Server.Services;
 
 public class BlobStorageService : IBlobStorageService
 {
+    // User delegation keys can be requested for up to 7 days. We fetch for 6 days to leave headroom,
+    // and refresh when less than 2 hours remain -- comfortably above the 1-hour SAS lifetime, so any
+    // just-returned key can sign a full-lifetime SAS without the SAS outliving the key.
+    private static readonly TimeSpan DelegationKeyLifetime = TimeSpan.FromDays(6);
+    private static readonly TimeSpan DelegationKeyRefreshBuffer = TimeSpan.FromHours(2);
+    private static readonly TimeSpan PendingBlobSasLifetime = TimeSpan.FromHours(1);
+
     private readonly BlobServiceClient _blobServiceClient;
     private readonly BlobContainerClient _container;
     private readonly ILogger<BlobStorageService> _logger;
+    private readonly object _delegationKeyLock = new();
+    private UserDelegationKey? _cachedDelegationKey;
 
     public BlobStorageService(BlobServiceClient blobServiceClient, BlobContainerClient container, ILogger<BlobStorageService> logger)
     {
@@ -270,7 +279,7 @@ public class BlobStorageService : IBlobStorageService
             BlobContainerName = _container.Name,
             BlobName = blobPath,
             Resource = "b",
-            ExpiresOn = DateTimeOffset.UtcNow.AddHours(1),
+            ExpiresOn = DateTimeOffset.UtcNow + PendingBlobSasLifetime,
         };
         builder.SetPermissions(BlobSasPermissions.Read);
 
@@ -282,11 +291,46 @@ public class BlobStorageService : IBlobStorageService
             return blobClient.GenerateSasUri(builder).AbsoluteUri;
         }
 
-        var delegationKey = await _blobServiceClient.GetUserDelegationKeyAsync(DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(1));
-        var accountName = _blobServiceClient.AccountName;
-        var sasUri = new BlobUriBuilder(blobClient.Uri) { Sas = builder.ToSasQueryParameters(delegationKey, accountName) };
+        var delegationKey = await GetUserDelegationKeyAsync();
+        var sasUri = new BlobUriBuilder(blobClient.Uri) { Sas = builder.ToSasQueryParameters(delegationKey, _blobServiceClient.AccountName) };
 
         return sasUri.ToString();
+    }
+
+    /// <summary>
+    /// Returns a user delegation key valid for signing SAS tokens. Caches the key at service
+    /// level (up to ~6 days) and refreshes when less than <see cref="DelegationKeyRefreshBuffer"/>
+    /// remains. The refresh threshold guarantees any SAS signed with the returned key fits
+    /// comfortably within the key's remaining validity.
+    /// </summary>
+    private async Task<UserDelegationKey> GetUserDelegationKeyAsync()
+    {
+        // Reference assignment is atomic, but the lock makes the snapshot read explicit and
+        // matches the pattern used in SpeechTranscriptionService.GetAccessTokenAsync.
+        UserDelegationKey? snapshot;
+        lock (_delegationKeyLock)
+        {
+            snapshot = _cachedDelegationKey;
+        }
+
+        if (snapshot is not null && snapshot.SignedExpiresOn > DateTimeOffset.UtcNow + DelegationKeyRefreshBuffer)
+        {
+            return snapshot;
+        }
+
+        // Refresh outside the lock. A concurrent caller may also refresh; that's fine -- we just
+        // overwrite with whichever finishes last. Both keys will be valid.
+        var now = DateTimeOffset.UtcNow;
+        var fresh = await _blobServiceClient.GetUserDelegationKeyAsync(now, now + DelegationKeyLifetime);
+
+        lock (_delegationKeyLock)
+        {
+            _cachedDelegationKey = fresh.Value;
+        }
+
+        _logger.LogInformation("Refreshed user delegation key (expires {ExpiresOn:u})", fresh.Value.SignedExpiresOn);
+
+        return fresh.Value;
     }
 
     public async Task DeletePendingJobBlobsAsync(string feedId, string jobId)
