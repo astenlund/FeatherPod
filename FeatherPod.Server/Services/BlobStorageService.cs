@@ -1,11 +1,9 @@
 using System.Text;
 
-using Azure.Identity;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Azure.Storage.Sas;
 
-using FeatherPod.Server.Configuration;
 using FeatherPod.Shared;
 
 namespace FeatherPod.Server.Services;
@@ -14,35 +12,13 @@ public class BlobStorageService : IBlobStorageService
 {
     private readonly BlobServiceClient _blobServiceClient;
     private readonly BlobContainerClient _container;
-    private readonly bool _usesConnectionString;
     private readonly ILogger<BlobStorageService> _logger;
 
-    public BlobStorageService(IConfiguration config, ILogger<BlobStorageService> logger)
+    public BlobStorageService(BlobServiceClient blobServiceClient, BlobContainerClient container, ILogger<BlobStorageService> logger)
     {
+        _blobServiceClient = blobServiceClient;
+        _container = container;
         _logger = logger;
-
-        var azureConfig = config.GetSection("Azure").Get<AzureStorageConfig>()!;
-
-        // Create BlobServiceClient
-        // Supports both connection string and DefaultAzureCredential (for managed identity)
-        if (!string.IsNullOrEmpty(azureConfig.ConnectionString))
-        {
-            _blobServiceClient = new(azureConfig.ConnectionString);
-            _usesConnectionString = true;
-            _logger.LogInformation("Using connection string for blob storage authentication");
-        }
-        else if (!string.IsNullOrEmpty(azureConfig.AccountName))
-        {
-            var blobUri = new Uri($"https://{azureConfig.AccountName}.blob.core.windows.net");
-            _blobServiceClient = new(blobUri, new DefaultAzureCredential());
-            _logger.LogInformation("Using managed identity for blob storage authentication");
-        }
-        else
-        {
-            throw new InvalidOperationException("Azure storage configuration requires either ConnectionString or AccountName");
-        }
-
-        _container = _blobServiceClient.GetBlobContainerClient(azureConfig.ContainerName);
     }
 
     public async Task InitializeAsync()
@@ -298,7 +274,10 @@ public class BlobStorageService : IBlobStorageService
         };
         builder.SetPermissions(BlobSasPermissions.Read);
 
-        if (_usesConnectionString)
+        // When the client is authenticated with a shared key (connection string), it can sign
+        // SAS URIs directly. With managed identity / token credential, we must fetch a user
+        // delegation key first. BlobBaseClient.CanGenerateSasUri reflects exactly this.
+        if (blobClient.CanGenerateSasUri)
         {
             return blobClient.GenerateSasUri(builder).AbsoluteUri;
         }

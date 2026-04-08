@@ -1,9 +1,7 @@
 using System.Text.Json;
 
-using Azure.Identity;
 using Azure.Storage.Blobs;
 
-using FeatherPod.Server.Configuration;
 using FeatherPod.Shared.Models;
 
 namespace FeatherPod.Server.Services;
@@ -21,28 +19,10 @@ public class YouTubeCookieService
     private readonly ILogger<YouTubeCookieService> _logger;
     private bool? _hasCookiesCache;
 
-    public YouTubeCookieService(IConfiguration config, ILogger<YouTubeCookieService> logger)
+    public YouTubeCookieService(BlobContainerClient containerClient, ILogger<YouTubeCookieService> logger)
     {
+        _containerClient = containerClient;
         _logger = logger;
-
-        var azureConfig = config.GetSection("Azure").Get<AzureStorageConfig>()!;
-
-        BlobServiceClient blobServiceClient;
-        if (!string.IsNullOrEmpty(azureConfig.ConnectionString))
-        {
-            blobServiceClient = new(azureConfig.ConnectionString);
-        }
-        else if (!string.IsNullOrEmpty(azureConfig.AccountName))
-        {
-            var blobUri = new Uri($"https://{azureConfig.AccountName}.blob.core.windows.net");
-            blobServiceClient = new(blobUri, new DefaultAzureCredential());
-        }
-        else
-        {
-            throw new InvalidOperationException("Azure storage configuration requires either ConnectionString or AccountName");
-        }
-
-        _containerClient = blobServiceClient.GetBlobContainerClient(azureConfig.ContainerName);
     }
 
     /// <summary>

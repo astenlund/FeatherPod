@@ -3,6 +3,11 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
+
+using Azure.Identity;
+using Azure.Storage.Blobs;
+
+using FeatherPod.Server.Configuration;
 using FeatherPod.Server.Hubs;
 using FeatherPod.Server.Middleware;
 using FeatherPod.Server.Services;
@@ -45,6 +50,36 @@ class Program
 
         // Application Insights (picks up APPLICATIONINSIGHTS_CONNECTION_STRING automatically)
         builder.Services.AddApplicationInsightsTelemetry();
+
+        // Shared Azure storage clients: single auth-branching site for connection string vs managed identity
+        builder.Services.AddSingleton(sp =>
+        {
+            var azureConfig = sp.GetRequiredService<IConfiguration>().GetSection("Azure").Get<AzureStorageConfig>()!;
+            var logger = sp.GetRequiredService<ILogger<Program>>();
+
+            if (!string.IsNullOrEmpty(azureConfig.ConnectionString))
+            {
+                logger.LogInformation("Using connection string for blob storage authentication");
+
+                return new BlobServiceClient(azureConfig.ConnectionString);
+            }
+
+            if (!string.IsNullOrEmpty(azureConfig.AccountName))
+            {
+                logger.LogInformation("Using managed identity for blob storage authentication");
+                var blobUri = new Uri($"https://{azureConfig.AccountName}.blob.core.windows.net");
+
+                return new BlobServiceClient(blobUri, new DefaultAzureCredential());
+            }
+
+            throw new InvalidOperationException("Azure storage configuration requires either ConnectionString or AccountName");
+        });
+        builder.Services.AddSingleton(sp =>
+        {
+            var azureConfig = sp.GetRequiredService<IConfiguration>().GetSection("Azure").Get<AzureStorageConfig>()!;
+
+            return sp.GetRequiredService<BlobServiceClient>().GetBlobContainerClient(azureConfig.ContainerName);
+        });
 
         // Add services
         builder.Services.AddSingleton<IBlobStorageService, BlobStorageService>();
