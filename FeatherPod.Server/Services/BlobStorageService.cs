@@ -5,6 +5,8 @@ using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Azure.Storage.Sas;
 
+using FeatherPod.Server.Configuration;
+
 namespace FeatherPod.Server.Services;
 
 public class BlobStorageService : IBlobStorageService
@@ -427,12 +429,4 @@ public class BlobStorageService : IBlobStorageService
         await using var stream = new MemoryStream(Encoding.UTF8.GetBytes(content));
         await blobClient.UploadAsync(stream, overwrite: true);
     }
-}
-
-// Configuration model for Azure Blob Storage
-public record AzureStorageConfig
-{
-    public string ConnectionString { get; init; } = string.Empty;
-    public string AccountName { get; init; } = string.Empty;
-    public string ContainerName { get; init; } = "featherpod";
 }
