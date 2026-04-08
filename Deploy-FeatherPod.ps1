@@ -194,8 +194,8 @@ function Deploy-Environment {
     }
     Write-Host "======================================`n" -ForegroundColor Magenta
 
-    # Deploy infrastructure (if requested)
     if ($Infrastructure) {
+        # Deploy infrastructure via Bicep
         Write-Host "Deploying infrastructure via Bicep...`n" -ForegroundColor Cyan
 
         $secretsFile = Join-Path $PSScriptRoot "infrastructure\parameters.secrets.json"
@@ -213,59 +213,86 @@ function Deploy-Environment {
             throw "Bicep deployment failed with exit code $LASTEXITCODE"
         }
         Write-Host "`nInfrastructure deployment complete.`n" -ForegroundColor Green
+    }
+    else {
+        # Deploy App Service
+        Write-Host "Deploying to Azure App Service...`n" -ForegroundColor Cyan
+        az webapp deploy --resource-group $ResourceGroup --name $AppName --src-path $script:zipPath --type zip --clean true --async true
+        if ($LASTEXITCODE -ne 0) {
+            throw "az webapp deploy failed with exit code $LASTEXITCODE"
+        }
 
+        # Give the app a moment to start, then verify it's running
+        Write-Host "Waiting for App Service to start..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 30
+        $versionUrl = "https://$AppName.azurewebsites.net/api/version"
+        $maxAttempts = 10
+        $attempt = 0
+        while ($attempt -lt $maxAttempts) {
+            $attempt++
+            try {
+                $response = Invoke-RestMethod -Uri $versionUrl -TimeoutSec 10 -ErrorAction Stop
+                Write-Host "App Service is running: v$($response.version)" -ForegroundColor Green
+                break
+            }
+            catch {
+                if ($attempt -eq $maxAttempts) {
+                    Write-Host "Warning: App Service health check timed out. It may still be starting." -ForegroundColor Yellow
+                }
+                else {
+                    Write-Host "  Attempt $attempt/$maxAttempts - waiting..." -ForegroundColor Gray
+                    Start-Sleep -Seconds 15
+                }
+            }
+        }
+
+        # Deploy Function App
+        Write-Host "`nDeploying to Azure Function App (Flex Consumption)...`n" -ForegroundColor Cyan
+        Push-Location $script:funcPublishPath
+        try {
+            # Flex Consumption: runtime is configured via functionAppConfig in Bicep, not func CLI
+            # --no-build: we publish pre-built binaries, skip remote build
+            func azure functionapp publish $FunctionAppName --dotnet-isolated --no-build
+            if ($LASTEXITCODE -ne 0) {
+                throw "func azure functionapp publish failed with exit code $LASTEXITCODE"
+            }
+        }
+        finally {
+            Pop-Location
+        }
+
+        Write-Host "`nDeployment to $TargetEnvironment successful!`n" -ForegroundColor Green
+        Write-Host "App Service URL: https://$AppName.azurewebsites.net" -ForegroundColor Yellow
+        Write-Host "Function App URL: https://$FunctionAppName.azurewebsites.net" -ForegroundColor Yellow
+    }
+
+    Update-ReleaseTag -TargetEnvironment $TargetEnvironment
+}
+
+# Move the release-{env} tag to HEAD and push it, marking the commit as released.
+# Failures are non-fatal: the deploy already succeeded, the tag is just a marker.
+function Update-ReleaseTag {
+    param(
+        [string]$TargetEnvironment
+    )
+
+    $tagName = if ($TargetEnvironment -eq "Test") { "release-test" } else { "release-prod" }
+
+    Write-Host "`nUpdating release tag '$tagName' to HEAD..." -ForegroundColor Cyan
+
+    git tag -f $tagName
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Warning: failed to move tag '$tagName' locally (exit $LASTEXITCODE)" -ForegroundColor Yellow
         return
     }
 
-    # Deploy App Service
-    Write-Host "Deploying to Azure App Service...`n" -ForegroundColor Cyan
-    az webapp deploy --resource-group $ResourceGroup --name $AppName --src-path $script:zipPath --type zip --clean true --async true
+    git push --force origin "refs/tags/$tagName"
     if ($LASTEXITCODE -ne 0) {
-        throw "az webapp deploy failed with exit code $LASTEXITCODE"
+        Write-Host "Warning: failed to push tag '$tagName' to origin (exit $LASTEXITCODE)" -ForegroundColor Yellow
+        return
     }
 
-    # Give the app a moment to start, then verify it's running
-    Write-Host "Waiting for App Service to start..." -ForegroundColor Yellow
-    Start-Sleep -Seconds 30
-    $versionUrl = "https://$AppName.azurewebsites.net/api/version"
-    $maxAttempts = 10
-    $attempt = 0
-    while ($attempt -lt $maxAttempts) {
-        $attempt++
-        try {
-            $response = Invoke-RestMethod -Uri $versionUrl -TimeoutSec 10 -ErrorAction Stop
-            Write-Host "App Service is running: v$($response.version)" -ForegroundColor Green
-            break
-        }
-        catch {
-            if ($attempt -eq $maxAttempts) {
-                Write-Host "Warning: App Service health check timed out. It may still be starting." -ForegroundColor Yellow
-            }
-            else {
-                Write-Host "  Attempt $attempt/$maxAttempts - waiting..." -ForegroundColor Gray
-                Start-Sleep -Seconds 15
-            }
-        }
-    }
-
-    # Deploy Function App
-    Write-Host "`nDeploying to Azure Function App (Flex Consumption)...`n" -ForegroundColor Cyan
-    Push-Location $script:funcPublishPath
-    try {
-        # Flex Consumption: runtime is configured via functionAppConfig in Bicep, not func CLI
-        # --no-build: we publish pre-built binaries, skip remote build
-        func azure functionapp publish $FunctionAppName --dotnet-isolated --no-build
-        if ($LASTEXITCODE -ne 0) {
-            throw "func azure functionapp publish failed with exit code $LASTEXITCODE"
-        }
-    }
-    finally {
-        Pop-Location
-    }
-
-    Write-Host "`nDeployment to $TargetEnvironment successful!`n" -ForegroundColor Green
-    Write-Host "App Service URL: https://$AppName.azurewebsites.net" -ForegroundColor Yellow
-    Write-Host "Function App URL: https://$FunctionAppName.azurewebsites.net" -ForegroundColor Yellow
+    Write-Host "Release tag '$tagName' updated." -ForegroundColor Green
 }
 
 Main @PSBoundParameters
