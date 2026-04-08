@@ -16,6 +16,7 @@ public class SpeechTranscriptionService
 
     private static readonly JsonSerializerOptions CamelCaseOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     private static readonly TokenRequestContext SpeechTokenScope = new(["https://cognitiveservices.azure.com/.default"]);
+    private static readonly TimeSpan TokenRefreshBuffer = TimeSpan.FromMinutes(5);
 
     private readonly string? _endpoint;
     private readonly string _locale;
@@ -24,6 +25,8 @@ public class SpeechTranscriptionService
     private readonly ILogger<SpeechTranscriptionService> _logger;
     private readonly TimeSpan _pollInterval = TimeSpan.FromSeconds(2);
     private readonly TimeSpan _pollTimeout;
+    private readonly object _tokenLock = new();
+    private AccessToken _cachedToken;
 
     /// <summary>
     /// Whether transcription is available (AzureSpeech:Endpoint is configured).
@@ -248,7 +251,37 @@ public class SpeechTranscriptionService
 
     private async Task SetAuthHeaderAsync(HttpRequestMessage request, CancellationToken ct)
     {
-        var token = await _credential.GetTokenAsync(SpeechTokenScope, ct);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
+        var token = await GetAccessTokenAsync(ct);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+    }
+
+    private async Task<string> GetAccessTokenAsync(CancellationToken ct)
+    {
+        // Read current cached token under a short in-memory lock (AccessToken is a struct,
+        // so multi-field reads aren't torn-read safe without synchronization).
+        AccessToken snapshot;
+        lock (_tokenLock)
+        {
+            snapshot = _cachedToken;
+        }
+
+        // Algebraically equivalent to `ExpiresOn - TokenRefreshBuffer > UtcNow`, but avoids
+        // underflow on the cold-start path where `_cachedToken` is default(AccessToken)
+        // and `ExpiresOn == DateTimeOffset.MinValue`.
+        if (snapshot.ExpiresOn > DateTimeOffset.UtcNow + TokenRefreshBuffer)
+        {
+            return snapshot.Token;
+        }
+
+        // Refresh outside the lock. A concurrent caller may also refresh, but that's fine:
+        // DefaultAzureCredential caches internally, so the wasted work is minimal.
+        var fresh = await _credential.GetTokenAsync(SpeechTokenScope, ct);
+
+        lock (_tokenLock)
+        {
+            _cachedToken = fresh;
+        }
+
+        return fresh.Token;
     }
 }
