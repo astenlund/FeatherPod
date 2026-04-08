@@ -481,28 +481,6 @@ public class NormalizationFunction
         _logger.LogInformation("Poison job {JobId} handled, signaled normalization failure", job.JobId);
     }
 
-    private async Task TransitionToProcessingAsync(TableClient tableClient, string jobId, CancellationToken cancellationToken)
-    {
-        var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId, cancellationToken: cancellationToken);
-        var entity = existingResponse.Value;
-
-        if (entity.GetJobStatus().IsTerminal())
-        {
-            _logger.LogDebug("Skipping transition to Processing for job {JobId} — already in terminal state {Status}", jobId, entity.Status);
-
-            return;
-        }
-
-        var partial = new JobStatusEntity
-        {
-            PartitionKey = JobStorageNames.JobsPartitionKey,
-            RowKey = jobId,
-            Status = nameof(JobStatus.Processing)
-        };
-
-        await tableClient.UpdateEntityAsync(partial, entity.ETag, TableUpdateMode.Merge, cancellationToken);
-    }
-
     private async Task UpdateProgressAsync(TableClient tableClient, string jobId, ProgressUpdate progress, string? progressMode = null, HubConnection? signalRConnection = null)
     {
         try
@@ -717,13 +695,6 @@ public class NormalizationFunction
 
     private async Task<bool> TryTransitionToProcessingAsync(TableClient tableClient, NormalizationJob job, JobStatusEntity? entity, CancellationToken cancellationToken)
     {
-        if (entity == null)
-        {
-            await TransitionToProcessingAsync(tableClient, job.JobId, cancellationToken);
-
-            return true;
-        }
-
         var partial = new JobStatusEntity
         {
             PartitionKey = JobStorageNames.JobsPartitionKey,
@@ -731,28 +702,41 @@ public class NormalizationFunction
             Status = nameof(JobStatus.Processing)
         };
 
-        try
+        if (entity != null)
         {
-            await tableClient.UpdateEntityAsync(partial, entity.ETag, TableUpdateMode.Merge, cancellationToken);
-
-            return true;
-        }
-        catch (RequestFailedException ex) when (ex.Status == 412)
-        {
-            // ETag conflict — re-read and check if cancelled
-            var refreshed = await GetJobEntityAsync(tableClient, job.JobId, cancellationToken);
-            if (refreshed?.GetJobStatus() == JobStatus.Cancelled)
+            try
             {
-                _logger.LogInformation("Job {JobId} was cancelled during transition to Processing, skipping", job.JobId);
+                await tableClient.UpdateEntityAsync(partial, entity.ETag, TableUpdateMode.Merge, cancellationToken);
 
-                return false;
+                return true;
             }
-
-            // Not cancelled, fall back to unconditional upsert
-            await TransitionToProcessingAsync(tableClient, job.JobId, cancellationToken);
-
-            return true;
+            catch (RequestFailedException ex) when (ex.Status == 412)
+            {
+                // ETag conflict - fall through to refresh-and-retry below
+            }
         }
+
+        // Fallback: refresh state and merge with the fresh ETag. Handles two cases:
+        // (1) caller had no entity to begin with (CLAUDE.md says this shouldn't happen, but guard anyway),
+        // (2) a 412 conflict above (we need the fresh state before we can safely overwrite Status).
+        var refreshed = await GetJobEntityAsync(tableClient, job.JobId, cancellationToken);
+        if (refreshed == null)
+        {
+            _logger.LogWarning("Job {JobId} has no entity in Table Storage; cannot transition to Processing", job.JobId);
+
+            return false;
+        }
+
+        if (refreshed.GetJobStatus().IsTerminal())
+        {
+            _logger.LogInformation("Job {JobId} is in terminal state {Status}, skipping transition to Processing", job.JobId, refreshed.Status);
+
+            return false;
+        }
+
+        await tableClient.UpdateEntityAsync(partial, refreshed.ETag, TableUpdateMode.Merge, cancellationToken);
+
+        return true;
     }
 
     private CancellationTokenSource CreateCancellationCheckingSource(TableClient tableClient, string jobId, CancellationToken parentToken)
