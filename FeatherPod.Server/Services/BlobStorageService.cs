@@ -6,6 +6,7 @@ using Azure.Storage.Blobs.Models;
 using Azure.Storage.Sas;
 
 using FeatherPod.Server.Configuration;
+using FeatherPod.Shared;
 
 namespace FeatherPod.Server.Services;
 
@@ -54,7 +55,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task<string?> LoadFeedsConfigAsync()
     {
-        var blobClient = _container.GetBlobClient("feeds.json");
+        var blobClient = _container.GetBlobClient(BlobPaths.FeedsConfig);
 
         try
         {
@@ -70,14 +71,14 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task SaveFeedsConfigAsync(string feedsJson)
     {
-        await UploadTextAsync("feeds.json", feedsJson);
+        await UploadTextAsync(BlobPaths.FeedsConfig, feedsJson);
 
         _logger.LogInformation("Saved feeds configuration to blob storage");
     }
 
     public async Task<string?> LoadUsersConfigAsync()
     {
-        var blobClient = _container.GetBlobClient("users.json");
+        var blobClient = _container.GetBlobClient(BlobPaths.UsersConfig);
 
         try
         {
@@ -93,15 +94,14 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task SaveUsersConfigAsync(string usersJson)
     {
-        await UploadTextAsync("users.json", usersJson);
+        await UploadTextAsync(BlobPaths.UsersConfig, usersJson);
 
         _logger.LogInformation("Saved users configuration to blob storage");
     }
 
     public async Task UploadAudioAsync(string feedId, string fileName, string filePath)
     {
-        var blobPath = $"{feedId}/audio/{fileName}";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Audio(feedId, fileName));
 
         await using var fileStream = File.OpenRead(filePath);
         await blobClient.UploadAsync(fileStream, overwrite: true);
@@ -111,19 +111,17 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task UploadPendingAudioAsync(string feedId, string jobId, string fileName, string filePath)
     {
-        var blobPath = $"{feedId}/pending/{jobId}/{fileName}";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Pending(feedId, jobId, fileName));
 
         await using var fileStream = File.OpenRead(filePath);
         await blobClient.UploadAsync(fileStream, overwrite: true);
 
-        _logger.LogInformation("Uploaded pending audio file to blob storage: {BlobPath}", blobPath);
+        _logger.LogInformation("Uploaded pending audio file to blob storage: {FeedId}/{JobId}/{FileName}", feedId, jobId, fileName);
     }
 
     public async Task<Stream> DownloadAudioAsync(string feedId, string fileName)
     {
-        var blobPath = $"{feedId}/audio/{fileName}";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Audio(feedId, fileName));
 
         var response = await blobClient.DownloadStreamingAsync();
 
@@ -132,16 +130,14 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task<bool> AudioExistsAsync(string feedId, string fileName)
     {
-        var blobPath = $"{feedId}/audio/{fileName}";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Audio(feedId, fileName));
 
         return await blobClient.ExistsAsync();
     }
 
     public async Task DeleteAudioAsync(string feedId, string fileName)
     {
-        var blobPath = $"{feedId}/audio/{fileName}";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Audio(feedId, fileName));
 
         await blobClient.DeleteIfExistsAsync();
         _logger.LogInformation("Deleted audio file from blob storage: {FeedId}/{FileName}", feedId, fileName);
@@ -149,7 +145,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task<List<string>> ListAudioFilesAsync(string feedId)
     {
-        var prefix = $"{feedId}/audio/";
+        var prefix = BlobPaths.AudioPrefix(feedId);
         var audioFiles = new List<string>();
 
         await foreach (var blobItem in _container.GetBlobsAsync(prefix: prefix))
@@ -164,8 +160,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task<long> GetAudioFileSizeAsync(string feedId, string fileName)
     {
-        var blobPath = $"{feedId}/audio/{fileName}";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Audio(feedId, fileName));
 
         var properties = await blobClient.GetPropertiesAsync();
         return properties.Value.ContentLength;
@@ -177,8 +172,7 @@ public class BlobStorageService : IBlobStorageService
         Directory.CreateDirectory(tempDir);
         var tempPath = Path.Combine(tempDir, $"{Guid.NewGuid()}_{fileName}");
 
-        var blobPath = $"{feedId}/audio/{fileName}";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Audio(feedId, fileName));
 
         await blobClient.DownloadToAsync(tempPath);
 
@@ -187,8 +181,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task<Stream> DownloadAudioRangeAsync(string feedId, string fileName, long offset, long length)
     {
-        var blobPath = $"{feedId}/audio/{fileName}";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Audio(feedId, fileName));
         var options = new BlobDownloadOptions { Range = new(offset, length) };
 
         var response = await blobClient.DownloadStreamingAsync(options);
@@ -198,8 +191,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task UploadIconAsync(string feedId, string filePath)
     {
-        var blobPath = $"{feedId}/icon.png";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Icon(feedId));
 
         await using var fileStream = File.OpenRead(filePath);
         await blobClient.UploadAsync(fileStream, overwrite: true);
@@ -209,8 +201,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task<string?> GetIconETagAsync(string feedId)
     {
-        var blobPath = $"{feedId}/icon.png";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Icon(feedId));
 
         try
         {
@@ -225,8 +216,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task<Stream> DownloadIconAsync(string feedId)
     {
-        var blobPath = $"{feedId}/icon.png";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Icon(feedId));
 
         var response = await blobClient.DownloadStreamingAsync();
 
@@ -235,8 +225,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task DeleteIconAsync(string feedId)
     {
-        var blobPath = $"{feedId}/icon.png";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Icon(feedId));
 
         await blobClient.DeleteIfExistsAsync();
         _logger.LogInformation("Deleted icon for feed: {FeedId}", feedId);
@@ -244,15 +233,14 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task SaveEpisodeMetadataAsync(string feedId, string metadataJson)
     {
-        await UploadTextAsync($"{feedId}/episodes.json", metadataJson);
+        await UploadTextAsync(BlobPaths.EpisodesMetadata(feedId), metadataJson);
 
         _logger.LogInformation("Saved episode metadata for feed: {FeedId}", feedId);
     }
 
     public async Task<string?> LoadEpisodeMetadataAsync(string feedId)
     {
-        var blobPath = $"{feedId}/episodes.json";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.EpisodesMetadata(feedId));
 
         try
         {
@@ -268,7 +256,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task<string?> LoadPushSubscriptionsAsync(string feedId)
     {
-        var blobClient = _container.GetBlobClient($"{feedId}/push-subscriptions.json");
+        var blobClient = _container.GetBlobClient(BlobPaths.PushSubscriptions(feedId));
 
         try
         {
@@ -284,22 +272,21 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task SavePushSubscriptionsAsync(string feedId, string subscriptionsJson)
     {
-        await UploadTextAsync($"{feedId}/push-subscriptions.json", subscriptionsJson);
+        await UploadTextAsync(BlobPaths.PushSubscriptions(feedId), subscriptionsJson);
 
         _logger.LogInformation("Saved push subscriptions for feed: {FeedId}", feedId);
     }
 
     public async Task<Stream> DownloadPendingBlobAsync(string feedId, string jobId, string fileName)
     {
-        var blobPath = $"{feedId}/pending/{jobId}/{fileName}";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Pending(feedId, jobId, fileName));
 
         return await blobClient.OpenReadAsync();
     }
 
     public async Task<string> GeneratePendingBlobSasUrlAsync(string feedId, string jobId, string fileName)
     {
-        var blobPath = $"{feedId}/pending/{jobId}/{fileName}";
+        var blobPath = BlobPaths.Pending(feedId, jobId, fileName);
         var blobClient = _container.GetBlobClient(blobPath);
 
         var builder = new BlobSasBuilder
@@ -325,7 +312,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task DeletePendingJobBlobsAsync(string feedId, string jobId)
     {
-        var prefix = $"{feedId}/pending/{jobId}/";
+        var prefix = BlobPaths.PendingJobPrefix(feedId, jobId);
         var blobNames = new List<string>();
 
         await foreach (var blobItem in _container.GetBlobsAsync(prefix: prefix))
@@ -342,15 +329,14 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task UploadTranscriptAsync(string feedId, string episodeId, string vttContent)
     {
-        await UploadTextAsync($"{feedId}/transcripts/{episodeId}.vtt", vttContent);
+        await UploadTextAsync(BlobPaths.Transcript(feedId, episodeId), vttContent);
 
         _logger.LogInformation("Uploaded transcript to blob storage: {FeedId}/{EpisodeId}", feedId, episodeId);
     }
 
     public async Task<Stream?> DownloadTranscriptAsync(string feedId, string episodeId)
     {
-        var blobPath = $"{feedId}/transcripts/{episodeId}.vtt";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Transcript(feedId, episodeId));
 
         try
         {
@@ -366,8 +352,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task DeleteTranscriptAsync(string feedId, string episodeId)
     {
-        var blobPath = $"{feedId}/transcripts/{episodeId}.vtt";
-        var blobClient = _container.GetBlobClient(blobPath);
+        var blobClient = _container.GetBlobClient(BlobPaths.Transcript(feedId, episodeId));
 
         await blobClient.DeleteIfExistsAsync();
         _logger.LogInformation("Deleted transcript from blob storage: {FeedId}/{EpisodeId}", feedId, episodeId);
@@ -375,8 +360,8 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task RenameFeedAsync(string oldFeedId, string newFeedId)
     {
-        var oldPrefix = $"{oldFeedId}/";
-        var newPrefix = $"{newFeedId}/";
+        var oldPrefix = BlobPaths.FeedPrefix(oldFeedId);
+        var newPrefix = BlobPaths.FeedPrefix(newFeedId);
 
         // List all blobs with the old prefix
         var blobsToMove = new List<string>();
@@ -410,7 +395,7 @@ public class BlobStorageService : IBlobStorageService
 
     public async Task DeleteFeedAsync(string feedId)
     {
-        var prefix = $"{feedId}/";
+        var prefix = BlobPaths.FeedPrefix(feedId);
 
         // List and delete all blobs with this feed prefix
         await foreach (var blobItem in _container.GetBlobsAsync(prefix: prefix))

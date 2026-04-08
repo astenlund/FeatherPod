@@ -134,7 +134,7 @@ public class CleanupFunction
         // For each feed, scan its pending/ prefix
         foreach (var feedId in feedIds)
         {
-            await foreach (var blobItem in containerClient.GetBlobsAsync(prefix: $"{feedId}/pending/", cancellationToken: cancellationToken))
+            await foreach (var blobItem in containerClient.GetBlobsAsync(prefix: BlobPaths.PendingPrefix(feedId), cancellationToken: cancellationToken))
             {
                 // Parse jobId from path: {feedId}/pending/{jobId}/{fileName}
                 var parts = blobItem.Name.Split('/');

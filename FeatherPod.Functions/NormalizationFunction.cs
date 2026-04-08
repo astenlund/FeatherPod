@@ -168,8 +168,8 @@ public class NormalizationFunction
     private async Task ProcessNormalizationAsync(NormalizationJob job, TableClient tableClient, CancellationToken cancellationToken, HubConnection? signalRConnection = null)
     {
         var containerClient = _blobClient.GetBlobContainerClient(_settings.ContainerName);
-        var pendingBlobPath = $"{job.FeedId}/pending/{job.JobId}/{job.FileName}";
-        var finalBlobPath = $"{job.FeedId}/audio/{job.FileName}";
+        var pendingBlobPath = BlobPaths.Pending(job.FeedId, job.JobId, job.FileName);
+        var finalBlobPath = BlobPaths.Audio(job.FeedId, job.FileName);
         var progressThrottle = job.ProgressIntervalMs.HasValue ? TimeSpan.FromMilliseconds(job.ProgressIntervalMs.Value) : DefaultProgressThrottle;
         var progressMode = job.ProgressMode;
 
