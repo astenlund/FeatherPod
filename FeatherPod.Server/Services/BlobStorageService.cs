@@ -324,12 +324,18 @@ public class BlobStorageService : IBlobStorageService
     public async Task DeletePendingJobBlobsAsync(string feedId, string jobId)
     {
         var prefix = $"{feedId}/pending/{jobId}/";
+        var blobNames = new List<string>();
 
         await foreach (var blobItem in _container.GetBlobsAsync(prefix: prefix))
         {
-            await _container.GetBlobClient(blobItem.Name).DeleteIfExistsAsync();
-            _logger.LogDebug("Deleted pending blob: {BlobPath}", blobItem.Name);
+            blobNames.Add(blobItem.Name);
         }
+
+        await Task.WhenAll(blobNames.Select(async name =>
+        {
+            await _container.GetBlobClient(name).DeleteIfExistsAsync();
+            _logger.LogDebug("Deleted pending blob: {BlobPath}", name);
+        }));
     }
 
     public async Task UploadTranscriptAsync(string feedId, string episodeId, string vttContent)
