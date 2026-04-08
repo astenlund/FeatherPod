@@ -103,7 +103,7 @@ public class TranscriptionBackgroundService : BackgroundService
             e.TranscriptionStatus = TranscriptionStatuses.Running;
             e.TranscriptionStartedAt = DateTimeOffset.UtcNow;
         }, ct);
-        PublishProgress(request.JobId, running);
+        PublishProgress(request.JobId, running, "Running");
 
         string? transcriptionUrl = null;
         string? tempInputFile = null;
@@ -131,7 +131,7 @@ public class TranscriptionBackgroundService : BackgroundService
                     e.TranscriptionStatus = TranscriptionStatuses.Failed;
                     e.TranscriptionError = error.Truncate(500);
                 }, ct);
-                PublishProgress(request.JobId, failed);
+                PublishProgress(request.JobId, failed, "Failed (Azure)");
                 _logger.LogWarning("Batch transcription failed for job {JobId}: {Error}", request.JobId, error);
             }
             else
@@ -146,7 +146,7 @@ public class TranscriptionBackgroundService : BackgroundService
                     {
                         e.TranscriptionStatus = TranscriptionStatuses.Completed;
                     }, ct);
-                    PublishProgress(request.JobId, completed);
+                    PublishProgress(request.JobId, completed, "Completed");
                     _logger.LogInformation("Batch transcription completed for job {JobId}", request.JobId);
                 }
                 else
@@ -156,7 +156,7 @@ public class TranscriptionBackgroundService : BackgroundService
                         e.TranscriptionStatus = TranscriptionStatuses.Failed;
                         e.TranscriptionError = "Transcription produced no output";
                     }, ct);
-                    PublishProgress(request.JobId, noOutput);
+                    PublishProgress(request.JobId, noOutput, "Failed (no output)");
                     _logger.LogWarning("Batch transcription produced no output for job {JobId}", request.JobId);
                 }
             }
@@ -174,7 +174,7 @@ public class TranscriptionBackgroundService : BackgroundService
                 e.TranscriptionStatus = TranscriptionStatuses.Failed;
                 e.TranscriptionError = ex.Message.Truncate(500);
             }, CancellationToken.None);
-            PublishProgress(request.JobId, failed);
+            PublishProgress(request.JobId, failed, "Failed (exception)");
         }
         finally
         {
@@ -273,11 +273,18 @@ public class TranscriptionBackgroundService : BackgroundService
         return (wavBlobName, tempInputFile, tempWavFile);
     }
 
-    private void PublishProgress(string jobId, JobStatusEntity? entity)
+    private void PublishProgress(string jobId, JobStatusEntity? entity, string stage)
     {
         if (entity != null)
         {
             _progressChannel.Publish(jobId, JobStatusResponse.FromEntity(entity));
+
+            return;
         }
+
+        _logger.LogWarning(
+            "Failed to publish {Stage} progress for job {JobId}: merge returned null (see prior log for cause)",
+            stage,
+            jobId);
     }
 }
