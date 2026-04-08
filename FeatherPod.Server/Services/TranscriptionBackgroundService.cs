@@ -23,7 +23,7 @@ public class TranscriptionBackgroundService : BackgroundService
     private static readonly HashSet<string> ConvertExtensions = new(StringComparer.OrdinalIgnoreCase) { ".m4a", ".m4b", ".mp4" };
 
     private readonly ITranscriptionChannel _channel;
-    private readonly SpeechTranscriptionService _speechService;
+    private readonly ISpeechTranscriptionService _speechService;
     private readonly IBlobStorageService _blobService;
     private readonly IJobService _jobService;
     private readonly IJobProgressChannel _progressChannel;
@@ -33,7 +33,7 @@ public class TranscriptionBackgroundService : BackgroundService
 
     public TranscriptionBackgroundService(
         ITranscriptionChannel channel,
-        SpeechTranscriptionService speechService,
+        ISpeechTranscriptionService speechService,
         IBlobStorageService blobService,
         IJobService jobService,
         IJobProgressChannel progressChannel,

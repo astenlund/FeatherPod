@@ -20,13 +20,13 @@ public class EpisodesController : ControllerBase
     private readonly IFeedEventChannel _feedEventChannel;
     private readonly IAiService _aiService;
     private readonly ITranscriptionChannel _transcriptionChannel;
-    private readonly SpeechTranscriptionService _speechService;
+    private readonly ISpeechTranscriptionService _speechService;
     private readonly ILogger<EpisodesController> _logger;
     private readonly string _baseUrl;
     private readonly string? _progressMode;
     private readonly int _progressIntervalMs;
 
-    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IAiService aiService, ITranscriptionChannel transcriptionChannel, SpeechTranscriptionService speechService, ILogger<EpisodesController> logger, IConfiguration configuration)
+    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IAiService aiService, ITranscriptionChannel transcriptionChannel, ISpeechTranscriptionService speechService, ILogger<EpisodesController> logger, IConfiguration configuration)
     {
         _episodeService = episodeService;
         _blobStorageService = blobStorageService;

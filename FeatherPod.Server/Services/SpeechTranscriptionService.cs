@@ -10,7 +10,7 @@ namespace FeatherPod.Server.Services;
 /// Wraps the Azure Speech batch transcription REST API (v3.2) for diarized transcription.
 /// Produces VTT output with per-speaker voice tags.
 /// </summary>
-public class SpeechTranscriptionService
+public class SpeechTranscriptionService : ISpeechTranscriptionService
 {
     private const string BatchApiPath = "/speechtotext/v3.2/transcriptions";
 
@@ -74,17 +74,8 @@ public class SpeechTranscriptionService
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json"),
         };
-        await SetAuthHeaderAsync(request, ct);
 
-        using var response = await _httpClient.SendAsync(request, ct);
-        var responseBody = await response.Content.ReadAsStringAsync(ct);
-
-        if (!response.IsSuccessStatusCode)
-        {
-            throw new HttpRequestException($"Batch transcription submit failed ({response.StatusCode}): {responseBody}");
-        }
-
-        using var doc = JsonDocument.Parse(responseBody);
+        using var doc = await SendAndReadJsonAsync(request, ct);
         var selfLink = doc.RootElement.GetProperty("self").GetString()
             ?? throw new InvalidOperationException("Batch transcription response missing 'self' link");
 
@@ -105,13 +96,7 @@ public class SpeechTranscriptionService
             ct.ThrowIfCancellationRequested();
 
             using var request = new HttpRequestMessage(HttpMethod.Get, transcriptionUrl);
-            await SetAuthHeaderAsync(request, ct);
-
-            using var response = await _httpClient.SendAsync(request, ct);
-            response.EnsureSuccessStatusCode();
-
-            var body = await response.Content.ReadAsStringAsync(ct);
-            using var doc = JsonDocument.Parse(body);
+            using var doc = await SendAndReadJsonAsync(request, ct);
             var root = doc.RootElement;
 
             var status = root.GetProperty("status").GetString() ?? "Unknown";
@@ -159,13 +144,7 @@ public class SpeechTranscriptionService
     {
         // Step 1: List files and find the Transcription result
         using var listRequest = new HttpRequestMessage(HttpMethod.Get, filesListUrl);
-        await SetAuthHeaderAsync(listRequest, ct);
-
-        using var listResponse = await _httpClient.SendAsync(listRequest, ct);
-        listResponse.EnsureSuccessStatusCode();
-
-        var listBody = await listResponse.Content.ReadAsStringAsync(ct);
-        using var listDoc = JsonDocument.Parse(listBody);
+        using var listDoc = await SendAndReadJsonAsync(listRequest, ct);
 
         string? contentUrl = null;
         foreach (var value in listDoc.RootElement.GetProperty("values").EnumerateArray())
@@ -247,6 +226,26 @@ public class SpeechTranscriptionService
         {
             _logger.LogWarning("Failed to delete batch transcription {Url}: {Status}", transcriptionUrl, response.StatusCode);
         }
+    }
+
+    /// <summary>
+    /// Sets the bearer token, sends the request, and parses the response body as a <see cref="JsonDocument"/>.
+    /// Throws <see cref="HttpRequestException"/> with the response status and body on a non-success response.
+    /// The caller owns the returned <see cref="JsonDocument"/> and must dispose it.
+    /// </summary>
+    private async Task<JsonDocument> SendAndReadJsonAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        await SetAuthHeaderAsync(request, ct);
+
+        using var response = await _httpClient.SendAsync(request, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException($"Speech API {request.Method} {request.RequestUri?.AbsolutePath} failed ({(int)response.StatusCode}): {body}");
+        }
+
+        return JsonDocument.Parse(body);
     }
 
     private async Task SetAuthHeaderAsync(HttpRequestMessage request, CancellationToken ct)
