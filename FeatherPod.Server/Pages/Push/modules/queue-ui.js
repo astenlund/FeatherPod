@@ -181,15 +181,7 @@ function createActionButton(entry) {
     }
 
     if (entry.status === 'failed') {
-        const dismissBtn = document.createElement('button');
-        dismissBtn.className = 'queue-item-action queue-item-action--cancel';
-        dismissBtn.type = 'button';
-        dismissBtn.title = 'Dismiss';
-        dismissBtn.textContent = '\u00D7';
-        dismissBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            onDismissEntry(entry.id);
-        });
+        const dismissBtn = createDismissButton(entry);
 
         if (!entry.validationError && entry.file) {
             const wrapper = document.createElement('span');
@@ -213,20 +205,24 @@ function createActionButton(entry) {
     }
 
     if (entry.status === 'completed') {
-        const btn = document.createElement('button');
-        btn.className = 'queue-item-action queue-item-action--cancel';
-        btn.type = 'button';
-        btn.title = 'Dismiss';
-        btn.textContent = '\u00D7';
-        btn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            onDismissEntry(entry.id);
-        });
-
-        return btn;
+        return createDismissButton(entry);
     }
 
     return null;
+}
+
+function createDismissButton(entry) {
+    const btn = document.createElement('button');
+    btn.className = 'queue-item-action queue-item-action--cancel';
+    btn.type = 'button';
+    btn.title = 'Dismiss';
+    btn.textContent = '\u00D7';
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onDismissEntry(entry.id);
+    });
+
+    return btn;
 }
 
 export function updateQueueItemInDOM(entry) {
