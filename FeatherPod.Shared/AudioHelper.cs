@@ -14,6 +14,9 @@ public static class AudioHelper
             ".aac" => "audio/aac",
             ".opus" => "audio/opus",
             ".wma" => "audio/x-ms-wma",
+            ".mp4" => "video/mp4",
+            ".webm" => "video/webm",
+            ".mkv" => "video/x-matroska",
             _ => "application/octet-stream"
         };
     }

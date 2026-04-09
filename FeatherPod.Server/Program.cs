@@ -383,7 +383,7 @@ class Program
                                 new
                                 {
                                     name = "audio",
-                                    accept = new[] { "audio/*" }
+                                    accept = new[] { "audio/*", "video/*" }
                                 }
                             }
                         }

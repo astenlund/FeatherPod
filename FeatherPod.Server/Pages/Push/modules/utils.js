@@ -43,16 +43,23 @@ export function isActiveWork(entry) {
 }
 
 /**
- * Check if a file is a valid audio file by MIME type.
+ * Check if a file is a valid media file (audio or video) by MIME type.
+ * Video is allowed because YouTube import can produce mp4/webm and the
+ * server pipeline handles video enclosures downstream.
+ *
+ * An empty `file.type` is treated as valid: some browsers (and the OS on
+ * drag-drop for uncommon extensions) hand back an empty MIME string, and
+ * the server re-derives the type from the filename extension via
+ * `AudioHelper.GetMimeType`, so a truly unsupported file gets caught there.
  * @param {File} file
  * @returns {boolean}
  */
-export function isValidAudioFile(file) {
+export function isValidMediaFile(file) {
     if (!file.type) {
         return true;
     }
 
-    return file.type.startsWith('audio/');
+    return file.type.startsWith('audio/') || file.type.startsWith('video/');
 }
 
 /**
