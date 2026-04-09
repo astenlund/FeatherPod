@@ -132,6 +132,10 @@ function getIconText(entry) {
             return '\u2713';
         case 'failed':
             return '\u2717';
+        case 'cancelled':
+            // Intentionally shares the queued glyph: both are "nothing to show".
+            // The distinct icon class (queue-item-icon--cancelled) carries the visual difference.
+            return '\u2013';
         default:
             return '\u2013';
     }
