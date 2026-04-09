@@ -479,11 +479,7 @@ async function processEntry(entry) {
         }
     } catch (err) {
         if (err.name === 'AbortError') {
-            removeQueueItemFromDOM(entry.id);
-            progressAnimator.removeSlot(entry.id);
-            uploadQueue.splice(uploadQueue.indexOf(entry), 1);
-
-            saveQueueState();
+            finalizeCancelledEntry(entry);
             advanceQueue();
 
             return;
@@ -593,6 +589,48 @@ function updateTranscriptionState(entry, job) {
 }
 
 /**
+ * Apply terminal "completed" state to an entry: refresh the uploads cache, resolve
+ * the episode, update history, clean up the progress animator slot, and repaint the
+ * queue item. Shared by the SSE done handler and the poll fallback.
+ * @param {QueueEntry} entry
+ * @param {Object} jobStatus - Job status response (from SSE lastStatus or poll)
+ * @returns {Promise<void>}
+ */
+async function finalizeCompletedEntry(entry, jobStatus) {
+    invalidateBrowserUploadsCache();
+    const uploads = await fetchBrowserUploads();
+    const episode = uploads?.find(ep => ep.fileName === entry.fileName) || null;
+    entry.status = 'completed';
+    entry.episode = episode;
+    entry.progress = 100;
+    if (entry.localSourceIndex != null) {
+        notifyLocalSourceUploaded(entry.localSourceIndex);
+    }
+    const historyEpisode = episode || buildFallbackEpisode(jobStatus, entry);
+    if (historyEpisode) {
+        saveToLocalHistory(historyEpisode);
+    }
+    progressAnimator.removeSlot(entry.id);
+    updateQueueItemInDOM(entry);
+    refreshHistoryList(historyEpisode?.id);
+}
+
+/**
+ * Apply terminal "cancelled" state to an entry: clear the progress animator slot,
+ * drop the DOM item, and remove it from the upload queue. Shared by the SSE progress
+ * handler, the SSE done handler, and the poll fallback. Callers are responsible for
+ * any monitor-specific teardown (e.g., finishMonitoring).
+ * @param {QueueEntry} entry
+ */
+function finalizeCancelledEntry(entry) {
+    entry.status = 'cancelled';
+    progressAnimator.removeSlot(entry.id);
+    removeQueueItemFromDOM(entry.id);
+    uploadQueue.splice(uploadQueue.indexOf(entry), 1);
+    saveQueueState();
+}
+
+/**
  * Monitor normalization for a queue entry via SSE with polling fallback.
  * Returns a Promise that resolves when normalization completes/fails/cancels.
  * @param {QueueEntry} entry
@@ -657,13 +695,7 @@ function monitorEntryNormalization(entry) {
                     clearTimeout(connectionTimeout);
                     jobFinished = true;
                     eventSource.close();
-                    entry.status = 'cancelled';
-                    progressAnimator.removeSlot(entry.id);
-
-                    removeQueueItemFromDOM(entry.id);
-                    uploadQueue.splice(uploadQueue.indexOf(entry), 1);
-
-                    saveQueueState();
+                    finalizeCancelledEntry(entry);
                     finishMonitoring();
 
                     return;
@@ -679,42 +711,19 @@ function monitorEntryNormalization(entry) {
             eventSource.close();
 
             if (lastStatus?.status === 'Cancelled') {
-                entry.status = 'cancelled';
-                progressAnimator.removeSlot(entry.id);
-
-                removeQueueItemFromDOM(entry.id);
-                uploadQueue.splice(uploadQueue.indexOf(entry), 1);
-
-                saveQueueState();
-                finishMonitoring();
-
-                return;
+                finalizeCancelledEntry(entry);
             } else if (lastStatus?.status === 'Completed') {
-                invalidateBrowserUploadsCache();
-                const uploads = await fetchBrowserUploads();
-                const episode = uploads?.find(ep => ep.fileName === entry.fileName) || null;
-                entry.status = 'completed';
-                entry.episode = episode;
-                entry.progress = 100;
-                if (entry.localSourceIndex != null) {
-                    notifyLocalSourceUploaded(entry.localSourceIndex);
-                }
-                const historyEpisode = episode || buildFallbackEpisode(lastStatus, entry);
-                if (historyEpisode) {
-                    saveToLocalHistory(historyEpisode);
-                }
-                refreshHistoryList(historyEpisode?.id);
+                await finalizeCompletedEntry(entry, lastStatus);
             } else {
                 entry.status = 'failed';
                 entry.error = lastStatus?.error || 'Normalization failed';
                 if (lastStatus?.authRequired) {
                     showYouTubeCookieDialog();
                 }
+                progressAnimator.removeSlot(entry.id);
+                updateQueueItemInDOM(entry);
             }
 
-            progressAnimator.removeSlot(entry.id);
-
-            updateQueueItemInDOM(entry);
             finishMonitoring();
         });
 
@@ -793,23 +802,7 @@ async function pollEntryNormalization(entry) {
             const job = await response.json();
 
             if (job.status === 'Completed') {
-                invalidateBrowserUploadsCache();
-                const uploads = await fetchBrowserUploads();
-                const episode = uploads?.find(ep => ep.fileName === entry.fileName) || null;
-                entry.status = 'completed';
-                entry.episode = episode;
-                entry.progress = 100;
-                if (entry.localSourceIndex != null) {
-                    notifyLocalSourceUploaded(entry.localSourceIndex);
-                }
-                const historyEpisode = episode || buildFallbackEpisode(job, entry);
-                if (historyEpisode) {
-                    saveToLocalHistory(historyEpisode);
-                }
-                progressAnimator.removeSlot(entry.id);
-
-                updateQueueItemInDOM(entry);
-                refreshHistoryList(historyEpisode?.id);
+                await finalizeCompletedEntry(entry, job);
 
                 return;
             } else if (job.status === 'Failed') {
@@ -824,13 +817,7 @@ async function pollEntryNormalization(entry) {
 
                 return;
             } else if (job.status === 'Cancelled') {
-                entry.status = 'cancelled';
-                progressAnimator.removeSlot(entry.id);
-
-                removeQueueItemFromDOM(entry.id);
-                uploadQueue.splice(uploadQueue.indexOf(entry), 1);
-
-                saveQueueState();
+                finalizeCancelledEntry(entry);
 
                 return;
             }
@@ -889,14 +876,8 @@ export async function cancelEntry(entryId) {
             entry.eventSource = null;
         }
 
-        entry.status = 'cancelled';
         progressAnimator.reset(entry.id);
-        progressAnimator.removeSlot(entry.id);
-
-        removeQueueItemFromDOM(entryId);
-        uploadQueue.splice(uploadQueue.indexOf(entry), 1);
-
-        saveQueueState();
+        finalizeCancelledEntry(entry);
 
         // Force-resolve the monitoring promise so the promise chain completes
         if (entry._resolveMonitor) {
