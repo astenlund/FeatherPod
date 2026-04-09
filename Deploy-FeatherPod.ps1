@@ -64,6 +64,10 @@ function Main {
 
     $environments = if ($Environment -eq "All") { @("Test", "Prod") } else { @($Environment) }
 
+    # Resolve the release tag remote up-front so any interactive prompt happens
+    # before the long-running build and deploy steps.
+    $tagRemote = Get-ReleaseTagRemote
+
     $needsBuild = -not $Infrastructure
 
     try {
@@ -72,7 +76,7 @@ function Main {
         }
 
         foreach ($env in $environments) {
-            Deploy-Environment -TargetEnvironment $env -Infrastructure:$Infrastructure
+            Deploy-Environment -TargetEnvironment $env -Infrastructure:$Infrastructure -TagRemote $tagRemote
         }
 
         if ($environments.Count -gt 1) {
@@ -175,7 +179,8 @@ function Remove-Artifacts {
 function Deploy-Environment {
     param(
         [string]$TargetEnvironment,
-        [switch]$Infrastructure
+        [switch]$Infrastructure,
+        [string]$TagRemote
     )
 
     $suffix = if ($TargetEnvironment -eq "Test") { "-test" } else { "" }
@@ -266,19 +271,112 @@ function Deploy-Environment {
         Write-Host "Function App URL: https://$FunctionAppName.azurewebsites.net" -ForegroundColor Yellow
     }
 
-    Update-ReleaseTag -TargetEnvironment $TargetEnvironment
+    Update-ReleaseTag -TargetEnvironment $TargetEnvironment -TagRemote $TagRemote
+}
+
+# Prompt the user to pick from a list of choices using PowerShell's host UI.
+function AskUser {
+    param (
+        [Parameter(Position=0)]            [string]$Caption,
+        [Parameter(Position=1, Mandatory)] [string]$Message,
+        [Parameter(Position=2, Mandatory)] [string[]]$Choices,
+        [Parameter(Position=3)]            [string]$DefaultChoice,
+        [Parameter(Position=4)]            [hashtable]$HelpMessages = @{}
+    )
+
+    [System.Management.Automation.Host.ChoiceDescription[]]$ChoiceDescriptions = @()
+
+    foreach ($Choice in $Choices) {
+        if (-not $HelpMessages.ContainsKey($Choice)) {
+            $HelpMessages[$Choice] = $Choice.Trim("&")
+        }
+
+        $ChoiceDescriptions += New-Object System.Management.Automation.Host.ChoiceDescription $Choice, $HelpMessages[$Choice]
+    }
+
+    $DefaultChoiceIndex = [array]::IndexOf(($ChoiceDescriptions | Select-Object -ExpandProperty Label), "$DefaultChoice")
+    $Result = $Host.Ui.PromptForChoice($Caption, $Message, $ChoiceDescriptions, $DefaultChoiceIndex)
+
+    return @($ChoiceDescriptions | Select-Object -ExpandProperty Label)[$Result]
+}
+
+# Resolve the remote that should receive release tags.
+# First run (multiple remotes): prompts the user and remembers the chosen URL in
+# git config (deploy.publicRemoteUrl). Subsequent runs look up the current remote
+# name by URL, so renaming the remote locally doesn't break anything.
+function Get-ReleaseTagRemote {
+    $remotes = @(git remote)
+    if ($remotes.Count -eq 0) {
+        return $null
+    }
+
+    if ($remotes.Count -eq 1) {
+        return $remotes[0]
+    }
+
+    $savedUrl = git config --get deploy.publicRemoteUrl 2>$null
+    if ($LASTEXITCODE -eq 0 -and $savedUrl) {
+        foreach ($remote in $remotes) {
+            $url = git remote get-url $remote 2>$null
+            if ($LASTEXITCODE -eq 0 -and $url -eq $savedUrl) {
+                return $remote
+            }
+        }
+
+        Write-Host "Saved deploy remote URL '$savedUrl' no longer matches any configured remote; re-prompting." -ForegroundColor Yellow
+    }
+
+    # Numeric accelerators (&1, &2, ...) avoid collisions when remote names share a first character.
+    $choices = @()
+    $helpMessages = @{}
+    $labelToRemote = @{}
+    for ($i = 0; $i -lt $remotes.Count; $i++) {
+        $remote = $remotes[$i]
+        $url = git remote get-url $remote 2>$null
+        $label = "&$($i + 1) $remote"
+        $choices += $label
+        $helpMessages[$label] = "$remote ($url)"
+        $labelToRemote[$label] = $remote
+    }
+
+    try {
+        $chosenLabel = AskUser -Caption "Select release tag remote" `
+            -Message "Which remote should receive release tags? This will be remembered for future deploys." `
+            -Choices $choices `
+            -HelpMessages $helpMessages
+    }
+    catch {
+        Write-Host "Warning: could not prompt for release tag remote ($($_.Exception.Message)); skipping tag push." -ForegroundColor Yellow
+        return $null
+    }
+
+    $chosenRemote = $labelToRemote[$chosenLabel]
+    $chosenUrl = git remote get-url $chosenRemote 2>$null
+    if ($LASTEXITCODE -eq 0 -and $chosenUrl) {
+        git config --local deploy.publicRemoteUrl $chosenUrl | Out-Null
+        Write-Host "Remembered '$chosenRemote' ($chosenUrl) as the release tag remote." -ForegroundColor Gray
+    }
+
+    return $chosenRemote
 }
 
 # Move the release-{env} tag to HEAD and push it, marking the commit as released.
 # Failures are non-fatal: the deploy already succeeded, the tag is just a marker.
+# $TagRemote is resolved up-front in Main via Get-ReleaseTagRemote.
 function Update-ReleaseTag {
     param(
-        [string]$TargetEnvironment
+        [string]$TargetEnvironment,
+        [string]$TagRemote
     )
 
     $tagName = if ($TargetEnvironment -eq "Test") { "release-test" } else { "release-prod" }
 
     Write-Host "`nUpdating release tag '$tagName' to HEAD..." -ForegroundColor Cyan
+
+    if (-not $TagRemote) {
+        Write-Host "Warning: no git remote available; skipping tag push." -ForegroundColor Yellow
+        return
+    }
 
     git tag -f $tagName
     if ($LASTEXITCODE -ne 0) {
@@ -286,13 +384,13 @@ function Update-ReleaseTag {
         return
     }
 
-    git push --force origin "refs/tags/$tagName"
+    git push --force $TagRemote "refs/tags/$tagName"
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "Warning: failed to push tag '$tagName' to origin (exit $LASTEXITCODE)" -ForegroundColor Yellow
+        Write-Host "Warning: failed to push tag '$tagName' to '$TagRemote' (exit $LASTEXITCODE)" -ForegroundColor Yellow
         return
     }
 
-    Write-Host "Release tag '$tagName' updated." -ForegroundColor Green
+    Write-Host "Release tag '$tagName' updated on '$TagRemote'." -ForegroundColor Green
 }
 
 Main @PSBoundParameters
