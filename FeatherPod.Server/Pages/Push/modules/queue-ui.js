@@ -1,4 +1,4 @@
-import { STAGES_WITH_PROGRESS } from './config.js';
+import { STAGES_WITH_PROGRESS, TRANSCRIPTION_ACTIVE_STATUSES } from './config.js';
 import { progressAnimator } from './progress.js';
 import { truncate } from './utils.js';
 
@@ -77,7 +77,7 @@ export function createQueueItemElement(entry) {
     if (entry.status === 'uploading') {
         progressBar.style.width = entry.progress + '%';
     } else if (entry.status === 'normalizing') {
-        const transcriptionActive = entry.transcriptionStatus === 'Queued' || entry.transcriptionStatus === 'Running';
+        const transcriptionActive = TRANSCRIPTION_ACTIVE_STATUSES.has(entry.transcriptionStatus);
         if (transcriptionActive && (entry.normalizationComplete || entry.stage === 'Finishing')) {
             progressBar.classList.add('indeterminate');
         } else if (entry.stage && !STAGES_WITH_PROGRESS.includes(entry.stage)) {
@@ -133,7 +133,7 @@ function getStatusText(entry) {
         case 'uploading':
             return 'Uploading';
         case 'normalizing': {
-            const transcriptionActive = entry.transcriptionStatus === 'Queued' || entry.transcriptionStatus === 'Running';
+            const transcriptionActive = TRANSCRIPTION_ACTIVE_STATUSES.has(entry.transcriptionStatus);
             if (transcriptionActive && (entry.normalizationComplete || entry.stage === 'Finishing')) {
                 return 'Transcribing';
             }

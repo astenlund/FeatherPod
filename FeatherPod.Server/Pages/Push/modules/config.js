@@ -46,6 +46,7 @@ export const MAX_LOCAL_HISTORY = 50;
 export const QUEUE_SYNC_TIMEOUT = 3000;
 export const JOB_TTL_MS = 60 * 60 * 1000;
 export const STAGES_WITH_PROGRESS = ['Analyzing', 'Normalizing', 'Downloading'];
+export const TRANSCRIPTION_ACTIVE_STATUSES = new Set(['Queued', 'Running']);
 export const STATES = ['no-key', 'ready', 'queue', 'error'];
 
 // No-key state UI strings

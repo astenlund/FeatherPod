@@ -1,4 +1,4 @@
-import { FEED_ID, JOB_TTL_MS, QUEUE_STORAGE_KEY, STAGES_WITH_PROGRESS, STR_INVALID_KEY, STR_NO_FEED_ACCESS } from './config.js';
+import { FEED_ID, JOB_TTL_MS, QUEUE_STORAGE_KEY, STAGES_WITH_PROGRESS, STR_INVALID_KEY, STR_NO_FEED_ACCESS, TRANSCRIPTION_ACTIVE_STATUSES } from './config.js';
 import { isValidAudioFile, isActiveWork, tryParseJson, truncate } from './utils.js';
 import { getApiKey } from './auth.js';
 import { showState, getCurrentState, updateQueueTitle, getCollapsedHeight, COLLAPSED_WIDTH } from './state.js';
@@ -530,7 +530,7 @@ function updateNormalizationProgress(entry, job) {
     const progressBar = getEntryProgressBar(entry.id);
 
     // After normalization completes, show indeterminate bar while transcription runs
-    const transcriptionActive = entry.transcriptionStatus === 'Queued' || entry.transcriptionStatus === 'Running';
+    const transcriptionActive = TRANSCRIPTION_ACTIVE_STATUSES.has(entry.transcriptionStatus);
     if (transcriptionActive && (entry.normalizationComplete || job.stage === 'Finishing')) {
         progressAnimator.reset(entry.id);
         if (progressBar) {
