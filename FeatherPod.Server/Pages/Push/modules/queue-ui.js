@@ -56,6 +56,18 @@ export function createQueueItemElement(entry) {
     name.title = entry.title ? entry.fileName : displayName;
     item.appendChild(name);
 
+    item.appendChild(createStatusElement(entry));
+    item.appendChild(createProgressBar(entry));
+
+    const actionBtn = createActionButton(entry);
+    if (actionBtn) {
+        item.appendChild(actionBtn);
+    }
+
+    return item;
+}
+
+function createStatusElement(entry) {
     const status = document.createElement('span');
     status.className = 'queue-item-status';
     status.id = 'queue-status-' + entry.id;
@@ -66,8 +78,11 @@ export function createQueueItemElement(entry) {
     } else {
         status.textContent = getStatusText(entry);
     }
-    item.appendChild(status);
 
+    return status;
+}
+
+function createProgressBar(entry) {
     const progressWrap = document.createElement('div');
     progressWrap.className = 'queue-item-progress-wrap';
     const progressBar = document.createElement('div');
@@ -88,14 +103,8 @@ export function createQueueItemElement(entry) {
     }
 
     progressWrap.appendChild(progressBar);
-    item.appendChild(progressWrap);
 
-    const actionBtn = createActionButton(entry);
-    if (actionBtn) {
-        item.appendChild(actionBtn);
-    }
-
-    return item;
+    return progressWrap;
 }
 
 function getIconClass(entry) {
