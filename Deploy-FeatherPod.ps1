@@ -64,9 +64,9 @@ function Main {
 
     $environments = if ($Environment -eq "All") { @("Test", "Prod") } else { @($Environment) }
 
-    # Resolve the release tag remote up-front so any interactive prompt happens
+    # Resolve the release branch remote up-front so any interactive prompt happens
     # before the long-running build and deploy steps.
-    $tagRemote = Get-ReleaseTagRemote
+    $branchRemote = Get-ReleaseBranchRemote
 
     $needsBuild = -not $Infrastructure
 
@@ -76,7 +76,7 @@ function Main {
         }
 
         foreach ($env in $environments) {
-            Deploy-Environment -TargetEnvironment $env -Infrastructure:$Infrastructure -TagRemote $tagRemote
+            Deploy-Environment -TargetEnvironment $env -Infrastructure:$Infrastructure -BranchRemote $branchRemote
         }
 
         if ($environments.Count -gt 1) {
@@ -180,7 +180,7 @@ function Deploy-Environment {
     param(
         [string]$TargetEnvironment,
         [switch]$Infrastructure,
-        [string]$TagRemote
+        [string]$BranchRemote
     )
 
     $suffix = if ($TargetEnvironment -eq "Test") { "-test" } else { "" }
@@ -271,7 +271,7 @@ function Deploy-Environment {
         Write-Host "Function App URL: https://$FunctionAppName.azurewebsites.net" -ForegroundColor Yellow
     }
 
-    Update-ReleaseTag -TargetEnvironment $TargetEnvironment -TagRemote $TagRemote
+    Update-ReleaseBranch -TargetEnvironment $TargetEnvironment -BranchRemote $BranchRemote
 }
 
 # Prompt the user to pick from a list of choices using PowerShell's host UI.
@@ -300,11 +300,11 @@ function AskUser {
     return @($ChoiceDescriptions | Select-Object -ExpandProperty Label)[$Result]
 }
 
-# Resolve the remote that should receive release tags.
+# Resolve the remote that should receive release branches.
 # First run (multiple remotes): prompts the user and remembers the chosen URL in
 # git config (deploy.publicRemoteUrl). Subsequent runs look up the current remote
 # name by URL, so renaming the remote locally doesn't break anything.
-function Get-ReleaseTagRemote {
+function Get-ReleaseBranchRemote {
     $remotes = @(git remote)
     if ($remotes.Count -eq 0) {
         return $null
@@ -340,13 +340,13 @@ function Get-ReleaseTagRemote {
     }
 
     try {
-        $chosenLabel = AskUser -Caption "Select release tag remote" `
-            -Message "Which remote should receive release tags? This will be remembered for future deploys." `
+        $chosenLabel = AskUser -Caption "Select release branch remote" `
+            -Message "Which remote should receive release branches? This will be remembered for future deploys." `
             -Choices $choices `
             -HelpMessages $helpMessages
     }
     catch {
-        Write-Host "Warning: could not prompt for release tag remote ($($_.Exception.Message)); skipping tag push." -ForegroundColor Yellow
+        Write-Host "Warning: could not prompt for release branch remote ($($_.Exception.Message)); skipping branch push." -ForegroundColor Yellow
         return $null
     }
 
@@ -354,43 +354,37 @@ function Get-ReleaseTagRemote {
     $chosenUrl = git remote get-url $chosenRemote 2>$null
     if ($LASTEXITCODE -eq 0 -and $chosenUrl) {
         git config --local deploy.publicRemoteUrl $chosenUrl | Out-Null
-        Write-Host "Remembered '$chosenRemote' ($chosenUrl) as the release tag remote." -ForegroundColor Gray
+        Write-Host "Remembered '$chosenRemote' ($chosenUrl) as the release branch remote." -ForegroundColor Gray
     }
 
     return $chosenRemote
 }
 
-# Move the release-{env} tag to HEAD and push it, marking the commit as released.
-# Failures are non-fatal: the deploy already succeeded, the tag is just a marker.
-# $TagRemote is resolved up-front in Main via Get-ReleaseTagRemote.
-function Update-ReleaseTag {
+# Move the release-{env} branch on the remote to HEAD, marking the commit as released.
+# Failures are non-fatal: the deploy already succeeded, the branch is just a marker.
+# $BranchRemote is resolved up-front in Main via Get-ReleaseBranchRemote.
+function Update-ReleaseBranch {
     param(
         [string]$TargetEnvironment,
-        [string]$TagRemote
+        [string]$BranchRemote
     )
 
-    $tagName = if ($TargetEnvironment -eq "Test") { "release-test" } else { "release-prod" }
+    $branchName = if ($TargetEnvironment -eq "Test") { "release-test" } else { "release-prod" }
 
-    Write-Host "`nUpdating release tag '$tagName' to HEAD..." -ForegroundColor Cyan
+    Write-Host "`nUpdating release branch '$branchName' to HEAD..." -ForegroundColor Cyan
 
-    if (-not $TagRemote) {
-        Write-Host "Warning: no git remote available; skipping tag push." -ForegroundColor Yellow
+    if (-not $BranchRemote) {
+        Write-Host "Warning: no git remote available; skipping branch push." -ForegroundColor Yellow
         return
     }
 
-    git tag -f $tagName
+    git push --force $BranchRemote "HEAD:refs/heads/$branchName"
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "Warning: failed to move tag '$tagName' locally (exit $LASTEXITCODE)" -ForegroundColor Yellow
+        Write-Host "Warning: failed to push branch '$branchName' to '$BranchRemote' (exit $LASTEXITCODE)" -ForegroundColor Yellow
         return
     }
 
-    git push --force $TagRemote "refs/tags/$tagName"
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Warning: failed to push tag '$tagName' to '$TagRemote' (exit $LASTEXITCODE)" -ForegroundColor Yellow
-        return
-    }
-
-    Write-Host "Release tag '$tagName' updated on '$TagRemote'." -ForegroundColor Green
+    Write-Host "Release branch '$branchName' updated on '$BranchRemote'." -ForegroundColor Green
 }
 
 Main @PSBoundParameters
