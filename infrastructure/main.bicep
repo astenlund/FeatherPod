@@ -60,6 +60,16 @@ param functionAppName string
 @secure()
 param internalApiKey string
 
+@description('VAPID public key for Web Push notifications (URL-safe base64)')
+param vapidPublicKey string
+
+@description('VAPID private key for Web Push notifications (URL-safe base64)')
+@secure()
+param vapidPrivateKey string
+
+@description('VAPID subject (mailto: URL identifying the application operator)')
+param vapidSubject string
+
 @description('Name of the Azure SignalR Service')
 param signalRServiceName string
 
@@ -219,6 +229,9 @@ resource appServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
     AzureSpeech__Endpoint: 'https://${speechAccountName}.cognitiveservices.azure.com/'
     AzureSpeech__MaxConcurrent: '3'
     APPLICATIONINSIGHTS_CONNECTION_STRING: appInsights.properties.ConnectionString
+    PushNotifications__VapidPublicKey: vapidPublicKey
+    PushNotifications__VapidPrivateKey: vapidPrivateKey
+    PushNotifications__VapidSubject: vapidSubject
   }
 }
 

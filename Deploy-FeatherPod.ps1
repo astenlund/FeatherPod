@@ -208,6 +208,8 @@ function Deploy-Environment {
             throw "Secrets file not found: $secretsFile. Create it with internalApiKey parameter."
         }
 
+        Ensure-VapidKeys -SecretsFile $secretsFile
+
         az deployment group create `
             --resource-group $ResourceGroup `
             --template-file (Join-Path $PSScriptRoot "infrastructure\main.bicep") `
@@ -385,6 +387,64 @@ function Update-ReleaseBranch {
     }
 
     Write-Host "Release branch '$branchName' updated on '$BranchRemote'." -ForegroundColor Green
+}
+
+# Generate VAPID keys for Web Push if not already present in the secrets file.
+# Uses .NET ECDsa P-256 to produce URL-safe base64 keys compatible with the Web Push spec.
+function Ensure-VapidKeys {
+    param([string]$SecretsFile)
+
+    $secrets = Get-Content $SecretsFile -Raw | ConvertFrom-Json
+    $params = $secrets.parameters
+    $dirty = $false
+
+    $hasPublic = $params.PSObject.Properties['vapidPublicKey'] -and $params.vapidPublicKey.value
+    $hasPrivate = $params.PSObject.Properties['vapidPrivateKey'] -and $params.vapidPrivateKey.value
+    $hasSubject = $params.PSObject.Properties['vapidSubject'] -and $params.vapidSubject.value
+
+    if (-not $hasSubject) {
+        $email = Read-Host "VAPID subject email (e.g. you@example.com)"
+        if (-not $email) {
+            throw "VAPID subject is required for Web Push notifications."
+        }
+        $params | Add-Member -NotePropertyName 'vapidSubject' -NotePropertyValue @{ value = "mailto:$email" } -Force
+        $dirty = $true
+    }
+
+    if (-not $hasPublic -or -not $hasPrivate) {
+        Write-Host "Generating VAPID keys for Web Push notifications..." -ForegroundColor Yellow
+
+        # OID 1.2.840.10045.3.1.7 = NIST P-256. Named curves don't resolve on all Windows builds.
+        $ecdsa = [System.Security.Cryptography.ECDsa]::Create(
+            [System.Security.Cryptography.ECCurve]::CreateFromValue("1.2.840.10045.3.1.7"))
+        try {
+            # .NET CNG returns D/X/Y left-padded to key size (32 bytes for P-256).
+            # No manual padding needed -- unlike Java's BigInteger, .NET does not strip leading zeros.
+            $ecParams = $ecdsa.ExportParameters($true)
+
+            # Public key: uncompressed point (0x04 || X || Y) = 65 bytes
+            $publicBytes = [byte[]]::new(65)
+            $publicBytes[0] = 0x04
+            [Array]::Copy($ecParams.Q.X, 0, $publicBytes, 1, 32)
+            [Array]::Copy($ecParams.Q.Y, 0, $publicBytes, 33, 32)
+
+            # URL-safe base64 (no padding)
+            $publicKey = [Convert]::ToBase64String($publicBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+            $privateKey = [Convert]::ToBase64String($ecParams.D).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+        }
+        finally {
+            $ecdsa.Dispose()
+        }
+
+        $params | Add-Member -NotePropertyName 'vapidPublicKey' -NotePropertyValue @{ value = $publicKey } -Force
+        $params | Add-Member -NotePropertyName 'vapidPrivateKey' -NotePropertyValue @{ value = $privateKey } -Force
+        $dirty = $true
+    }
+
+    if ($dirty) {
+        $secrets | ConvertTo-Json -Depth 10 | Set-Content $SecretsFile -Encoding utf8NoBOM
+        Write-Host "VAPID configuration saved to secrets file." -ForegroundColor Green
+    }
 }
 
 Main @PSBoundParameters
