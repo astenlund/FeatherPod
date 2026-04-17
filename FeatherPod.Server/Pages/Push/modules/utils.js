@@ -63,6 +63,24 @@ export function isValidMediaFile(file) {
 }
 
 /**
+ * Show a transient toast-style message using the shared .notif-hint styling.
+ * @param {string} message
+ * @param {number} [durationMs] default 5000
+ * @param {string} [dedupeClass] optional CSS class used to replace an earlier toast of the same kind
+ */
+export function showToast(message, durationMs = 5000, dedupeClass) {
+    if (dedupeClass) {
+        document.querySelector(`.notif-hint.${dedupeClass}`)?.remove();
+    }
+    const hint = document.createElement('div');
+    hint.className = dedupeClass ? `notif-hint ${dedupeClass}` : 'notif-hint';
+    hint.textContent = message;
+    hint.addEventListener('click', () => hint.remove());
+    document.body.appendChild(hint);
+    setTimeout(() => hint.remove(), durationMs);
+}
+
+/**
  * Format a duration from TimeSpan string to human-readable.
  * @param {string} duration
  * @returns {string}

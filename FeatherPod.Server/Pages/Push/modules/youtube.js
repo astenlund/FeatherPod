@@ -16,6 +16,7 @@
 import { FEED_ID } from './config.js';
 import { getApiKey, getUserRole } from './auth.js';
 import { getCurrentState } from './state.js';
+import { showToast } from './utils.js';
 
 const YT_FORMAT_PREFS_KEY = 'featherpod_yt_format_prefs';
 const YT_VIDEO_REGEX = /(?:youtube\.com\/watch\?v=|youtu\.be\/|m\.youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{11})/;
@@ -567,21 +568,6 @@ export function consumeLongPressFlag() {
 }
 
 /**
- * Show a brief toast using the existing .notif-hint styling.
- * @param {string} message
- */
-function showClipboardToast(message) {
-    document.querySelector('.notif-hint.clipboard-toast')?.remove();
-
-    const hint = document.createElement('div');
-    hint.className = 'notif-hint clipboard-toast';
-    hint.textContent = message;
-    hint.addEventListener('click', () => hint.remove());
-    document.body.appendChild(hint);
-    setTimeout(() => hint.remove(), 3000);
-}
-
-/**
  * Show a modal with a paste-input field as fallback when the Clipboard API
  * is denied (e.g. iOS PWA standalone mode). Auto-focuses the input so iOS
  * shows the native "Paste" pill above the keyboard.
@@ -699,7 +685,7 @@ async function readClipboardAndImport() {
             const metaPromise = fetchVideoMeta(url);
             showImportDialog(url, metaPromise);
         } else {
-            showClipboardToast('No YouTube link on clipboard');
+            showToast('No YouTube link on clipboard', 3000, 'clipboard-toast');
         }
     } catch {
         showClipboardFallbackModal();

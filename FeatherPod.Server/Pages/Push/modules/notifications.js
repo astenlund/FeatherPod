@@ -1,5 +1,5 @@
 import { FEED_ID, VAPID_PUBLIC_KEY, NOTIF_ENABLED_KEY, NOTIF_HINT_SHOWN_KEY, FAKE_PWA } from './config.js';
-import { isActiveWork } from './utils.js';
+import { isActiveWork, showToast } from './utils.js';
 import { getApiKey } from './auth.js';
 import { getQueue } from './queue.js';
 
@@ -35,7 +35,7 @@ export function initNotificationToggle() {
     const wasEnabled = localStorage.getItem(NOTIF_ENABLED_KEY) === 'true';
     if (hasActiveQueue && wasEnabled && Notification.permission === 'granted') {
         toggle.setAttribute('aria-pressed', 'true');
-        refreshPushSubscription();
+        subscribeToPush().catch(() => {});
         syncPushSession(undefined, queue);
     } else {
         localStorage.removeItem(NOTIF_ENABLED_KEY);
@@ -60,26 +60,25 @@ function postSubscriptionToServer(subscription) {
     });
 }
 
-function refreshPushSubscription() {
-    navigator.serviceWorker.ready.then(reg => reg.pushManager.getSubscription()).then(subscription => {
-        if (!subscription) {
-            return;
-        }
-        postSubscriptionToServer(subscription);
-    }).catch(() => {});
+function deleteSubscriptionOnServer(endpoint) {
+    return fetch(`/api/feeds/${FEED_ID}/push-subscriptions`, {
+        method: 'DELETE',
+        headers: { 'X-API-Key': getApiKey(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint }),
+    });
 }
 
-function deleteServerSubscription() {
-    navigator.serviceWorker.ready.then(reg => reg.pushManager.getSubscription()).then(subscription => {
+async function deleteServerSubscription() {
+    try {
+        const reg = await navigator.serviceWorker.ready;
+        const subscription = await reg.pushManager.getSubscription();
         if (!subscription) {
             return;
         }
-        fetch(`/api/feeds/${FEED_ID}/push-subscriptions`, {
-            method: 'DELETE',
-            headers: { 'X-API-Key': getApiKey(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({ endpoint: subscription.endpoint }),
-        });
-    }).catch(() => {});
+        await deleteSubscriptionOnServer(subscription.endpoint);
+    } catch {
+        // Best-effort; server prunes via 410 Gone on next send.
+    }
 }
 
 /**
@@ -159,17 +158,14 @@ async function handleNotificationToggle() {
                 const reg = await navigator.serviceWorker.ready;
                 const subscription = await reg.pushManager.getSubscription();
                 if (subscription) {
-                    await fetch(`/api/feeds/${FEED_ID}/push-subscriptions`, {
-                        method: 'DELETE',
-                        headers: { 'X-API-Key': getApiKey(), 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ endpoint: subscription.endpoint }),
-                    });
+                    await deleteSubscriptionOnServer(subscription.endpoint);
                     await subscription.unsubscribe();
                 }
             } catch (e) {
                 console.warn('Failed to unsubscribe from push notifications:', e);
                 toggle.setAttribute('aria-pressed', 'true');
                 localStorage.setItem(NOTIF_ENABLED_KEY, 'true');
+                showToast("Couldn't disable notifications", 5000, 'notif-toggle-error');
             } finally {
                 toggle.disabled = false;
             }
@@ -196,6 +192,7 @@ async function handleNotificationToggle() {
                 console.warn('Failed to subscribe to push notifications:', e);
                 toggle.setAttribute('aria-pressed', 'false');
                 localStorage.removeItem(NOTIF_ENABLED_KEY);
+                showToast("Couldn't enable notifications", 5000, 'notif-toggle-error');
             } finally {
                 toggle.disabled = false;
             }
@@ -203,8 +200,43 @@ async function handleNotificationToggle() {
     }
 }
 
+function applicationServerKeyMatches(existingKeyBuffer, expectedBytes) {
+    if (!existingKeyBuffer) {
+        return false;
+    }
+    const existing = new Uint8Array(existingKeyBuffer);
+    if (existing.length !== expectedBytes.length) {
+        return false;
+    }
+    for (let i = 0; i < expectedBytes.length; i++) {
+        if (existing[i] !== expectedBytes[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+async function ensureCompatibleSubscription(reg) {
+    const existing = await reg.pushManager.getSubscription();
+    if (!existing) {
+        return;
+    }
+    const expected = urlBase64ToUint8Array(VAPID_PUBLIC_KEY);
+    if (applicationServerKeyMatches(existing.options?.applicationServerKey, expected)) {
+        return;
+    }
+    try {
+        await deleteSubscriptionOnServer(existing.endpoint);
+    } catch {
+        // Best-effort; server prunes via 410 Gone on next send.
+    }
+    await existing.unsubscribe();
+}
+
 async function subscribeToPush() {
     const reg = await navigator.serviceWorker.ready;
+    await ensureCompatibleSubscription(reg);
     const subscription = await reg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
@@ -225,12 +257,7 @@ function showBatteryOptimizationHint() {
     }
     localStorage.setItem(NOTIF_HINT_SHOWN_KEY, 'true');
 
-    const hint = document.createElement('div');
-    hint.className = 'notif-hint';
-    hint.textContent = 'Tip: disable battery optimization for reliable notifications';
-    hint.addEventListener('click', () => hint.remove());
-    document.body.appendChild(hint);
-    setTimeout(() => hint.remove(), 10000);
+    showToast('Tip: disable battery optimization for reliable notifications', 10000);
 }
 
 /**
