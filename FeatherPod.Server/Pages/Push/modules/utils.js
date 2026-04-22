@@ -39,7 +39,7 @@ Number.prototype.formatBytes = function formatBytes(sigDigs = 2, unitSuffix = ''
  * @returns {boolean}
  */
 export function isActiveWork(entry) {
-    return entry.status === 'queued' || entry.status === 'uploading' || entry.status === 'normalizing';
+    return entry.status === 'queued' || entry.status === 'uploading' || entry.status === 'saving' || entry.status === 'normalizing';
 }
 
 /**

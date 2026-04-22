@@ -91,7 +91,7 @@ export function syncPushSession(jobIds, uploadQueue) {
         return;
     }
     const ids = jobIds || uploadQueue.filter(e => e.jobId && isActiveWork(e)).map(e => e.jobId);
-    const uploadsRemaining = uploadQueue.filter(e => (e.status === 'queued' || e.status === 'uploading') && !e.validationError).length;
+    const uploadsRemaining = uploadQueue.filter(e => (e.status === 'queued' || e.status === 'uploading' || e.status === 'saving') && !e.validationError).length;
     if (ids.length === 0 && uploadsRemaining === 0) {
         return;
     }

@@ -1085,6 +1085,7 @@ h1 {
 }
 
 .queue-item--uploading .queue-item-progress-wrap,
+.queue-item--saving .queue-item-progress-wrap,
 .queue-item--normalizing .queue-item-progress-wrap {
     background: var(--bg-surface);
 }

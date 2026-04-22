@@ -82,7 +82,7 @@ if (navigator.serviceWorker) {
                 location.reload();
             }
         };
-        const hasActiveUpload = () => getQueue().some(e => e.status === 'uploading');
+        const hasActiveUpload = () => getQueue().some(e => e.status === 'uploading' || e.status === 'saving');
         if (!hasActiveUpload()) {
             flashAndReload();
 
@@ -113,7 +113,7 @@ if (navigator.serviceWorker) {
  * @typedef {Object} QueueEntry
  * @property {string} id - Unique entry ID
  * @property {File|null} file - File object (null after session restore)
- * @property {'queued'|'uploading'|'normalizing'|'completed'|'failed'|'cancelled'} status
+ * @property {'queued'|'uploading'|'saving'|'normalizing'|'completed'|'failed'|'cancelled'} status
  * @property {number} progress - Progress percentage (0-100)
  * @property {string|null} stage - Normalization stage (Queued, Analyzing, Normalizing, Finishing, Completed)
  * @property {string|null} jobId - Server normalization job ID

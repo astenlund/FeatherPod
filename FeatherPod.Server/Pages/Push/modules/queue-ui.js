@@ -89,7 +89,7 @@ function createProgressBar(entry) {
     progressBar.className = 'queue-item-progress';
     progressBar.id = 'queue-progress-' + entry.id;
 
-    if (entry.status === 'uploading') {
+    if (entry.status === 'uploading' || entry.status === 'saving') {
         progressBar.style.width = entry.progress + '%';
     } else if (entry.status === 'normalizing') {
         const transcriptionActive = TRANSCRIPTION_ACTIVE_STATUSES.has(entry.transcriptionStatus);
@@ -110,6 +110,7 @@ function createProgressBar(entry) {
 function getIconClass(entry) {
     switch (entry.status) {
         case 'uploading':
+        case 'saving':
         case 'normalizing':
             return 'queue-item-icon--active';
         case 'completed':
@@ -126,6 +127,7 @@ function getIconClass(entry) {
 function getIconText(entry) {
     switch (entry.status) {
         case 'uploading':
+        case 'saving':
         case 'normalizing':
             return '\u25CF';
         case 'completed':
@@ -145,6 +147,8 @@ function getStatusText(entry) {
     switch (entry.status) {
         case 'uploading':
             return 'Uploading';
+        case 'saving':
+            return 'Saving';
         case 'normalizing': {
             const transcriptionActive = TRANSCRIPTION_ACTIVE_STATUSES.has(entry.transcriptionStatus);
             if (transcriptionActive && (entry.normalizationComplete || entry.stage === 'Finishing')) {
@@ -179,7 +183,7 @@ function createActionButton(entry) {
         return btn;
     }
 
-    if (entry.status === 'uploading' || entry.status === 'normalizing') {
+    if (entry.status === 'uploading' || entry.status === 'saving' || entry.status === 'normalizing') {
         const btn = document.createElement('button');
         btn.className = 'queue-item-action queue-item-action--cancel';
         btn.type = 'button';

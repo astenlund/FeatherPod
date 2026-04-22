@@ -322,7 +322,7 @@ export function mergeServerJobs(serverJobs) {
     // Also skip: jobs whose fileName matches a currently-uploading entry (dedup for in-flight uploads
     // where the SSE event arrives before the XHR 202 response sets the jobId), and jobs the user
     // dismissed (cancel POST may still be in flight)
-    const uploadingFileNames = new Set(uploadQueue.filter(e => e.status === 'uploading').map(e => e.fileName));
+    const uploadingFileNames = new Set(uploadQueue.filter(e => e.status === 'uploading' || e.status === 'saving').map(e => e.fileName));
     const newEntries = [];
     for (const serverJob of serverJobs) {
         if (!existingJobIds.has(serverJob.jobId) && !uploadingFileNames.has(serverJob.fileName) && !dismissedJobIds.has(serverJob.jobId)) {

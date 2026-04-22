@@ -412,6 +412,16 @@ async function processEntry(entry) {
                 }
             });
 
+            // Upload body fully sent -- server is now persisting the file and
+            // creating the job entity. The 202 response arrives via xhr.onload
+            // a few seconds later. Flip the label to "Saving" so the user
+            // sees progress instead of a stuck "Uploading 100%".
+            xhr.upload.addEventListener('load', () => {
+                entry.progress = 100;
+                entry.status = 'saving';
+                updateQueueItemInDOM(entry);
+            });
+
             xhr.onload = () => {
                 entry.xhr = null;
                 progressAnimator.reset(entry.id);
@@ -860,7 +870,7 @@ export async function cancelEntry(entryId) {
         return;
     }
 
-    if (entry.status === 'uploading') {
+    if (entry.status === 'uploading' || entry.status === 'saving') {
         if (entry.xhr) {
             entry.xhr.abort();
         }
@@ -1071,7 +1081,7 @@ export async function restoreQueueState() {
 
     // Mark uploading entries as failed (can't resume XHR), queued as cancelled (files lost on reload)
     for (const entry of uploadQueue) {
-        if (entry.status === 'uploading') {
+        if (entry.status === 'uploading' || entry.status === 'saving') {
             entry.status = 'failed';
             entry.error = 'Upload interrupted';
         } else if (entry.status === 'queued') {
