@@ -64,11 +64,12 @@ function Main {
 
     $environments = if ($Environment -eq "All") { @("Test", "Prod") } else { @($Environment) }
 
-    # Resolve the release branch remote up-front so any interactive prompt happens
-    # before the long-running build and deploy steps.
-    $branchRemote = Get-ReleaseBranchRemote
-
     $needsBuild = -not $Infrastructure
+
+    # Resolve the release branch remote up-front so any interactive prompt happens
+    # before the long-running build and deploy steps. Skip on infrastructure-only
+    # deploys -- no code is shipped, so the release branch must not move.
+    $branchRemote = if ($needsBuild) { Get-ReleaseBranchRemote } else { $null }
 
     try {
         if ($needsBuild) {
@@ -271,9 +272,12 @@ function Deploy-Environment {
         Write-Host "`nDeployment to $TargetEnvironment successful!`n" -ForegroundColor Green
         Write-Host "App Service URL: https://$AppName.azurewebsites.net" -ForegroundColor Yellow
         Write-Host "Function App URL: https://$FunctionAppName.azurewebsites.net" -ForegroundColor Yellow
-    }
 
-    Update-ReleaseBranch -TargetEnvironment $TargetEnvironment -BranchRemote $BranchRemote
+        # Move the release-{env} branch only when code shipped. Infrastructure-only
+        # deploys (-Infrastructure) leave the release branch where it is so it keeps
+        # tracking the last commit whose code is actually running.
+        Update-ReleaseBranch -TargetEnvironment $TargetEnvironment -BranchRemote $BranchRemote
+    }
 }
 
 # Prompt the user to pick from a list of choices using PowerShell's host UI.
