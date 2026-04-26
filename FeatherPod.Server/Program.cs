@@ -110,7 +110,13 @@ class Program
 
         // Speech transcription and join logic
         builder.Services.AddSingleton<JobCompletionService>();
+        var fastTimeoutMinutes = builder.Configuration.GetValue("AzureSpeech:FastTimeoutMinutes", 15);
+        builder.Services.AddHttpClient(SpeechTranscriptionService.FastHttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromMinutes(fastTimeoutMinutes);
+        });
         builder.Services.AddSingleton<ISpeechTranscriptionService, SpeechTranscriptionService>();
+        builder.Services.AddSingleton<IAudioDurationProbe, FFprobeAudioDurationProbe>();
         builder.Services.AddSingleton<ITranscriptionChannel, TranscriptionChannel>();
         builder.Services.AddHostedService<TranscriptionBackgroundService>();
 

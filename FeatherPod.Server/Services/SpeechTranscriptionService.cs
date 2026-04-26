@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -7,12 +9,18 @@ using Azure.Identity;
 namespace FeatherPod.Server.Services;
 
 /// <summary>
-/// Wraps the Azure Speech batch transcription REST API (v3.2) for diarized transcription.
-/// Produces VTT output with per-speaker voice tags.
+/// Wraps the Azure Speech transcription REST APIs for diarized transcription.
+/// Primary path is the synchronous Fast endpoint (<c>/speechtotext/transcriptions:transcribe</c>);
+/// the batch endpoint (<c>/speechtotext/v3.2/transcriptions</c>) is retained as a fallback
+/// for audio that exceeds the diarized Fast cap (~2 hours). Produces VTT with per-speaker tags.
 /// </summary>
 public class SpeechTranscriptionService : ISpeechTranscriptionService
 {
+    public const string FastHttpClientName = "AzureSpeechFast";
+
     private const string BatchApiPath = "/speechtotext/v3.2/transcriptions";
+    private const string FastApiPath = "/speechtotext/transcriptions:transcribe";
+    private const string FastApiVersion = "2025-10-15";
 
     private static readonly JsonSerializerOptions CamelCaseOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     private static readonly TokenRequestContext SpeechTokenScope = new(["https://cognitiveservices.azure.com/.default"]);
@@ -20,8 +28,10 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
 
     private readonly string? _endpoint;
     private readonly string _locale;
+    private readonly int _diarizationMaxSpeakers;
     private readonly DefaultAzureCredential _credential = new();
     private readonly HttpClient _httpClient = new();
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<SpeechTranscriptionService> _logger;
     private readonly TimeSpan _pollInterval = TimeSpan.FromSeconds(2);
     private readonly TimeSpan _pollTimeout;
@@ -33,11 +43,13 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
     /// </summary>
     public bool IsAvailable => !string.IsNullOrEmpty(_endpoint);
 
-    public SpeechTranscriptionService(IConfiguration configuration, ILogger<SpeechTranscriptionService> logger)
+    public SpeechTranscriptionService(IConfiguration configuration, IHttpClientFactory httpClientFactory, ILogger<SpeechTranscriptionService> logger)
     {
-        _endpoint = configuration["AzureSpeech:Endpoint"];
+        _endpoint = configuration["AzureSpeech:Endpoint"]?.TrimEnd('/');
         _locale = configuration.GetValue("AzureSpeech:Locale", "en-US")!;
+        _diarizationMaxSpeakers = configuration.GetValue("AzureSpeech:DiarizationMaxSpeakers", 6);
         _pollTimeout = TimeSpan.FromMinutes(configuration.GetValue("AzureSpeech:BatchTimeoutMinutes", 30));
+        _httpClientFactory = httpClientFactory;
         _logger = logger;
 
         if (IsAvailable)
@@ -48,6 +60,79 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
         {
             _logger.LogInformation("AzureSpeech:Endpoint not configured; transcription disabled");
         }
+    }
+
+    /// <summary>
+    /// Submit audio to the Fast Transcription endpoint and return diarized VTT.
+    /// </summary>
+    public async Task<string?> TranscribeFastAsync(Stream audio, string contentType, string? fileName, CancellationToken ct)
+    {
+        var definition = JsonSerializer.Serialize(new
+        {
+            locales = new[] { _locale },
+            diarization = new { enabled = true, maxSpeakers = _diarizationMaxSpeakers },
+        }, CamelCaseOptions);
+
+        using var content = new MultipartFormDataContent();
+        var audioContent = new StreamContent(audio);
+        audioContent.Headers.ContentType = new MediaTypeHeaderValue(contentType);
+        content.Add(audioContent, "audio", fileName ?? "audio");
+
+        var definitionContent = new StringContent(definition, Encoding.UTF8, "application/json");
+        content.Add(definitionContent, "definition");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_endpoint}{FastApiPath}?api-version={FastApiVersion}")
+        {
+            Content = content,
+        };
+        await SetAuthHeaderAsync(request, ct);
+
+        var fastClient = _httpClientFactory.CreateClient(FastHttpClientName);
+        var stopwatch = Stopwatch.StartNew();
+        using var response = await fastClient.SendAsync(request, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        stopwatch.Stop();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            ThrowForFastFailure(response.StatusCode, body);
+        }
+
+        using var doc = JsonDocument.Parse(body);
+        var segments = FastTranscriptionParser.Parse(doc.RootElement);
+
+        if (segments.Count == 0)
+        {
+            _logger.LogWarning("Fast transcription produced no recognized phrases");
+
+            return null;
+        }
+
+        var audioMs = doc.RootElement.TryGetProperty("durationMilliseconds", out var dms) ? dms.GetInt64() : 0L;
+        var wallMs = stopwatch.ElapsedMilliseconds;
+        var ratio = audioMs > 0 && wallMs > 0 ? Math.Round((double)audioMs / wallMs, 2) : 0.0;
+        _logger.LogInformation(
+            "Fast transcription complete: {SegmentCount} segments, {SpeakerCount} speakers, AudioMs={AudioMs} WallMs={WallMs} Ratio={Ratio}x realtime",
+            segments.Count,
+            segments.Select(s => s.SpeakerId).Distinct().Count(),
+            audioMs,
+            wallMs,
+            ratio);
+
+        return VttSerializer.Serialize(segments);
+    }
+
+    private static void ThrowForFastFailure(HttpStatusCode statusCode, string body)
+    {
+        // 400 covers payload-too-large/duration-too-long ("AudioTooLong", "InvalidAudioLength").
+        // 413 is the explicit Payload-Too-Large case. 404 means the endpoint isn't routed in
+        // the region. All three are recoverable by falling back to the batch endpoint.
+        if (statusCode is HttpStatusCode.BadRequest or HttpStatusCode.RequestEntityTooLarge or HttpStatusCode.NotFound)
+        {
+            throw new FastTranscriptionUnavailableException($"Fast transcription unavailable ({(int)statusCode}): {body}");
+        }
+
+        throw new HttpRequestException($"Speech API POST {FastApiPath} failed ({(int)statusCode}): {body}");
     }
 
     /// <summary>

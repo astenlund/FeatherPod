@@ -33,4 +33,8 @@
     <ProjectReference Include="..\FeatherPod\FeatherPod.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="TestData\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
