@@ -326,10 +326,11 @@ class Program
                     }
 
                     var progressSmoothing = config.GetValue("PushPage:ProgressSmoothing", true);
+                    var exposeDevFlags = env.IsDevelopment() || config.GetValue("FeatherPod:AllowDevFlags", false);
                     var iconETag = await blobStorageService.GetIconETagAsync(feedId);
                     var vapidPublicKey = config["PushNotifications:VapidPublicKey"];
 
-                    return Results.Content(GeneratePushPageHtml(feedId, feed.Title, env, progressSmoothing, iconETag, vapidPublicKey), "text/html");
+                    return Results.Content(GeneratePushPageHtml(feedId, feed.Title, env, exposeDevFlags, progressSmoothing, iconETag, vapidPublicKey), "text/html");
                 })
             .WithName("GetPushPage")
             .Produces(200, contentType: "text/html")
@@ -639,7 +640,7 @@ class Program
     // PUSH PAGE HTML GENERATION
     // ============================================================================
 
-    static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvironment env, bool progressSmoothing, string? iconETag, string? vapidPublicKey)
+    static string GeneratePushPageHtml(string feedId, string feedTitle, IWebHostEnvironment env, bool exposeDevFlags, bool progressSmoothing, string? iconETag, string? vapidPublicKey)
     {
         var escapedTitle = System.Net.WebUtility.HtmlEncode(feedTitle);
         var hasArtwork = iconETag != null;
@@ -683,7 +684,7 @@ class Program
             .Replace("{{DROP_ZONE_CLASS}}", hasArtwork ? " drop-zone--has-artwork" : "")
             .Replace("{{BACKDROP_SRC}}", hasArtwork ? $" src=\"/{feedId}/icon.png{iconCacheBuster}\"" : "")
             .Replace("{{ICON_ETAG}}", iconETag ?? "")
-            .Replace("{{IS_DEV}}", env.IsDevelopment().ToString().ToLowerInvariant())
+            .Replace("{{IS_DEV}}", exposeDevFlags.ToString().ToLowerInvariant())
             .Replace("{{PROGRESS_SMOOTHING}}", progressSmoothing.ToString().ToLowerInvariant())
             .Replace("{{VAPID_PUBLIC_KEY}}", vapidPublicKey ?? "");
     }

@@ -236,6 +236,7 @@ resource appServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
     PushNotifications__VapidPublicKey: vapidPublicKey
     PushNotifications__VapidPrivateKey: vapidPrivateKey
     PushNotifications__VapidSubject: vapidSubject
+    FeatherPod__AllowDevFlags: environment == 'Test' ? 'true' : 'false'
   }
 }
 
