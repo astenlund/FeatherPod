@@ -40,6 +40,7 @@ const browserGlobals = {
     clearInterval: 'readonly',
     getComputedStyle: 'readonly',
     matchMedia: 'readonly',
+    CSS: 'readonly',
     Notification: 'readonly',
     AbortController: 'readonly',
     queueMicrotask: 'readonly',
