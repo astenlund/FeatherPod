@@ -184,7 +184,7 @@ registerYouTubeJobCallback((jobResponse) => {
         updateQueueTitle(hasActive);
     }
 
-    renderQueueList(queue);
+    renderQueueList(true);
     monitorEntryNormalizationInBackground(entry);
 });
 
