@@ -95,7 +95,10 @@ public static class RssFeedGenerator
         writer.WriteElementString("title", episode.Title);
         writer.WriteElementString("description", episode.Description ?? string.Empty);
         writer.WriteElementString("pubDate", episode.PublishedDate.ToString("R"));
-        writer.WriteElementString("guid", episode.Id);
+        writer.WriteStartElement("guid");
+        writer.WriteAttributeString("isPermaLink", "false");
+        writer.WriteString(episode.Id);
+        writer.WriteEndElement();
 
         // Enclosure (audio file)
         var audioUrl = episode.GetAudioUrl(baseUrl);
