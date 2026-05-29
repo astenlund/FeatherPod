@@ -104,6 +104,7 @@ export function handleDrop(e) {
         return false;
     }
 
+    e.preventDefault();
     const metaPromise = fetchVideoMeta(url);
     showImportDialog(url, metaPromise);
 
