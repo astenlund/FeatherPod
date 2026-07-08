@@ -72,7 +72,8 @@ function createStatusElement(entry) {
     status.id = 'queue-status-' + entry.id;
     if (entry.status === 'completed' && entry.transcriptionStatus === 'Failed') {
         status.classList.add('queue-item-status--trans-failed');
-        status.textContent = '\u26A0 ' + getStatusText(entry);
+        const label = getStatusText(entry);
+        status.textContent = label ? '\u26A0 ' + label : '\u26A0';
         status.title = 'Transcript unavailable: ' + (entry.transcriptionError || 'transcription failed');
     } else {
         status.textContent = getStatusText(entry);
@@ -157,7 +158,8 @@ function getStatusText(entry) {
             return entry.stage || 'Queued';
         }
         case 'completed':
-            return 'Done';
+            // No label: the left tick already signals success.
+            return '';
         case 'failed':
             return entry.error || 'Failed';
         case 'cancelled':
