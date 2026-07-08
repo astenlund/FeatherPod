@@ -179,21 +179,6 @@ export function tryParseJson(text) {
 }
 
 /**
- * Truncate a string to maxLen characters, trimming trailing whitespace before adding ellipsis.
- * Prevents "word …" artifacts from CSS text-overflow by ensuring no trailing space before the ellipsis.
- * @param {string} str
- * @param {number} maxLen
- * @returns {string}
- */
-export function truncate(str, maxLen) {
-    if (!str || str.length <= maxLen) {
-        return str || '';
-    }
-
-    return str.slice(0, maxLen).trimEnd() + '…';
-}
-
-/**
  * Simple focus trap for modal dialogs.
  * @param {KeyboardEvent} e
  * @param {HTMLElement} container

@@ -990,6 +990,7 @@ h1 {
 .queue-item-name {
     grid-column: 2;
     grid-row: 1;
+    min-width: 0;
     font-size: 0.85rem;
     color: var(--text-secondary);
     white-space: nowrap;
