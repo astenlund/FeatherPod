@@ -165,54 +165,66 @@ export async function fetchRecentJobs() {
     }
 }
 
-/**
- * Merge server-known recent jobs into the local upload queue.
- * The server response contains ALL recent jobs (active + terminal from last hour).
- * Reconciles local state with server data:
- * - Removes stale local entries (normalizing/failed with jobId not in server response)
- * - Updates existing entries with server data (stage, progress, terminal status)
- * - Recovers locally-failed entries when server reports a different status (completed, active, cancelled)
- * - Adds new entries for unknown server jobs (e.g., from CLI or another tab), skipping cancelled jobs,
- *   user-dismissed jobs, and jobs whose fileName matches a currently-uploading entry (dedup for in-flight uploads)
- * If serverJobs is null (fetch failed), skips reconciliation entirely.
- * @param {Array<Object>|null} serverJobs
- */
 function isTerminalStatus(status) {
     return status === 'Completed' || status === 'Failed' || status === 'Cancelled';
 }
 
-export function mergeServerJobs(serverJobs) {
-    if (serverJobs === null) {
-        return; // Server fetch failed -- don't reconcile, let SSE handle it
+/**
+ * Tear down a queue entry and remove it from the queue: closes any SSE, clears the
+ * animator slot, removes the DOM node, splices the entry out of the queue, and resolves
+ * a pending monitor. Every step is guarded, so entries without an active SSE or monitor
+ * pass through those steps as no-ops.
+ * @param {Array<Object>} uploadQueue
+ * @param {Object} entry
+ */
+function removeEntry(uploadQueue, entry) {
+    if (entry.eventSource) {
+        entry.eventSource.close();
+        entry.eventSource = null;
     }
+    progressAnimator.removeSlot(entry.id);
 
-    const uploadQueue = getQueue();
-    const serverJobMap = new Map(serverJobs.map(j => [j.jobId, j]));
-    const existingJobIds = new Set(uploadQueue.map(e => e.jobId).filter(Boolean));
-    const changedEntryIds = new Set();
-    let removedEntries = false;
+    removeQueueItemFromDOM(entry.id);
+    uploadQueue.splice(uploadQueue.indexOf(entry), 1);
+    if (entry._resolveMonitor) {
+        entry._resolveMonitor();
+        entry._resolveMonitor = null;
+    }
+}
 
-    // Remove stale local entries (normalizing/failed with jobId not in server response --
-    // means job was cleaned up or is older than 1 hour)
+/**
+ * Remove stale local entries: normalizing/failed entries whose jobId is absent from the
+ * server response (job cleaned up or older than one hour). Closes any SSE, clears the
+ * animator slot, removes the DOM node, and resolves a pending monitor.
+ * @param {Array<Object>} uploadQueue
+ * @param {Map<string, Object>} serverJobMap - Server jobs keyed by jobId
+ * @returns {boolean} True if any entry was removed
+ */
+function removeStaleEntries(uploadQueue, serverJobMap) {
+    let removed = false;
     const staleEntries = uploadQueue.filter(e => e.jobId && (e.status === 'normalizing' || e.status === 'failed') && !serverJobMap.has(e.jobId));
     for (const stale of staleEntries) {
-        if (stale.eventSource) {
-            stale.eventSource.close();
-            stale.eventSource = null;
-        }
-        progressAnimator.removeSlot(stale.id);
-
-        removeQueueItemFromDOM(stale.id);
-        uploadQueue.splice(uploadQueue.indexOf(stale), 1);
-        if (stale._resolveMonitor) {
-            stale._resolveMonitor();
-            stale._resolveMonitor = null;
-        }
-        removedEntries = true;
+        removeEntry(uploadQueue, stale);
+        removed = true;
     }
 
-    // Update existing entries with fresh server data (track which entries actually changed
-    // to avoid unnecessary DOM replacements that interrupt blur-fade-in animations)
+    return removed;
+}
+
+/**
+ * Reconcile existing local entries against fresh server data, mutating each in place.
+ * Applies the status ladder: server cancellation removes the entry; a server-terminal
+ * status finalizes a still-normalizing entry; ongoing normalization updates stage,
+ * progress, and transcription; and the locally-failed branches recover entries the
+ * server reports as active, completed, or cancelled. Ids of entries that changed (but
+ * were not removed) are added to changedEntryIds for a targeted DOM update.
+ * @param {Array<Object>} uploadQueue
+ * @param {Array<Object>} serverJobs
+ * @param {Set<number>} changedEntryIds - Mutated in place with ids of changed entries
+ * @returns {boolean} True if any entry was removed
+ */
+function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds) {
+    let removed = false;
     for (const serverJob of serverJobs) {
         const existing = uploadQueue.find(e => e.jobId === serverJob.jobId);
         if (!existing) {
@@ -224,20 +236,9 @@ export function mergeServerJobs(serverJobs) {
 
         if (existing.status === 'normalizing' && serverStatus === 'Cancelled') {
             // Server says cancelled -- remove from queue (consistent with other cancel paths)
-            if (existing.eventSource) {
-                existing.eventSource.close();
-                existing.eventSource = null;
-            }
             existing.status = 'cancelled';
-            progressAnimator.removeSlot(existing.id);
-
-            removeQueueItemFromDOM(existing.id);
-            uploadQueue.splice(uploadQueue.indexOf(existing), 1);
-            if (existing._resolveMonitor) {
-                existing._resolveMonitor();
-                existing._resolveMonitor = null;
-            }
-            removedEntries = true;
+            removeEntry(uploadQueue, existing);
+            removed = true;
         } else if (existing.status === 'normalizing' && isServerTerminal) {
             // Server says terminal but local still normalizing -- update to terminal
             if (existing.eventSource) {
@@ -310,18 +311,25 @@ export function mergeServerJobs(serverJobs) {
         } else if (existing.status === 'failed' && serverStatus === 'Cancelled') {
             // Server says cancelled - remove from queue
             existing.status = 'cancelled';
-            progressAnimator.removeSlot(existing.id);
-
-            removeQueueItemFromDOM(existing.id);
-            uploadQueue.splice(uploadQueue.indexOf(existing), 1);
-            removedEntries = true;
+            removeEntry(uploadQueue, existing);
+            removed = true;
         }
     }
 
-    // Add new entries for server jobs not in local queue
-    // Also skip: jobs whose fileName matches a currently-uploading entry (dedup for in-flight uploads
-    // where the SSE event arrives before the XHR 202 response sets the jobId), and jobs the user
-    // dismissed (cancel POST may still be in flight)
+    return removed;
+}
+
+/**
+ * Build entries for server jobs not already present in the local queue. Skips cancelled
+ * jobs, user-dismissed jobs, and jobs whose fileName matches a currently-uploading entry
+ * (dedup for in-flight uploads where the SSE event arrives before the XHR 202 response
+ * sets the jobId). Entries are returned but not yet pushed onto the queue.
+ * @param {Array<Object>} uploadQueue
+ * @param {Array<Object>} serverJobs
+ * @param {Set<string>} existingJobIds - jobIds present in the queue before reconciliation
+ * @returns {Array<Object>} Newly built queue entries
+ */
+function addNewServerEntries(uploadQueue, serverJobs, existingJobIds) {
     const uploadingFileNames = new Set(uploadQueue.filter(isInUploadPhase).map(e => e.fileName));
     const newEntries = [];
     for (const serverJob of serverJobs) {
@@ -355,6 +363,35 @@ export function mergeServerJobs(serverJobs) {
             });
         }
     }
+
+    return newEntries;
+}
+
+/**
+ * Merge server-known recent jobs into the local upload queue.
+ * The server response contains ALL recent jobs (active + terminal from last hour).
+ * Coordinates three behavior-preserving phases over the shared queue:
+ * - removeStaleEntries: drops normalizing/failed entries whose jobId is gone from the server
+ * - reconcileExistingEntries: applies the status ladder to entries the server still knows
+ * - addNewServerEntries: appends unknown server jobs (e.g., from CLI or another tab)
+ * then repaints the affected DOM, resumes SSE monitoring, and persists queue state.
+ * If serverJobs is null (fetch failed), skips reconciliation entirely.
+ * @param {Array<Object>|null} serverJobs
+ */
+export function mergeServerJobs(serverJobs) {
+    if (serverJobs === null) {
+        return; // Server fetch failed -- don't reconcile, let SSE handle it
+    }
+
+    const uploadQueue = getQueue();
+    const serverJobMap = new Map(serverJobs.map(j => [j.jobId, j]));
+    const existingJobIds = new Set(uploadQueue.map(e => e.jobId).filter(Boolean));
+    const changedEntryIds = new Set();
+
+    const removedStale = removeStaleEntries(uploadQueue, serverJobMap);
+    const removedReconciled = reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds);
+    const removedEntries = removedStale || removedReconciled;
+    const newEntries = addNewServerEntries(uploadQueue, serverJobs, existingJobIds);
 
     if (newEntries.length === 0 && changedEntryIds.size === 0 && !removedEntries) {
         return;
