@@ -187,19 +187,19 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
             var status = root.GetProperty("status").GetString() ?? "Unknown";
             _logger.LogDebug("Batch transcription poll: {Status}", status);
 
-            if (status is "Succeeded" or "Failed")
+            if (status is BatchTranscriptionApi.SucceededStatus or BatchTranscriptionApi.FailedStatus)
             {
                 string? filesListUrl = null;
                 string? errorMessage = null;
 
-                if (status is "Succeeded"
+                if (status is BatchTranscriptionApi.SucceededStatus
                     && root.TryGetProperty("links", out var links)
                     && links.TryGetProperty("files", out var files))
                 {
                     filesListUrl = files.GetString();
                 }
 
-                if (status is "Failed"
+                if (status is BatchTranscriptionApi.FailedStatus
                     && root.TryGetProperty("properties", out var props)
                     && props.TryGetProperty("error", out var error))
                 {
@@ -234,7 +234,7 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
         string? contentUrl = null;
         foreach (var value in listDoc.RootElement.GetProperty("values").EnumerateArray())
         {
-            if (value.GetProperty("kind").GetString() is "Transcription")
+            if (value.GetProperty("kind").GetString() is BatchTranscriptionApi.TranscriptionFileKind)
             {
                 contentUrl = value.GetProperty("links").GetProperty("contentUrl").GetString();
 

@@ -230,7 +230,7 @@ public class TranscriptionBackgroundService : BackgroundService
         {
             var (status, filesListUrl, errorMessage) = await _speechService.PollUntilCompleteAsync(transcriptionUrl, ct);
 
-            if (status is "Failed" || filesListUrl is null)
+            if (status is BatchTranscriptionApi.FailedStatus || filesListUrl is null)
             {
                 var error = errorMessage ?? "Batch transcription failed on Azure side";
                 _logger.LogWarning("Batch transcription failed for job {JobId}: {Error}", request.JobId, error);
