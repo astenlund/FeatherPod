@@ -89,16 +89,21 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
 
         var fastClient = _httpClientFactory.CreateClient(FastHttpClientName);
         var stopwatch = Stopwatch.StartNew();
-        using var response = await fastClient.SendAsync(request, ct);
-        var body = await response.Content.ReadAsStringAsync(ct);
-        stopwatch.Stop();
+        using var response = await fastClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
 
         if (!response.IsSuccessStatusCode)
         {
+            // Buffer the error body into a string so it surfaces in the exception message.
+            var body = await response.Content.ReadAsStringAsync(ct);
+            stopwatch.Stop();
             ThrowForFastFailure(response.StatusCode, body);
         }
 
-        using var doc = JsonDocument.Parse(body);
+        // Stream the success body straight into the parser to avoid a large (LOH-bound) intermediate string.
+        await using var responseStream = await response.Content.ReadAsStreamAsync(ct);
+        using var doc = await JsonDocument.ParseAsync(responseStream, cancellationToken: ct);
+        stopwatch.Stop();
+
         var segments = FastTranscriptionParser.Parse(doc.RootElement);
 
         if (segments.Count == 0)
