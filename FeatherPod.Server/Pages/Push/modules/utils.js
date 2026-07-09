@@ -1,20 +1,30 @@
 import { ACTIVE_STATUSES, UPLOAD_PHASES } from './config.js';
 
-// Prototype extensions (side-effects on import)
-
-Number.prototype.sigDig = function(minSigDigs) {
-    if (this.valueOf() === 0) {
+/**
+ * Round a number to a minimum number of significant digits, returned as a string.
+ * @param {number} value
+ * @param {number} minSigDigs
+ * @returns {string}
+ */
+export function sigDig(value, minSigDigs) {
+    if (value === 0) {
         return '0';
     }
 
-    const magnitude = Math.floor(Math.log10(Math.abs(this)));
+    const magnitude = Math.floor(Math.log10(Math.abs(value)));
     const decimals = Math.max(0, minSigDigs - 1 - magnitude);
 
-    return this.toFixed(decimals);
-};
+    return value.toFixed(decimals);
+}
 
-Number.prototype.formatBytes = function formatBytes(sigDigs = 2, unitSuffix = '') {
-    const value = this.valueOf();
+/**
+ * Format a byte count as a human-readable string (e.g., "1.5 MB").
+ * @param {number} value
+ * @param {number} [sigDigs] minimum significant digits, default 2
+ * @param {string} [unitSuffix] appended after the unit (e.g., "/s")
+ * @returns {string}
+ */
+export function formatBytes(value, sigDigs = 2, unitSuffix = '') {
     const absValue = Math.abs(value);
     const sign = value < 0 ? '-' : '';
 
@@ -30,10 +40,10 @@ Number.prototype.formatBytes = function formatBytes(sigDigs = 2, unitSuffix = ''
         return value + ' B' + unitSuffix;
     }
 
-    const number = parseFloat((absValue / Math.pow(k, i)).toFixed(1)).sigDig(sigDigs);
+    const number = sigDig(parseFloat((absValue / Math.pow(k, i)).toFixed(1)), sigDigs);
 
     return sign + number + ' ' + units[i] + unitSuffix;
-};
+}
 
 /**
  * Whether a queue entry has active work (not yet finished).
@@ -120,7 +130,7 @@ export function formatDuration(duration) {
 }
 
 /**
- * Format a date as "28 nov 2025" (day, short month lowercase, year).
+ * Format a date as "28 nov 2025" (day, short Swedish month lowercase, year).
  * @param {string|null} dateString
  * @returns {string}
  */
@@ -190,7 +200,9 @@ export function tryParseJson(text) {
 }
 
 /**
- * Simple focus trap for modal dialogs.
+ * Simple focus trap for modal dialogs. Cycles Tab/Shift+Tab between the first
+ * and last focusable descendants: inputs, textareas, selects, visible buttons,
+ * links, positive-tabindex elements, and contenteditable regions.
  * @param {KeyboardEvent} e
  * @param {HTMLElement} container
  */
@@ -199,7 +211,7 @@ export function trapFocus(e, container) {
         return;
     }
 
-    const focusable = container.querySelectorAll('input, textarea, button:not([hidden])');
+    const focusable = container.querySelectorAll('input, textarea, select, button:not([hidden]), a[href], [tabindex]:not([tabindex="-1"]), [contenteditable]');
     if (focusable.length === 0) {
         return;
     }

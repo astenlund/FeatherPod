@@ -1,5 +1,5 @@
 import { FEED_ID, HISTORY_STORAGE_KEY, HISTORY_FILTER_KEY, MAX_LOCAL_HISTORY } from './config.js';
-import { formatDuration, formatDate, formatRelativeTime } from './utils.js';
+import { formatDuration, formatDate, formatRelativeTime, formatBytes } from './utils.js';
 import { getApiKey } from './auth.js';
 import { getCurrentState, getCollapsedHeight, getCachedContainerWidth, getCachedCollapsedMargin, COLLAPSED_WIDTH } from './state.js';
 import { showContextMenu } from './editing.js';
@@ -609,7 +609,7 @@ export function updateHistoryInfoCard(episode) {
 
     // Combine duration and size: "16m 40s (31 MB)"
     const duration = formatDuration(episode.duration);
-    const size = episode.fileSize ? episode.fileSize.formatBytes() : '';
+    const size = episode.fileSize ? formatBytes(episode.fileSize) : '';
     let durationText = duration;
     if (duration && size) {
         durationText = duration + ' (' + size + ')';

@@ -1,5 +1,5 @@
 import { PROGRESS_SMOOTHING, SHOW_GHOST, VELOCITY_OVERRIDES } from './config.js';
-import './utils.js'; // Number.prototype.formatBytes
+import { formatBytes } from './utils.js';
 
 /**
  * Multi-entry progress animator with velocity prediction.
@@ -145,9 +145,9 @@ export const progressAnimator = {
             }
             localStorage.setItem(this.LEARNED_INITIAL_VELOCITY_STORAGE_KEY, JSON.stringify(values));
 
-            const current = currentBytesPerSec.formatBytes(2, '/s');
-            const updated = updatedBytesPerSec.formatBytes(2, '/s');
-            const actual = actualBytesPerSec.formatBytes(2, '/s');
+            const current = formatBytes(currentBytesPerSec, 2, '/s');
+            const updated = formatBytes(updatedBytesPerSec, 2, '/s');
+            const actual = formatBytes(actualBytesPerSec, 2, '/s');
             console.log(`[${stage}] Initial velocity: ${current} -> ${updated} (actual: ${actual})`);
 
             return true;
@@ -206,9 +206,9 @@ export const progressAnimator = {
             }
             localStorage.setItem(this.LEARNED_INITIAL_VELOCITY_STORAGE_KEY, JSON.stringify(values));
 
-            const current = currentAverage.formatBytes(2, '/s');
-            const updated = updatedAverage.formatBytes(2, '/s');
-            const actual = averageBytesPerSec.formatBytes(2, '/s');
+            const current = formatBytes(currentAverage, 2, '/s');
+            const updated = formatBytes(updatedAverage, 2, '/s');
+            const actual = formatBytes(averageBytesPerSec, 2, '/s');
             console.log(`[${stage}] Average velocity: ${current} -> ${updated} (actual: ${actual})`);
         } catch {
             // Ignore localStorage errors
@@ -375,7 +375,7 @@ export const progressAnimator = {
                 const bytesPerSec = (instantVelocity / 100) * slot.currentFileSize;
                 const deltaBytesPerSec = ((slot.displayVelocity - instantVelocity) / 100) * slot.currentFileSize;
                 const deltaSign = deltaBytesPerSec >= 0 ? '+' : '';
-                console.log(`[${stage}] Instant velocity: ${bytesPerSec.formatBytes(2, '/s')} (${deltaSign}${deltaBytesPerSec.formatBytes(2, '/s')})`);
+                console.log(`[${stage}] Instant velocity: ${formatBytes(bytesPerSec, 2, '/s')} (${deltaSign}${formatBytes(deltaBytesPerSec, 2, '/s')})`);
             }
         }
 
