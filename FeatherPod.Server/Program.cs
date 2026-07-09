@@ -4,7 +4,6 @@ using System.Text;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
 
-using Azure.Identity;
 using Azure.Storage.Blobs;
 
 using FeatherPod.Server.Configuration;
@@ -60,19 +59,13 @@ class Program
             if (!string.IsNullOrEmpty(azureConfig.ConnectionString))
             {
                 logger.LogInformation("Using connection string for blob storage authentication");
-
-                return new BlobServiceClient(azureConfig.ConnectionString);
             }
-
-            if (!string.IsNullOrEmpty(azureConfig.AccountName))
+            else if (!string.IsNullOrEmpty(azureConfig.AccountName))
             {
                 logger.LogInformation("Using managed identity for blob storage authentication");
-                var blobUri = new Uri($"https://{azureConfig.AccountName}.blob.core.windows.net");
-
-                return new BlobServiceClient(blobUri, new DefaultAzureCredential());
             }
 
-            throw new InvalidOperationException("Azure storage configuration requires either ConnectionString or AccountName");
+            return StorageClientFactory.CreateBlobServiceClient(azureConfig.ConnectionString, azureConfig.AccountName);
         });
         builder.Services.AddSingleton(sp =>
         {

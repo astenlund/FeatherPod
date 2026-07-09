@@ -1,12 +1,12 @@
 using System.Text.Json;
 
 using Azure.Data.Tables;
-using Azure.Identity;
 using Azure.Storage.Queues;
 
 using FeatherPod.Server.Configuration;
 using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
+using FeatherPod.Shared.Services;
 
 namespace FeatherPod.Server.Services;
 
@@ -25,29 +25,19 @@ public class JobService : IJobService
 
         var azureConfig = config.GetSection("Azure").Get<AzureStorageConfig>()!;
 
-        // Create clients using same auth pattern as BlobStorageService
         // Disable Base64 encoding so Azure Functions receives plain JSON
         var queueOptions = new QueueClientOptions { MessageEncoding = QueueMessageEncoding.None };
 
+        _queueClient = StorageClientFactory.CreateQueueClient(azureConfig.ConnectionString, azureConfig.AccountName, JobStorageNames.QueueName, queueOptions);
+        _tableClient = StorageClientFactory.CreateTableClient(azureConfig.ConnectionString, azureConfig.AccountName, JobStorageNames.TableName);
+
         if (!string.IsNullOrEmpty(azureConfig.ConnectionString))
         {
-            _queueClient = new(azureConfig.ConnectionString, JobStorageNames.QueueName, queueOptions);
-            _tableClient = new(azureConfig.ConnectionString, JobStorageNames.TableName);
             _logger.LogInformation("Using connection string for queue/table storage authentication");
-        }
-        else if (!string.IsNullOrEmpty(azureConfig.AccountName))
-        {
-            var credential = new DefaultAzureCredential();
-            var queueUri = new Uri($"https://{azureConfig.AccountName}.queue.core.windows.net/{JobStorageNames.QueueName}");
-            var tableUri = new Uri($"https://{azureConfig.AccountName}.table.core.windows.net");
-
-            _queueClient = new(queueUri, credential, queueOptions);
-            _tableClient = new(tableUri, JobStorageNames.TableName, credential);
-            _logger.LogInformation("Using managed identity for queue/table storage authentication");
         }
         else
         {
-            throw new InvalidOperationException("Azure storage configuration requires either ConnectionString or AccountName");
+            _logger.LogInformation("Using managed identity for queue/table storage authentication");
         }
     }
 
