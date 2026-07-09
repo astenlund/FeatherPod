@@ -80,21 +80,7 @@ public sealed class InMemoryJobService : IJobService
         return Task.FromResult(entity);
     }
 
-    public Task CreateJobStatusAsync(
-        string jobId,
-        string feedId,
-        string? fileName = null,
-        string? title = null,
-        string? progressMode = null,
-        int? progressIntervalMs = null,
-        string? description = null,
-        string? summary = null,
-        DateTimeOffset? publishedDate = null,
-        string? source = null,
-        long? originalFileSize = null,
-        string? episodeId = null,
-        string? transcriptionStatus = null,
-        CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task CreateJobStatusAsync(CreateJobOptions options, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public Task<List<JobStatusEntity>> GetActiveJobsByFeedAsync(string feedId, CancellationToken cancellationToken = default) => Task.FromResult<List<JobStatusEntity>>([]);
 

@@ -188,16 +188,23 @@ public class EpisodesController : ControllerBase
                 // Create entity BEFORE queue send (entity must exist when Function processes the message)
                 var transcriptionStatus = _speechService.IsAvailable ? TranscriptionStatuses.Queued : null;
                 await _jobService.CreateJobStatusAsync(
-                    jobId, feedId, file.FileName, effectiveTitle,
-                    _progressMode, _progressIntervalMs,
-                    description: description,
-                    summary: summary,
-                    publishedDate: effectivePublishedDate,
-                    source: source.ToString(),
-                    originalFileSize: fileSize,
-                    episodeId: effectiveEpisodeId,
-                    transcriptionStatus: transcriptionStatus,
-                    cancellationToken: HttpContext.RequestAborted);
+                    new CreateJobOptions
+                    {
+                        JobId = jobId,
+                        FeedId = feedId,
+                        FileName = file.FileName,
+                        Title = effectiveTitle,
+                        ProgressMode = _progressMode,
+                        ProgressIntervalMs = _progressIntervalMs,
+                        Description = description,
+                        Summary = summary,
+                        PublishedDate = effectivePublishedDate,
+                        Source = source.ToString(),
+                        OriginalFileSize = fileSize,
+                        EpisodeId = effectiveEpisodeId,
+                        TranscriptionStatus = transcriptionStatus
+                    },
+                    HttpContext.RequestAborted);
 
                 await _jobService.QueueNormalizationJobAsync(job, HttpContext.RequestAborted);
 

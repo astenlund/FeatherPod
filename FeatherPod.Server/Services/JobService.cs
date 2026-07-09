@@ -82,32 +82,18 @@ public class JobService : IJobService
         }
     }
 
-    public async Task CreateJobStatusAsync(
-        string jobId,
-        string feedId,
-        string? fileName = null,
-        string? title = null,
-        string? progressMode = null,
-        int? progressIntervalMs = null,
-        string? description = null,
-        string? summary = null,
-        DateTimeOffset? publishedDate = null,
-        string? source = null,
-        long? originalFileSize = null,
-        string? episodeId = null,
-        string? transcriptionStatus = null,
-        CancellationToken cancellationToken = default)
+    public async Task CreateJobStatusAsync(CreateJobOptions options, CancellationToken cancellationToken = default)
     {
-        var entity = JobStatusEntity.CreateQueued(jobId, feedId, fileName, title, progressMode, progressIntervalMs, description, summary, publishedDate, source, originalFileSize, episodeId, transcriptionStatus);
+        var entity = JobStatusEntity.CreateQueued(options);
         try
         {
             await _tableClient.AddEntityAsync(entity, cancellationToken);
-            _logger.LogDebug("Created job status entry for {JobId}", jobId);
+            _logger.LogDebug("Created job status entry for {JobId}", options.JobId);
         }
         catch (Azure.RequestFailedException ex) when (ex.Status == 409)
         {
             // Job already exists (duplicate queue message) - preserve original QueuedAt
-            _logger.LogDebug("Job status entry already exists for {JobId}, skipping creation", jobId);
+            _logger.LogDebug("Job status entry already exists for {JobId}, skipping creation", options.JobId);
         }
     }
 

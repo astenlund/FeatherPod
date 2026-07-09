@@ -58,7 +58,9 @@ public class YouTubeController : ControllerBase
 
         var fileName = $"{videoId}{request.Format.GetExtension()}";
         var title = request.Title ?? videoId;
-        await _jobService.CreateJobStatusAsync(jobId, feedId, fileName, title, cancellationToken: HttpContext.RequestAborted);
+        await _jobService.CreateJobStatusAsync(
+            new CreateJobOptions { JobId = jobId, FeedId = feedId, FileName = fileName, Title = title },
+            HttpContext.RequestAborted);
 
         var job = new YouTubeDownloadJob
         {

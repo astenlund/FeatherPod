@@ -9,7 +9,7 @@ public class JobStatusEntityTests
     public void CreateQueued_WithModeAndInterval_ShouldStoreValues()
     {
         // Arrange & Act
-        var entity = JobStatusEntity.CreateQueued("job-123", "feed-1", "test.mp3", progressMode: "push", progressIntervalMs: 250);
+        var entity = JobStatusEntity.CreateQueued(new CreateJobOptions { JobId = "job-123", FeedId = "feed-1", FileName = "test.mp3", ProgressMode = "push", ProgressIntervalMs = 250 });
 
         // Assert
         Assert.Equal("push", entity.ProgressMode);
@@ -24,7 +24,7 @@ public class JobStatusEntityTests
     public void CreateQueued_WithoutModeAndInterval_ShouldDefaultToNull()
     {
         // Arrange & Act
-        var entity = JobStatusEntity.CreateQueued("job-456", "feed-2", "audio.mp3");
+        var entity = JobStatusEntity.CreateQueued(new CreateJobOptions { JobId = "job-456", FeedId = "feed-2", FileName = "audio.mp3" });
 
         // Assert
         Assert.Null(entity.ProgressMode);
@@ -36,7 +36,7 @@ public class JobStatusEntityTests
     public void CreateQueued_WithSignalrMode_ShouldStoreSignalr()
     {
         // Arrange & Act
-        var entity = JobStatusEntity.CreateQueued("job-789", "feed-3", progressMode: "signalr", progressIntervalMs: 100);
+        var entity = JobStatusEntity.CreateQueued(new CreateJobOptions { JobId = "job-789", FeedId = "feed-3", ProgressMode = "signalr", ProgressIntervalMs = 100 });
 
         // Assert
         Assert.Equal("signalr", entity.ProgressMode);
@@ -47,7 +47,7 @@ public class JobStatusEntityTests
     public void CreateQueued_WithTitle_ShouldStoreTitle()
     {
         // Arrange & Act
-        var entity = JobStatusEntity.CreateQueued("job-101", "feed-4", "episode.mp3", title: "My Great Episode");
+        var entity = JobStatusEntity.CreateQueued(new CreateJobOptions { JobId = "job-101", FeedId = "feed-4", FileName = "episode.mp3", Title = "My Great Episode" });
 
         // Assert
         Assert.Equal("My Great Episode", entity.Title);

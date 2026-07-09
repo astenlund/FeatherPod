@@ -186,42 +186,29 @@ public class JobStatusEntity : ITableEntity
     /// <summary>
     /// Create a new JobStatusEntity for a queued job.
     /// </summary>
-    public static JobStatusEntity CreateQueued(
-        string jobId,
-        string feedId,
-        string? fileName = null,
-        string? title = null,
-        string? progressMode = null,
-        int? progressIntervalMs = null,
-        string? description = null,
-        string? summary = null,
-        DateTimeOffset? publishedDate = null,
-        string? source = null,
-        long? originalFileSize = null,
-        string? episodeId = null,
-        string? transcriptionStatus = null)
+    public static JobStatusEntity CreateQueued(CreateJobOptions options)
     {
         return new JobStatusEntity
         {
             PartitionKey = JobStorageNames.JobsPartitionKey,
-            RowKey = jobId,
+            RowKey = options.JobId,
             Status = nameof(JobStatus.Queued),
             NormalizationStage = nameof(Models.NormalizationStage.Queued),
-            FeedId = feedId,
-            FileName = fileName,
-            Title = title,
-            EpisodeId = episodeId,
-            ProgressMode = progressMode,
-            ProgressIntervalMs = progressIntervalMs,
+            FeedId = options.FeedId,
+            FileName = options.FileName,
+            Title = options.Title,
+            EpisodeId = options.EpisodeId,
+            ProgressMode = options.ProgressMode,
+            ProgressIntervalMs = options.ProgressIntervalMs,
             QueuedAt = DateTimeOffset.UtcNow,
             NormalizationProgress = 0,
             ProgressMessage = "Waiting in queue",
-            Description = description,
-            Summary = summary,
-            PublishedDate = publishedDate,
-            Source = source,
-            OriginalFileSize = originalFileSize,
-            TranscriptionStatus = transcriptionStatus
+            Description = options.Description,
+            Summary = options.Summary,
+            PublishedDate = options.PublishedDate,
+            Source = options.Source,
+            OriginalFileSize = options.OriginalFileSize,
+            TranscriptionStatus = options.TranscriptionStatus
         };
     }
 }

@@ -25,21 +25,7 @@ public interface IJobService
     /// <summary>
     /// Create initial job status entry (Queued state).
     /// </summary>
-    Task CreateJobStatusAsync(
-        string jobId,
-        string feedId,
-        string? fileName = null,
-        string? title = null,
-        string? progressMode = null,
-        int? progressIntervalMs = null,
-        string? description = null,
-        string? summary = null,
-        DateTimeOffset? publishedDate = null,
-        string? source = null,
-        long? originalFileSize = null,
-        string? episodeId = null,
-        string? transcriptionStatus = null,
-        CancellationToken cancellationToken = default);
+    Task CreateJobStatusAsync(CreateJobOptions options, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Get all active (non-terminal) jobs for a feed.
