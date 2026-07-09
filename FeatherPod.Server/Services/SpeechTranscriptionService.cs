@@ -270,8 +270,14 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
         foreach (var phrase in phrases.EnumerateArray())
         {
             var speaker = phrase.TryGetProperty("speaker", out var sp) ? sp.ToString() : "0";
-            var offsetTicks = (long)phrase.GetProperty("offsetInTicks").GetDouble();
-            var durationTicks = (long)phrase.GetProperty("durationInTicks").GetDouble();
+
+            if (!phrase.TryGetProperty("offsetInTicks", out var offsetEl) || !phrase.TryGetProperty("durationInTicks", out var durationEl))
+            {
+                continue;
+            }
+
+            var offsetTicks = (long)offsetEl.GetDouble();
+            var durationTicks = (long)durationEl.GetDouble();
             var display = phrase.GetProperty("nBest")[0].GetProperty("display").GetString() ?? string.Empty;
 
             if (!string.IsNullOrWhiteSpace(display))
