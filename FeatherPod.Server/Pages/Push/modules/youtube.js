@@ -86,8 +86,7 @@ export function handlePaste(e) {
     }
 
     e.preventDefault();
-    const metaPromise = fetchVideoMeta(url);
-    showImportDialog(url, metaPromise);
+    beginImport(url);
 
     return true;
 }
@@ -105,8 +104,7 @@ export function handleDrop(e) {
     }
 
     e.preventDefault();
-    const metaPromise = fetchVideoMeta(url);
-    showImportDialog(url, metaPromise);
+    beginImport(url);
 
     return true;
 }
@@ -128,9 +126,8 @@ export function checkSharedUrl() {
 
     const url = extractYouTubeUrl(sharedUrl);
     if (url) {
-        // Start fetch immediately, show dialog after page init
-        const metaPromise = fetchVideoMeta(url);
-        setTimeout(() => showImportDialog(url, metaPromise), 500);
+        // Defer past page init before showing the dialog
+        beginImport(url, 500);
     }
 }
 
@@ -166,22 +163,31 @@ function saveChannelFormatPref(channel, format) {
 // Import dialog
 // ============================================================================
 
-/** @type {string|null} URL currently shown in the dialog */
-let pendingUrl = null;
-/** @type {string|null} Channel name from oEmbed (for format pref) */
-let pendingChannel = null;
-/** @type {string|null} Video title from oEmbed (sent to server for instant queue display) */
-let pendingTitle = null;
+/**
+ * @type {{url: string, channel: string|null, title: string|null}|null}
+ * Import currently shown in the dialog. `channel` and `title` arrive later via oEmbed.
+ */
+let pendingImport = null;
 
 /**
- * Show the YouTube import confirmation dialog.
+ * Kick off a YouTube import: optionally defer, then show the confirmation dialog.
  * @param {string} url
- * @param {Promise<{title?: string, author_name?: string}|null>} [metaPromise] - Pre-started oEmbed fetch
+ * @param {number} [deferMs=0] - Delay before showing the dialog (used to wait past page init)
  */
-function showImportDialog(url, metaPromise) {
-    pendingUrl = url;
-    pendingChannel = null;
-    pendingTitle = null;
+function beginImport(url, deferMs = 0) {
+    if (deferMs > 0) {
+        setTimeout(() => showImportDialog(url), deferMs);
+    } else {
+        showImportDialog(url);
+    }
+}
+
+/**
+ * Show the YouTube import confirmation dialog. Starts the oEmbed metadata fetch internally.
+ * @param {string} url
+ */
+function showImportDialog(url) {
+    pendingImport = { url, channel: null, title: null };
 
     const overlay = document.getElementById('youtube-modal-overlay');
     if (!overlay) {
@@ -218,32 +224,30 @@ function showImportDialog(url, metaPromise) {
     // Start with both radios unselected until we know the channel
     overlay.querySelectorAll('input[name="yt-format"]').forEach(r => { r.checked = false; });
 
-    // Apply pre-fetched oEmbed metadata when it arrives
-    if (metaPromise) {
-        metaPromise.then(data => {
-            if (!data || pendingUrl !== url) {
-                return;
-            }
-            if (titleEl && data.title) {
-                titleEl.textContent = data.title;
-                pendingTitle = data.title;
-            }
-            if (metaEl && data.author_name) {
-                metaEl.textContent = data.author_name;
-                pendingChannel = data.author_name;
-            }
+    // Fetch oEmbed metadata and apply it when it arrives
+    fetchVideoMeta(url).then(data => {
+        if (!data || pendingImport?.url !== url) {
+            return;
+        }
+        if (titleEl && data.title) {
+            titleEl.textContent = data.title;
+            pendingImport.title = data.title;
+        }
+        if (metaEl && data.author_name) {
+            metaEl.textContent = data.author_name;
+            pendingImport.channel = data.author_name;
+        }
 
-            // Select remembered format for this channel (if any)
-            const pref = data?.author_name ? getChannelFormatPref(data.author_name) : null;
-            if (pref) {
-                const radio = overlay.querySelector(`input[name="yt-format"][value="${pref}"]`);
-                if (radio) {
-                    radio.checked = true;
-                }
+        // Select remembered format for this channel (if any)
+        const pref = data.author_name ? getChannelFormatPref(data.author_name) : null;
+        if (pref) {
+            const radio = overlay.querySelector(`input[name="yt-format"][value="${pref}"]`);
+            if (radio) {
+                radio.checked = true;
             }
-            updateImportButtonState(overlay);
-        });
-    }
+        }
+        updateImportButtonState(overlay);
+    });
 
     overlay.hidden = false;
 }
@@ -262,12 +266,16 @@ function updateImportButtonState(overlay) {
  * @param {string} url
  * @returns {Promise<{title?: string, author_name?: string}|null>}
  */
-function fetchVideoMeta(url) {
+async function fetchVideoMeta(url) {
     const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
 
-    return fetch(oembedUrl)
-        .then(r => r.ok ? r.json() : null)
-        .catch(() => null);
+    try {
+        const response = await fetch(oembedUrl);
+
+        return response.ok ? await response.json() : null;
+    } catch {
+        return null;
+    }
 }
 
 /**
@@ -278,7 +286,7 @@ export function hideImportDialog() {
     if (overlay) {
         overlay.hidden = true;
     }
-    pendingUrl = null;
+    pendingImport = null;
 }
 
 /**
@@ -296,7 +304,7 @@ function getSelectedFormat() {
  * Submit the YouTube import request to the server.
  */
 async function submitImport() {
-    if (!pendingUrl) {
+    if (!pendingImport) {
         return;
     }
 
@@ -325,7 +333,7 @@ async function submitImport() {
                 'Content-Type': 'application/json',
                 'X-API-Key': apiKey
             },
-            body: JSON.stringify({ url: pendingUrl, format, title: pendingTitle })
+            body: JSON.stringify({ url: pendingImport.url, format, title: pendingImport.title })
         });
 
         if (!response.ok) {
@@ -335,7 +343,7 @@ async function submitImport() {
 
         const jobResponse = await response.json();
 
-        saveChannelFormatPref(pendingChannel, format);
+        saveChannelFormatPref(pendingImport.channel, format);
         hideImportDialog();
 
         if (onYouTubeJobCreated) {
@@ -360,19 +368,11 @@ async function submitImport() {
 // Cookie upload dialog (shown on YouTube bot detection)
 // ============================================================================
 
-/** @type {boolean} Whether the cookie dialog is currently showing */
-let cookieDialogActive = false;
-
 /**
  * Show the cookie upload dialog inside the YouTube modal.
  * Admin users see a file picker; non-admin users see a "temporarily unavailable" message.
  */
 function showCookieDialog() {
-    if (cookieDialogActive) {
-        return;
-    }
-    cookieDialogActive = true;
-
     const overlay = document.getElementById('youtube-modal-overlay');
     if (!overlay) {
         return;
@@ -464,7 +464,6 @@ async function uploadCookieFile(file) {
  * Hide the cookie dialog and restore normal import UI.
  */
 function hideCookieDialog() {
-    cookieDialogActive = false;
     const overlay = document.getElementById('youtube-modal-overlay');
     if (!overlay) {
         return;
@@ -632,8 +631,7 @@ function showClipboardFallbackModal() {
         if (url) {
             event?.preventDefault();
             cleanup();
-            const metaPromise = fetchVideoMeta(url);
-            showImportDialog(url, metaPromise);
+            beginImport(url);
         }
     };
 
@@ -683,8 +681,7 @@ async function readClipboardAndImport() {
         const text = await navigator.clipboard.readText();
         const url = extractYouTubeUrl(text?.trim());
         if (url) {
-            const metaPromise = fetchVideoMeta(url);
-            showImportDialog(url, metaPromise);
+            beginImport(url);
         } else {
             showToast('No YouTube link on clipboard', 3000, 'clipboard-toast');
         }
