@@ -3,7 +3,7 @@ using FeatherPod.Server.Services;
 namespace FeatherPod.Tests;
 
 /// <summary>
-/// Unit tests for FeedEventChannel — in-memory pub/sub for feed-level events (cross-tab sync).
+/// Unit tests for FeedEventChannel -- in-memory pub/sub for feed-level events (cross-tab sync).
 /// </summary>
 [Collection("Sequential")]
 public class FeedEventChannelTests
@@ -115,17 +115,17 @@ public class FeedEventChannelTests
     [Fact]
     public void BoundedChannel_ShouldDropOldestWhenFull()
     {
-        // Arrange — channel capacity is 10
+        // Arrange -- channel capacity is 10
         var channel = new FeedEventChannel();
         var reader = channel.Subscribe("feed1");
 
-        // Act — publish 15 events (exceeds capacity of 10)
+        // Act -- publish 15 events (exceeds capacity of 10)
         for (var i = 0; i < 15; i++)
         {
             channel.Publish("feed1", $"event-{i}");
         }
 
-        // Assert — should have dropped oldest, keeping last 10
+        // Assert -- should have dropped oldest, keeping last 10
         var received = new List<string>();
         while (reader.TryRead(out var item))
         {
@@ -143,7 +143,7 @@ public class FeedEventChannelTests
         var channel = new FeedEventChannel();
         var reader = channel.Subscribe("feed1");
 
-        // Act — publish from multiple threads concurrently
+        // Act -- publish from multiple threads concurrently
         var tasks = Enumerable.Range(0, 100).Select(i =>
             Task.Run(() => channel.Publish("feed1", $"event-{i}"))
         ).ToArray();
@@ -162,7 +162,7 @@ public class FeedEventChannelTests
         // Arrange
         var channel = new FeedEventChannel();
 
-        // Act — subscribe and unsubscribe from multiple threads
+        // Act -- subscribe and unsubscribe from multiple threads
         var tasks = Enumerable.Range(0, 50).Select(_ =>
             Task.Run(() =>
             {

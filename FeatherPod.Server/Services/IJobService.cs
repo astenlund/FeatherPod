@@ -60,7 +60,7 @@ public interface IJobService
     /// <summary>
     /// Merge specific fields using a caller-provided ETag (no re-read).
     /// Used by CAS guards that need the ETag from a prior read.
-    /// Throws RequestFailedException(412) on conflict — caller must handle.
+    /// Throws RequestFailedException(412) on conflict -- caller must handle.
     /// </summary>
     Task MergeWithETagAsync(string jobId, Action<JobStatusEntity> configure, Azure.ETag etag, CancellationToken cancellationToken = default);
 }

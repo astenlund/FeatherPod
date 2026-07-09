@@ -90,7 +90,7 @@ public class JobsController : ControllerBase
     /// <summary>
     /// Stream feed-level events (e.g., new job created) via Server-Sent Events.
     /// Used by push page clients for cross-tab/cross-device queue sync.
-    /// No auth required — events contain no sensitive data, just notification triggers.
+    /// No auth required -- events contain no sensitive data, just notification triggers.
     /// </summary>
     [HttpGet("/api/feeds/{feedId}/events")]
     public async Task StreamFeedEvents(string feedId, CancellationToken cancellationToken)
@@ -133,7 +133,7 @@ public class JobsController : ControllerBase
         }
         catch (OperationCanceledException)
         {
-            // Client disconnected — normal
+            // Client disconnected -- normal
         }
         finally
         {
@@ -315,7 +315,7 @@ public class JobsController : ControllerBase
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
-                    // Timeout — fall back to Table Storage poll
+                    // Timeout -- fall back to Table Storage poll
                     var entity = await _jobService.GetJobStatusAsync(jobId, cancellationToken);
                     if (entity != null)
                     {

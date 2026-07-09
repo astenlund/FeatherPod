@@ -130,7 +130,7 @@ public class JobService : IJobService
                 var response = await _tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId, cancellationToken: cancellationToken);
                 var entity = response.Value;
 
-                // Already completed or cancelled — not cancellable
+                // Already completed or cancelled -- not cancellable
                 // Failed jobs CAN be cancelled (dismiss from push page UI)
                 if (entity.GetJobStatus() is JobStatus.Completed or JobStatus.Cancelled)
                 {
@@ -173,7 +173,7 @@ public class JobService : IJobService
             }
             catch (Azure.RequestFailedException ex) when (ex.Status == 412 && attempt <= maxRetries)
             {
-                // ETag conflict — job was modified concurrently, retry
+                // ETag conflict -- job was modified concurrently, retry
                 _logger.LogDebug("ETag conflict cancelling job {JobId}, attempt {Attempt}", jobId, attempt);
             }
         }
@@ -237,7 +237,7 @@ public class JobService : IJobService
                 // Don't write to terminal jobs
                 if (entity.GetJobStatus().IsTerminal())
                 {
-                    _logger.LogDebug("Skipping merge for job {JobId} — already in terminal state {Status}", jobId, entity.Status);
+                    _logger.LogDebug("Skipping merge for job {JobId} -- already in terminal state {Status}", jobId, entity.Status);
 
                     return null;
                 }

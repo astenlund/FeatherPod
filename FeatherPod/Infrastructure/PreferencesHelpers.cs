@@ -28,7 +28,7 @@ internal static class PreferencesHelpers
 
     /// <summary>
     /// Gets whether admin features are enabled in the CLI.
-    /// Returns null if not set (defaults to false — FeedOwner experience).
+    /// Returns null if not set (defaults to false -- FeedOwner experience).
     /// </summary>
     internal static bool? GetEnableAdminFeatures()
     {

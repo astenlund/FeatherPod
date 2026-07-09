@@ -120,7 +120,7 @@ public class NormalizationFunction
             }
             else
             {
-                // No AppServiceUrl configured — can't use signalr or push
+                // No AppServiceUrl configured -- can't use signalr or push
                 effectiveProgressMode = null;
             }
         }
@@ -149,7 +149,7 @@ public class NormalizationFunction
                 return;
             }
 
-            // Not a user cancellation — re-throw so the Functions runtime can handle it
+            // Not a user cancellation -- re-throw so the Functions runtime can handle it
             throw;
         }
         finally
@@ -493,12 +493,12 @@ public class NormalizationFunction
             var currentStatus = entity.GetJobStatus();
             if (currentStatus.IsTerminal())
             {
-                _logger.LogDebug("Skipping progress update for job {JobId} — already in terminal state {Status}", jobId, currentStatus);
+                _logger.LogDebug("Skipping progress update for job {JobId} -- already in terminal state {Status}", jobId, currentStatus);
 
                 return;
             }
 
-            // Partial entity Merge — only write normalization progress fields
+            // Partial entity Merge -- only write normalization progress fields
             var partial = new JobStatusEntity
             {
                 PartitionKey = JobStorageNames.JobsPartitionKey,

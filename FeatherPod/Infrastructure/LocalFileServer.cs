@@ -204,7 +204,7 @@ internal sealed class LocalFileServer : IDisposable
                 case "GET" when path == "/api/events":
                     HandleSseConnection(response);
 
-                    return; // Don't close response — SSE keeps it open
+                    return; // Don't close response -- SSE keeps it open
                 case "POST" when path == "/api/heartbeat":
                     ResetIdleTimer();
                     response.StatusCode = 200;

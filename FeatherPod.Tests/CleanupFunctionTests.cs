@@ -189,7 +189,7 @@ public class CleanupFunctionTests : IAsyncLifetime
         };
         await _tableClientInstance.AddEntityAsync(job);
 
-        // Use 0-day retention so blob age doesn't short-circuit — tests the job status check
+        // Use 0-day retention so blob age doesn't short-circuit -- tests the job status check
         var settings = Options.Create(new FunctionSettings
         {
             ContainerName = _containerName,

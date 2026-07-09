@@ -37,7 +37,7 @@ catch (Exception ex)
     return 1;
 }
 
-// Fire and forget — the CLI process runs independently (local server stays alive until idle timeout).
+// Fire and forget -- the CLI process runs independently (local server stays alive until idle timeout).
 // The bridge exits immediately so Explorer doesn't show a "waiting" state.
 return 0;
 

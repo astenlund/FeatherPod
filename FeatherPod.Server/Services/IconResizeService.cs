@@ -28,7 +28,7 @@ public class IconResizeService(IBlobStorageService blobStorageService, IMemoryCa
 
         try
         {
-            // Buffer the blob stream into memory — blob storage streams are non-seekable
+            // Buffer the blob stream into memory -- blob storage streams are non-seekable
             await using var blobStream = await blobStorageService.DownloadIconAsync(feedId);
             using var memoryStream = new MemoryStream();
             await blobStream.CopyToAsync(memoryStream);

@@ -322,7 +322,7 @@ public class TranscriptionBackgroundService : BackgroundService
 
     /// <summary>
     /// Convert <paramref name="tempInputFile"/> to 16 kHz mono WAV via FFmpeg. Returns the
-    /// temp WAV path. Pure local I/O — no blob upload (callers do that separately for batch).
+    /// temp WAV path. Pure local I/O -- no blob upload (callers do that separately for batch).
     /// </summary>
     private async Task<string> ConvertToWavAsync(string tempInputFile, string jobId, CancellationToken ct)
     {

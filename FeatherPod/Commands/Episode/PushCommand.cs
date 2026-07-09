@@ -262,7 +262,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
     [SupportedOSPlatform("windows")]
     private static async Task<int> ExecuteHeadlessAsync(PushSettings settings)
     {
-        // Headless mode: no console output — all errors shown via MessageBox.
+        // Headless mode: no console output -- all errors shown via MessageBox.
         // Launched by featherpod-bridge.exe with CREATE_NO_WINDOW.
 
         var filePath = settings.Files;
@@ -356,7 +356,7 @@ internal sealed class PushCommand : AsyncCommand<PushSettings>
         }
         catch
         {
-            // Existing server may have shut down between validation and POST — silently ignore.
+            // Existing server may have shut down between validation and POST -- silently ignore.
         }
     }
 }

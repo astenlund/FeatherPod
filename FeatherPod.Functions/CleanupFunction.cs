@@ -126,7 +126,7 @@ public class CleanupFunction
         {
             foreach (var prefix in page.Values.Where(v => v.IsPrefix))
             {
-                // Prefix looks like "feedId/" — strip trailing slash
+                // Prefix looks like "feedId/" -- strip trailing slash
                 feedIds.Add(prefix.Prefix.TrimEnd('/'));
             }
         }
@@ -160,7 +160,7 @@ public class CleanupFunction
                     var jobResponse = await tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId, cancellationToken: cancellationToken);
                     var job = jobResponse.Value;
 
-                    // Active transcription — don't delete pending blob
+                    // Active transcription -- don't delete pending blob
                     if (job.TranscriptionStatus == TranscriptionStatuses.Running)
                     {
                         if (job.TranscriptionStartedAt.HasValue &&
@@ -169,7 +169,7 @@ public class CleanupFunction
                             continue;
                         }
 
-                        // Stale transcription (>24h) — mark failed, then trigger join
+                        // Stale transcription (>24h) -- mark failed, then trigger join
                         job.TranscriptionStatus = TranscriptionStatuses.Failed;
                         job.TranscriptionError = "Transcription timed out";
                         await tableClient.UpdateEntityAsync(job, job.ETag, TableUpdateMode.Merge, cancellationToken);

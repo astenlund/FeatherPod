@@ -395,7 +395,7 @@ public partial class JobProgressIntegrationTests : IDisposable
         var cancelResponse = await _client.SendAsync(cancelRequest);
         Assert.Equal(HttpStatusCode.OK, cancelResponse.StatusCode);
 
-        // Act — fetch active jobs (the endpoint the push page calls on refresh)
+        // Act -- fetch active jobs (the endpoint the push page calls on refresh)
         var request = new HttpRequestMessage(HttpMethod.Get, $"/api/feeds/{TestFeedId}/jobs");
         request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
         var response = await _client.SendAsync(request);
@@ -433,13 +433,13 @@ public partial class JobProgressIntegrationTests : IDisposable
             initialEvents.Add(line);
         }
 
-        // Act — cancel the job while SSE is streaming
+        // Act -- cancel the job while SSE is streaming
         var cancelRequest = new HttpRequestMessage(HttpMethod.Post, $"/api/jobs/{jobId}/cancel");
         cancelRequest.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
         var cancelResponse = await _client.SendAsync(cancelRequest);
         Assert.Equal(HttpStatusCode.OK, cancelResponse.StatusCode);
 
-        // Assert — SSE should deliver a progress event with Cancelled status, then done
+        // Assert -- SSE should deliver a progress event with Cancelled status, then done
         var events = new List<(string eventType, string data)>();
         string? currentEvent = null;
         try

@@ -4,7 +4,7 @@ using FeatherPod.Shared.Models;
 namespace FeatherPod.Tests;
 
 /// <summary>
-/// Unit tests for JobProgressChannel — in-memory pub/sub for job progress updates.
+/// Unit tests for JobProgressChannel -- in-memory pub/sub for job progress updates.
 /// </summary>
 [Collection("Sequential")]
 public class JobProgressChannelTests
@@ -133,17 +133,17 @@ public class JobProgressChannelTests
     [Fact]
     public void BoundedChannel_ShouldDropOldestWhenFull()
     {
-        // Arrange — channel capacity is 10
+        // Arrange -- channel capacity is 10
         var channel = new JobProgressChannel();
         var reader = channel.Subscribe("job1");
 
-        // Act — publish 15 updates (exceeds capacity of 10)
+        // Act -- publish 15 updates (exceeds capacity of 10)
         for (var i = 0; i < 15; i++)
         {
             channel.Publish("job1", CreateResponse("job1", percent: i));
         }
 
-        // Assert — should have dropped oldest, keeping last 10
+        // Assert -- should have dropped oldest, keeping last 10
         var received = new List<JobStatusResponse>();
         while (reader.TryRead(out var item))
         {
@@ -162,7 +162,7 @@ public class JobProgressChannelTests
         var channel = new JobProgressChannel();
         var reader = channel.Subscribe("job1");
 
-        // Act — publish from multiple threads concurrently
+        // Act -- publish from multiple threads concurrently
         var tasks = Enumerable.Range(0, 100).Select(i =>
             Task.Run(() => channel.Publish("job1", CreateResponse("job1", percent: i)))
         ).ToArray();
@@ -181,7 +181,7 @@ public class JobProgressChannelTests
         // Arrange
         var channel = new JobProgressChannel();
 
-        // Act — subscribe and unsubscribe from multiple threads
+        // Act -- subscribe and unsubscribe from multiple threads
         var tasks = Enumerable.Range(0, 50).Select(_ =>
             Task.Run(() =>
             {

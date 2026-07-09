@@ -102,7 +102,7 @@ public partial class ProgressPushIntegrationTests : IDisposable
         var json = JsonSerializer.Serialize(progress, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
         var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        // Act — no X-Internal-Key header
+        // Act -- no X-Internal-Key header
         var response = await _client.PostAsync("/api/internal/jobs/test-job-789/progress", content);
 
         // Assert
@@ -144,7 +144,7 @@ public partial class ProgressPushIntegrationTests : IDisposable
         // Act
         await hubConnection.SendAsync("SendProgress", "signalr-test-job", progress);
 
-        // Assert — verify the progress was published to the channel
+        // Assert -- verify the progress was published to the channel
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var received = await reader.ReadAsync(cts.Token);
         Assert.Equal("signalr-test-job", received.JobId);
@@ -172,7 +172,7 @@ public partial class ProgressPushIntegrationTests : IDisposable
                 })
             .Build();
 
-        // Act — attempt connection and message send with invalid key
+        // Act -- attempt connection and message send with invalid key
         try
         {
             await hubConnection.StartAsync();
@@ -187,10 +187,10 @@ public partial class ProgressPushIntegrationTests : IDisposable
         }
         catch
         {
-            // Connection rejected — expected
+            // Connection rejected -- expected
         }
 
-        // Assert — no message should have been delivered to the channel
+        // Assert -- no message should have been delivered to the channel
         Assert.False(reader.TryRead(out _), "No message should be delivered with invalid key");
 
         progressChannel.Unsubscribe("rejected-job", reader);
@@ -207,10 +207,10 @@ public partial class ProgressPushIntegrationTests : IDisposable
         // Arrange
         await CreateTestFeedAsync();
 
-        // Act — mode comes from PushPage:ProgressMode config (set to "push" in test factory)
+        // Act -- mode comes from PushPage:ProgressMode config (set to "push" in test factory)
         var jobId = await UploadWithNormalizeAsync();
 
-        // Assert — job should be created with Queued status
+        // Assert -- job should be created with Queued status
         var statusResponse = await _client.GetAsync($"/api/jobs/{jobId}");
         Assert.Equal(HttpStatusCode.OK, statusResponse.StatusCode);
 
