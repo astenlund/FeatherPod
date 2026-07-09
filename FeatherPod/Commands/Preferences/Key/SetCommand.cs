@@ -12,6 +12,9 @@ internal sealed class SetCommand : Command<KeySetSettings>
     public override int Execute(CommandContext context, KeySetSettings settings, CancellationToken cancellationToken)
     {
         Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Preferences - Set API Key[/]");
+        Out.BlankLine();
+
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null)
         {

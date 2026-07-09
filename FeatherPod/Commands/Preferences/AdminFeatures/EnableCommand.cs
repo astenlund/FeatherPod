@@ -10,6 +10,10 @@ internal sealed class EnableCommand : Command<AdminFeaturesSettings>
 {
     public override int Execute(CommandContext context, AdminFeaturesSettings settings, CancellationToken cancellationToken)
     {
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Preferences - Enable Admin Features[/]");
+        Out.BlankLine();
+
         PreferencesHelpers.SetEnableAdminFeatures(true);
 
         Out.BlankLine();

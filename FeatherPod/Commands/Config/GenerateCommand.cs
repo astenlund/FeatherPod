@@ -20,7 +20,7 @@ internal sealed class GenerateCommand : Command<ConfigGenerateSettings>
     public override int Execute(CommandContext context, ConfigGenerateSettings settings, CancellationToken cancellationToken)
     {
         Out.BlankLine();
-        Out.MarkupLine("[bold]Generate Configuration Files[/]");
+        Out.MarkupLine("[bold]FeatherPod Generate Configuration Files[/]");
         Out.BlankLine();
 
         var outputPath = settings.OutputPath ?? Directory.GetCurrentDirectory();

@@ -11,6 +11,10 @@ internal sealed class EnableCommand : Command<AutoConnectSettings>
 {
     public override int Execute(CommandContext context, AutoConnectSettings settings, CancellationToken cancellationToken)
     {
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Preferences - Enable Auto-Connect[/]");
+        Out.BlankLine();
+
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null)
         {

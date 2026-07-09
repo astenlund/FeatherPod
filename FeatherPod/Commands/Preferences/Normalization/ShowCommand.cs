@@ -11,6 +11,10 @@ internal sealed class ShowCommand : Command<NormalizationSettings>
 {
     public override int Execute(CommandContext context, NormalizationSettings settings, CancellationToken cancellationToken)
     {
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Preferences - Normalization[/]");
+        Out.BlankLine();
+
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null)
         {

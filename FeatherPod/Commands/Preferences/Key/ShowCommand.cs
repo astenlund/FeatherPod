@@ -11,6 +11,10 @@ internal sealed class ShowCommand : Command<KeyShowSettings>
 {
     public override int Execute(CommandContext context, KeyShowSettings settings, CancellationToken cancellationToken)
     {
+        Out.BlankLine();
+        Out.MarkupLine("[bold]FeatherPod Preferences - Show API Key[/]");
+        Out.BlankLine();
+
         var env = EnvironmentHelpers.GetEnvironment(settings.Environment);
         if (env == null)
         {
