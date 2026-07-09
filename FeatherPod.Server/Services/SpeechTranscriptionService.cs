@@ -160,12 +160,12 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
         };
 
         var json = JsonSerializer.Serialize(requestBody, CamelCaseOptions);
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{_endpoint}{BatchApiPath}")
-        {
-            Content = new StringContent(json, Encoding.UTF8, "application/json"),
-        };
-
-        using var doc = await SendAndReadJsonAsync(request, ct);
+        using var doc = await SendAndReadJsonAsync(
+            () => new HttpRequestMessage(HttpMethod.Post, $"{_endpoint}{BatchApiPath}")
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json"),
+            },
+            ct);
         var selfLink = doc.RootElement.GetProperty("self").GetString()
             ?? throw new InvalidOperationException("Batch transcription response missing 'self' link");
 
@@ -185,8 +185,7 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
         {
             ct.ThrowIfCancellationRequested();
 
-            using var request = new HttpRequestMessage(HttpMethod.Get, transcriptionUrl);
-            using var doc = await SendAndReadJsonAsync(request, ct);
+            using var doc = await SendAndReadJsonAsync(() => new HttpRequestMessage(HttpMethod.Get, transcriptionUrl), ct);
             var root = doc.RootElement;
 
             var status = root.GetProperty("status").GetString() ?? "Unknown";
@@ -233,8 +232,7 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
     public async Task<string?> GetResultAsVttAsync(string filesListUrl, CancellationToken ct)
     {
         // Step 1: List files and find the Transcription result
-        using var listRequest = new HttpRequestMessage(HttpMethod.Get, filesListUrl);
-        using var listDoc = await SendAndReadJsonAsync(listRequest, ct);
+        using var listDoc = await SendAndReadJsonAsync(() => new HttpRequestMessage(HttpMethod.Get, filesListUrl), ct);
 
         string? contentUrl = null;
         foreach (var value in listDoc.RootElement.GetProperty("values").EnumerateArray())
@@ -282,11 +280,8 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
     /// </summary>
     public async Task DeleteAsync(string transcriptionUrl, CancellationToken ct)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Delete, transcriptionUrl);
-        await SetAuthHeaderAsync(request, ct);
-
         var client = _httpClientFactory.CreateClient(BatchHttpClientName);
-        using var response = await client.SendAsync(request, ct);
+        using var response = await SendWithAuthRetryAsync(client, () => new HttpRequestMessage(HttpMethod.Delete, transcriptionUrl), ct);
 
         if (response.IsSuccessStatusCode)
         {
@@ -299,24 +294,63 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
     }
 
     /// <summary>
-    /// Sets the bearer token, sends the request, and parses the response body as a <see cref="JsonDocument"/>.
+    /// Builds a request via <paramref name="requestFactory"/>, sends it (with one 401-triggered
+    /// token refresh + retry), and parses the response body as a <see cref="JsonDocument"/>.
     /// Throws <see cref="HttpRequestException"/> with the response status and body on a non-success response.
     /// The caller owns the returned <see cref="JsonDocument"/> and must dispose it.
     /// </summary>
-    private async Task<JsonDocument> SendAndReadJsonAsync(HttpRequestMessage request, CancellationToken ct)
+    private async Task<JsonDocument> SendAndReadJsonAsync(Func<HttpRequestMessage> requestFactory, CancellationToken ct)
     {
-        await SetAuthHeaderAsync(request, ct);
-
         var client = _httpClientFactory.CreateClient(BatchHttpClientName);
-        using var response = await client.SendAsync(request, ct);
+        using var response = await SendWithAuthRetryAsync(client, requestFactory, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new HttpRequestException($"Speech API {request.Method} {request.RequestUri?.AbsolutePath} failed ({(int)response.StatusCode}): {body}");
+            throw new HttpRequestException($"Speech API {response.RequestMessage?.Method} {response.RequestMessage?.RequestUri?.AbsolutePath} failed ({(int)response.StatusCode}): {body}");
         }
 
         return JsonDocument.Parse(body);
+    }
+
+    /// <summary>
+    /// Sends an authenticated request. A cached bearer token can outlive server-side invalidation
+    /// (tenant rotation, RBAC change, clock skew); on a <see cref="HttpStatusCode.Unauthorized"/>
+    /// response the cached token is dropped and the request is rebuilt and retried exactly once.
+    /// The request is rebuilt via <paramref name="requestFactory"/> because an already-sent
+    /// <see cref="HttpRequestMessage"/> cannot be resent.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendWithAuthRetryAsync(HttpClient client, Func<HttpRequestMessage> requestFactory, CancellationToken ct)
+    {
+        var response = await SendOnceAsync(client, requestFactory(), ct);
+
+        if (response.StatusCode != HttpStatusCode.Unauthorized)
+        {
+            return response;
+        }
+
+        response.Dispose();
+        InvalidateCachedToken();
+
+        return await SendOnceAsync(client, requestFactory(), ct);
+    }
+
+    private async Task<HttpResponseMessage> SendOnceAsync(HttpClient client, HttpRequestMessage request, CancellationToken ct)
+    {
+        using (request)
+        {
+            await SetAuthHeaderAsync(request, ct);
+
+            return await client.SendAsync(request, ct);
+        }
+    }
+
+    private void InvalidateCachedToken()
+    {
+        lock (_tokenLock)
+        {
+            _cachedToken = default;
+        }
     }
 
     private async Task SetAuthHeaderAsync(HttpRequestMessage request, CancellationToken ct)
