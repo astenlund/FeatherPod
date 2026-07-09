@@ -1,3 +1,4 @@
+// TestData/fast-transcription-sample.json: captured from the Azure Speech Fast transcription API version 2025-10-15 on 2026-04-26.
 using System.Text.Json;
 using FeatherPod.Server.Services;
 
@@ -8,7 +9,7 @@ public class FastTranscriptionParserTests
     [Fact]
     public void Parse_RealFixture_ReturnsAllPhrasesWithSpeakerLabels()
     {
-        // Arrange — captured response from the preflight smoke test against featherpod-speech.
+        // Arrange -- captured response from the preflight smoke test against featherpod-speech.
         var json = LoadFixture();
         using var doc = JsonDocument.Parse(json);
 
@@ -82,7 +83,7 @@ public class FastTranscriptionParserTests
     [Fact]
     public void Parse_MissingSpeaker_DefaultsToSpeakerZero()
     {
-        // Arrange — diarization disabled responses omit the speaker field entirely.
+        // Arrange -- diarization disabled responses omit the speaker field entirely.
         var json = """
             {
               "phrases": [
