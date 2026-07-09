@@ -85,7 +85,7 @@ public class TestBlobStorageService : IBlobStorageService
         return await Task.FromResult(File.Exists(filePath));
     }
 
-    public async Task DeleteAudioAsync(string feedId, string fileName)
+    public virtual async Task DeleteAudioAsync(string feedId, string fileName)
     {
         var filePath = Path.Combine(_rootPath, feedId, "audio", fileName);
         if (File.Exists(filePath))
@@ -281,7 +281,7 @@ public class TestBlobStorageService : IBlobStorageService
         await Task.CompletedTask;
     }
 
-    public async Task RenameFeedAsync(string oldFeedId, string newFeedId)
+    public virtual async Task RenameFeedAsync(string oldFeedId, string newFeedId)
     {
         var oldPath = Path.Combine(_rootPath, oldFeedId);
         var newPath = Path.Combine(_rootPath, newFeedId);

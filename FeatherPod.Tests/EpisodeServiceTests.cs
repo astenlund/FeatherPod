@@ -31,6 +31,30 @@ public class EpisodeServiceTests : IDisposable
         _logger = _loggerFactory.CreateLogger<EpisodeService>();
     }
 
+    private sealed class ThrowingDeleteBlobStorageService(string testDirectory) : TestBlobStorageService(testDirectory)
+    {
+        public override Task DeleteAudioAsync(string feedId, string fileName)
+            => throw new InvalidOperationException("Simulated blob delete failure");
+    }
+
+    private sealed class ConflictInjectingBlobStorageService(string testDirectory) : TestBlobStorageService(testDirectory)
+    {
+        public List<(string OldId, string NewId)> RenameCalls { get; } = [];
+
+        public Func<Task>? OnFirstRename { get; set; }
+
+        public override async Task RenameFeedAsync(string oldFeedId, string newFeedId)
+        {
+            RenameCalls.Add((oldFeedId, newFeedId));
+            await base.RenameFeedAsync(oldFeedId, newFeedId);
+
+            if (RenameCalls.Count == 1 && OnFirstRename != null)
+            {
+                await OnFirstRename();
+            }
+        }
+    }
+
     private EpisodeService CreateService()
     {
         var blobStorage = new TestBlobStorageService(_testDirectory);
@@ -243,6 +267,55 @@ public class EpisodeServiceTests : IDisposable
         var blobStorage = _blobServicesToDispose[0];
         var exists = await blobStorage.AudioExistsAsync(TestFeedId, "test.mp3");
         Assert.False(exists);
+    }
+
+    [Fact]
+    public async Task DeleteEpisodeAsync_ShouldRemoveEpisode_WhenBlobDeleteFails()
+    {
+        // Arrange
+        var blobStorage = new ThrowingDeleteBlobStorageService(_testDirectory);
+        _blobServicesToDispose.Add(blobStorage);
+        var service = new EpisodeService(blobStorage, _logger);
+        _servicesToDispose.Add(service);
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+
+        var testFile = Path.Combine(_testDirectory, "test.mp3");
+        await File.WriteAllTextAsync(testFile, "audio data");
+        var episode = await service.AddEpisodeAsync(TestFeedId, testFile, "Test");
+
+        // Act - the metadata removal commits first; a blob failure afterwards is logged, not surfaced
+        var result = await service.DeleteEpisodeAsync(TestFeedId, episode.Id);
+
+        // Assert - the episode is gone; the failed blob delete leaves an orphaned blob, never a feed entry pointing at a missing file
+        Assert.True(result);
+        var episodes = await service.GetAllEpisodesAsync(TestFeedId);
+        Assert.Empty(episodes);
+    }
+
+    [Fact]
+    public async Task RenameFeedAsync_ShouldRollBackBlobRename_WhenTargetIdClaimedConcurrently()
+    {
+        // Arrange - a concurrent create claims the target id while the lock is released for the blob rename
+        var blobStorage = new ConflictInjectingBlobStorageService(_testDirectory);
+        _blobServicesToDispose.Add(blobStorage);
+        var service = new EpisodeService(blobStorage, _logger);
+        _servicesToDispose.Add(service);
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+        blobStorage.OnFirstRename = () => CreateTestFeedAsync(service, "taken-id");
+
+        // Act
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.RenameFeedAsync(TestFeedId, "taken-id"));
+
+        // Assert - the forward blob rename was compensated and no duplicate feed id exists
+        Assert.Equal(2, blobStorage.RenameCalls.Count);
+        Assert.Equal((TestFeedId, "taken-id"), blobStorage.RenameCalls[0]);
+        Assert.Equal(("taken-id", TestFeedId), blobStorage.RenameCalls[1]);
+
+        var feeds = await service.GetFeedsAsync();
+        Assert.Single(feeds, f => f.Id == TestFeedId);
+        Assert.Single(feeds, f => f.Id == "taken-id");
     }
 
     [Fact]

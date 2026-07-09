@@ -130,12 +130,11 @@ public sealed partial class EpisodeService : IDisposable
 
     public async Task RenameFeedAsync(string oldFeedId, string newFeedId)
     {
+        // Validate under the lock, then rename blobs outside it before committing the in-memory change.
         await _lock.WaitAsync();
-
         try
         {
-            var feed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == oldFeedId);
-            if (feed == null)
+            if (_feedsMetadata.Feeds.All(f => f.Id != oldFeedId))
             {
                 throw new InvalidOperationException($"Feed '{oldFeedId}' not found");
             }
@@ -144,52 +143,92 @@ public sealed partial class EpisodeService : IDisposable
             {
                 throw new InvalidOperationException($"Feed with ID '{newFeedId}' already exists");
             }
-
-            // Rename in blob storage first
-            await _blobStorage.RenameFeedAsync(oldFeedId, newFeedId);
-
-            // Update feed config
-            var updatedFeed = feed with { Id = newFeedId };
-            var feeds = _feedsMetadata.Feeds.Where(f => f.Id != oldFeedId).Append(updatedFeed).ToList();
-            _feedsMetadata = new() { Feeds = feeds };
-
-            // Update episodes in memory
-            if (_episodesByFeed.TryGetValue(oldFeedId, out var episodes))
-            {
-                // Update each episode's FeedId
-                var updatedEpisodes = episodes.Select(e => e with { FeedId = newFeedId }).ToList();
-                _episodesByFeed.Remove(oldFeedId);
-                _episodesByFeed[newFeedId] = updatedEpisodes;
-            }
-
-            RemoveFeedVersionTracking(oldFeedId);
-            BumpFeedModifiedAt(newFeedId);
-
-            await SaveFeedsAsync();
-
-            _logger.LogInformation("Renamed feed: {OldId} → {NewId}", oldFeedId, newFeedId);
         }
         finally
         {
             _lock.Release();
         }
+
+        // Rename in blob storage first so a failure aborts before any in-memory change.
+        await _blobStorage.RenameFeedAsync(oldFeedId, newFeedId);
+
+        string? commitConflict = null;
+
+        await _lock.WaitAsync();
+        try
+        {
+            // Re-validate at commit: a concurrent rename or create can have claimed either
+            // id while the lock was released for the blob rename above.
+            var feed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == oldFeedId);
+            if (feed == null)
+            {
+                commitConflict = $"Feed '{oldFeedId}' not found";
+            }
+            else if (_feedsMetadata.Feeds.Any(f => f.Id == newFeedId))
+            {
+                commitConflict = $"Feed with ID '{newFeedId}' already exists";
+            }
+            else
+            {
+                // Update feed config
+                var updatedFeed = feed with { Id = newFeedId };
+                var feeds = _feedsMetadata.Feeds.Where(f => f.Id != oldFeedId).Append(updatedFeed).ToList();
+                _feedsMetadata = new() { Feeds = feeds };
+
+                // Update episodes in memory
+                if (_episodesByFeed.TryGetValue(oldFeedId, out var episodes))
+                {
+                    // Update each episode's FeedId
+                    var updatedEpisodes = episodes.Select(e => e with { FeedId = newFeedId }).ToList();
+                    _episodesByFeed.Remove(oldFeedId);
+                    _episodesByFeed[newFeedId] = updatedEpisodes;
+                }
+
+                RemoveFeedVersionTracking(oldFeedId);
+                BumpFeedModifiedAt(newFeedId);
+
+                await SaveFeedsAsync();
+
+                _logger.LogInformation("Renamed feed: {OldId} -> {NewId}", oldFeedId, newFeedId);
+            }
+        }
+        finally
+        {
+            _lock.Release();
+        }
+
+        if (commitConflict != null)
+        {
+            // The blobs were already renamed; rename them back so storage matches the
+            // unchanged metadata before surfacing the conflict.
+            await _blobStorage.RenameFeedAsync(newFeedId, oldFeedId);
+
+            throw new InvalidOperationException(commitConflict);
+        }
     }
 
     public async Task DeleteFeedAsync(string feedId)
     {
+        // Validate under the lock, delete blobs outside it, then commit the in-memory removal.
         await _lock.WaitAsync();
-
         try
         {
-            var feed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == feedId);
-            if (feed == null)
+            if (_feedsMetadata.Feeds.All(f => f.Id != feedId))
             {
                 throw new InvalidOperationException($"Feed '{feedId}' not found");
             }
+        }
+        finally
+        {
+            _lock.Release();
+        }
 
-            // Delete from blob storage
-            await _blobStorage.DeleteFeedAsync(feedId);
+        // Delete from blob storage first so a failure aborts before any in-memory change.
+        await _blobStorage.DeleteFeedAsync(feedId);
 
+        await _lock.WaitAsync();
+        try
+        {
             // Remove from feeds list
             _feedsMetadata = _feedsMetadata with
             {
@@ -478,8 +517,14 @@ public sealed partial class EpisodeService : IDisposable
 
     public async Task<bool> DeleteEpisodeAsync(string feedId, string id)
     {
-        await _lock.WaitAsync();
+        Episode episode;
+        bool deleteAudioBlob;
 
+        // Remove from metadata and decide blob deletion in the SAME critical section:
+        // the shared-file check is only correct while no concurrent mutation can slip
+        // between the decision and the removal (concurrent deletes of two episodes
+        // sharing a FileName would otherwise both see the other and both skip the blob).
+        await _lock.WaitAsync();
         try
         {
             if (!_episodesByFeed.TryGetValue(feedId, out var value))
@@ -487,15 +532,32 @@ public sealed partial class EpisodeService : IDisposable
                 return false;
             }
 
-            var episode = value.FirstOrDefault(e => e.Id == id);
-            if (episode == null)
+            var found = value.FirstOrDefault(e => e.Id == id);
+            if (found == null)
             {
                 return false;
             }
 
-            // Only delete blob if no other episodes reference the same file
-            var otherEpisodeSharesFile = value.Any(e => e.Id != id && e.FileName == episode.FileName);
-            if (!otherEpisodeSharesFile)
+            episode = found;
+            value.Remove(episode);
+
+            // Only delete the blob if no remaining episode references the same file
+            deleteAudioBlob = !value.Any(e => e.FileName == episode.FileName);
+
+            BumpFeedModifiedAt(feedId);
+            await SaveEpisodesAsync(feedId);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+
+        // Blob deletes run after the commit so readers never observe an episode whose
+        // enclosure points at an already-deleted blob. A blob failure therefore leaves
+        // an orphaned blob rather than a broken feed entry.
+        try
+        {
+            if (deleteAudioBlob)
             {
                 await _blobStorage.DeleteAudioAsync(feedId, episode.FileName);
             }
@@ -504,25 +566,19 @@ public sealed partial class EpisodeService : IDisposable
                 _logger.LogInformation("Skipping blob deletion - another episode references {FileName}", episode.FileName);
             }
 
-            // Delete transcript blob if available
             if (episode.TranscriptStatus == TranscriptStatus.Available)
             {
                 await _blobStorage.DeleteTranscriptAsync(feedId, episode.Id);
             }
-
-            // Remove from list
-            _episodesByFeed[feedId].Remove(episode);
-            BumpFeedModifiedAt(feedId);
-            await SaveEpisodesAsync(feedId);
-
-            _logger.LogInformation("Deleted episode from feed {FeedId}: {Title}", feedId, episode.Title);
-
-            return true;
         }
-        finally
+        catch (Exception ex)
         {
-            _lock.Release();
+            _logger.LogWarning(ex, "Episode removed but blob cleanup failed for {FeedId}/{FileName}; blob may be orphaned", feedId, episode.FileName);
         }
+
+        _logger.LogInformation("Deleted episode from feed {FeedId}: {Title}", feedId, episode.Title);
+
+        return true;
     }
 
     public Task<Episode?> UpdateEpisodeTitleAsync(string feedId, string id, string newTitle)
