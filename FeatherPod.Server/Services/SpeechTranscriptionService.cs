@@ -256,39 +256,11 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
         var contentBody = await contentResponse.Content.ReadAsStringAsync(ct);
         using var contentDoc = JsonDocument.Parse(contentBody);
 
-        if (!contentDoc.RootElement.TryGetProperty("recognizedPhrases", out var phrases) || phrases.GetArrayLength() == 0)
-        {
-            _logger.LogWarning("Batch transcription result has no recognizedPhrases");
-
-            return null;
-        }
-
-        // Convert to DiarizedSegments.
-        // Note: offsetInTicks/durationInTicks are returned as floats (e.g. 400000.0), so we use
-        // GetDouble() + cast rather than GetInt64() which throws FormatException on floats.
-        var segments = new List<DiarizedSegment>();
-        foreach (var phrase in phrases.EnumerateArray())
-        {
-            var speaker = phrase.TryGetProperty("speaker", out var sp) ? sp.ToString() : "0";
-
-            if (!phrase.TryGetProperty("offsetInTicks", out var offsetEl) || !phrase.TryGetProperty("durationInTicks", out var durationEl))
-            {
-                continue;
-            }
-
-            var offsetTicks = (long)offsetEl.GetDouble();
-            var durationTicks = (long)durationEl.GetDouble();
-            var display = phrase.GetProperty("nBest")[0].GetProperty("display").GetString() ?? string.Empty;
-
-            if (!string.IsNullOrWhiteSpace(display))
-            {
-                segments.Add(new DiarizedSegment(offsetTicks, durationTicks, $"Speaker {speaker}", display));
-            }
-        }
+        var segments = BatchTranscriptionParser.Parse(contentDoc.RootElement);
 
         if (segments.Count == 0)
         {
-            _logger.LogWarning("Batch transcription produced segments but all were empty");
+            _logger.LogWarning("Batch transcription result contained no usable phrases");
 
             return null;
         }

@@ -25,9 +25,6 @@ public static class FastTranscriptionParser
 
         foreach (var phrase in phrases.EnumerateArray())
         {
-            // Speaker is a JSON number (e.g. "speaker": 0). ToString() handles both numeric and
-            // string tokens; GetString() throws on numeric tokens. Missing speaker => "0".
-            var speaker = phrase.TryGetProperty("speaker", out var sp) ? sp.ToString() : "0";
             var text = phrase.TryGetProperty("text", out var t) ? t.GetString() ?? string.Empty : string.Empty;
 
             if (string.IsNullOrWhiteSpace(text)
@@ -40,7 +37,7 @@ public static class FastTranscriptionParser
             segments.Add(new DiarizedSegment(
                 offsetEl.GetInt64() * TimeSpan.TicksPerMillisecond,
                 durationEl.GetInt64() * TimeSpan.TicksPerMillisecond,
-                $"Speaker {speaker}",
+                TranscriptionSpeakerLabel.FromPhrase(phrase),
                 text));
         }
 
