@@ -4,6 +4,7 @@ using FeatherPod.Commands.Episode;
 using FeatherPod.Infrastructure;
 using Spectre.Console.Cli;
 
+using AdminCommands = FeatherPod.Commands.Admin;
 using ConfigCommands = FeatherPod.Commands.Config;
 using ContextMenuCommands = FeatherPod.Commands.Config.ContextMenu;
 using FeedCommands = FeatherPod.Commands.Feed;
@@ -81,6 +82,16 @@ internal class Program
                         .WithDescription("Clear an episode note")
                         .WithExample("episode", "note", "clear", "abc123", "-f", "my-feed");
                 });
+            });
+
+            config.AddBranch("admin", admin =>
+            {
+                admin.SetDescription("Administrative bootstrap commands");
+
+                admin.AddCommand<AdminCommands.SeedCommand>("seed")
+                    .WithDescription("Bootstrap a fresh environment with an admin user (writes users.json directly)")
+                    .WithExample("admin", "seed")
+                    .WithExample("admin", "seed", "-u", "admin", "-n", "\"Admin\"");
             });
 
             if (adminFeaturesEnabled)
