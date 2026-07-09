@@ -115,6 +115,10 @@ class Program
         {
             client.Timeout = TimeSpan.FromMinutes(fastTimeoutMinutes);
         });
+
+        // Batch path uses the framework-default per-request timeout (the overall job is bounded
+        // by the AzureSpeech:BatchTimeoutMinutes poll deadline inside the service).
+        builder.Services.AddHttpClient(SpeechTranscriptionService.BatchHttpClientName);
         builder.Services.AddSingleton<ISpeechTranscriptionService, SpeechTranscriptionService>();
         builder.Services.AddSingleton<IAudioDurationProbe, FFprobeAudioDurationProbe>();
         builder.Services.AddSingleton<ITranscriptionChannel, TranscriptionChannel>();

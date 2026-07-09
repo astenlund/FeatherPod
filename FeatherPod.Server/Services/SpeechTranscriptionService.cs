@@ -17,6 +17,7 @@ namespace FeatherPod.Server.Services;
 public class SpeechTranscriptionService : ISpeechTranscriptionService
 {
     public const string FastHttpClientName = "AzureSpeechFast";
+    public const string BatchHttpClientName = "AzureSpeechBatch";
 
     private const string BatchApiPath = "/speechtotext/v3.2/transcriptions";
     private const string FastApiPath = "/speechtotext/transcriptions:transcribe";
@@ -30,7 +31,6 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
     private readonly string _locale;
     private readonly int _diarizationMaxSpeakers;
     private readonly DefaultAzureCredential _credential = new();
-    private readonly HttpClient _httpClient = new();
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<SpeechTranscriptionService> _logger;
     private readonly TimeSpan _pollInterval = TimeSpan.FromSeconds(2);
@@ -255,7 +255,8 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
         }
 
         // Step 2: Download the transcription content (SAS URL, no auth needed)
-        using var contentResponse = await _httpClient.GetAsync(contentUrl, ct);
+        var contentClient = _httpClientFactory.CreateClient(BatchHttpClientName);
+        using var contentResponse = await contentClient.GetAsync(contentUrl, ct);
         contentResponse.EnsureSuccessStatusCode();
 
         var contentBody = await contentResponse.Content.ReadAsStringAsync(ct);
@@ -284,7 +285,8 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
         using var request = new HttpRequestMessage(HttpMethod.Delete, transcriptionUrl);
         await SetAuthHeaderAsync(request, ct);
 
-        using var response = await _httpClient.SendAsync(request, ct);
+        var client = _httpClientFactory.CreateClient(BatchHttpClientName);
+        using var response = await client.SendAsync(request, ct);
 
         if (response.IsSuccessStatusCode)
         {
@@ -305,7 +307,8 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
     {
         await SetAuthHeaderAsync(request, ct);
 
-        using var response = await _httpClient.SendAsync(request, ct);
+        var client = _httpClientFactory.CreateClient(BatchHttpClientName);
+        using var response = await client.SendAsync(request, ct);
         var body = await response.Content.ReadAsStringAsync(ct);
 
         if (!response.IsSuccessStatusCode)
