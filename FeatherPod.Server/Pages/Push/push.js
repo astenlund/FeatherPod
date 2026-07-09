@@ -21,7 +21,7 @@
 
 import { IS_DEV, QUEUE_SYNC_TIMEOUT, STR_PASTE_KEY_BELOW, STR_PASTE_KEY, STR_SAVE_KEY, STR_INVALID_KEY, STR_NO_FEED_ACCESS } from './modules/config.js';
 import './modules/utils.js'; // Number.prototype extensions (side-effect)
-import { isActiveWork, trapFocus } from './modules/utils.js';
+import { isActiveWork, isInUploadPhase, trapFocus } from './modules/utils.js';
 import { getApiKey, setApiKey, getStoredApiKey, saveApiKey, clearApiKey, validateApiKey, validateApiKeyWithRetry } from './modules/auth.js';
 import { initFeedArtwork } from './modules/artwork.js';
 import { initWakeLockToggle, isWakeLockTogglePressed, acquireWakeLock } from './modules/wake-lock.js';
@@ -82,7 +82,7 @@ if (navigator.serviceWorker) {
                 location.reload();
             }
         };
-        const hasActiveUpload = () => getQueue().some(e => e.status === 'uploading' || e.status === 'saving');
+        const hasActiveUpload = () => getQueue().some(isInUploadPhase);
         if (!hasActiveUpload()) {
             flashAndReload();
 

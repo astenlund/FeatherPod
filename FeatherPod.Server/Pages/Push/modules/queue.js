@@ -1,5 +1,5 @@
 import { FEED_ID, JOB_TTL_MS, QUEUE_STORAGE_KEY, STAGES_WITH_PROGRESS, STR_INVALID_KEY, STR_NO_FEED_ACCESS, TRANSCRIPTION_ACTIVE_STATUSES } from './config.js';
-import { isValidMediaFile, isActiveWork, tryParseJson } from './utils.js';
+import { isValidMediaFile, isActiveWork, isInUploadPhase, tryParseJson } from './utils.js';
 import { getApiKey } from './auth.js';
 import { showState, getCurrentState, updateQueueTitle, getCollapsedHeight, COLLAPSED_WIDTH } from './state.js';
 import { progressAnimator } from './progress.js';
@@ -870,7 +870,7 @@ export async function cancelEntry(entryId) {
         return;
     }
 
-    if (entry.status === 'uploading' || entry.status === 'saving') {
+    if (isInUploadPhase(entry)) {
         if (entry.xhr) {
             entry.xhr.abort();
         }
@@ -1081,7 +1081,7 @@ export async function restoreQueueState() {
 
     // Mark uploading entries as failed (can't resume XHR), queued as cancelled (files lost on reload)
     for (const entry of uploadQueue) {
-        if (entry.status === 'uploading' || entry.status === 'saving') {
+        if (isInUploadPhase(entry)) {
             entry.status = 'failed';
             entry.error = 'Upload interrupted';
         } else if (entry.status === 'queued') {

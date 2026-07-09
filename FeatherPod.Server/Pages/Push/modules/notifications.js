@@ -1,5 +1,5 @@
 import { FEED_ID, VAPID_PUBLIC_KEY, NOTIF_ENABLED_KEY, NOTIF_HINT_SHOWN_KEY, FAKE_PWA } from './config.js';
-import { isActiveWork, showToast } from './utils.js';
+import { isActiveWork, isInUploadPhase, showToast } from './utils.js';
 import { getApiKey } from './auth.js';
 import { getQueue } from './queue.js';
 
@@ -91,7 +91,7 @@ export function syncPushSession(jobIds, uploadQueue) {
         return;
     }
     const ids = jobIds || uploadQueue.filter(e => e.jobId && isActiveWork(e)).map(e => e.jobId);
-    const uploadsRemaining = uploadQueue.filter(e => (e.status === 'queued' || e.status === 'uploading' || e.status === 'saving') && !e.validationError).length;
+    const uploadsRemaining = uploadQueue.filter(e => (e.status === 'queued' || isInUploadPhase(e)) && !e.validationError).length;
     if (ids.length === 0 && uploadsRemaining === 0) {
         return;
     }

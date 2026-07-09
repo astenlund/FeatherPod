@@ -1,3 +1,5 @@
+import { ACTIVE_STATUSES, UPLOAD_PHASES } from './config.js';
+
 // Prototype extensions (side-effects on import)
 
 Number.prototype.sigDig = function(minSigDigs) {
@@ -39,7 +41,16 @@ Number.prototype.formatBytes = function formatBytes(sigDigs = 2, unitSuffix = ''
  * @returns {boolean}
  */
 export function isActiveWork(entry) {
-    return entry.status === 'queued' || entry.status === 'uploading' || entry.status === 'saving' || entry.status === 'normalizing';
+    return ACTIVE_STATUSES.has(entry.status);
+}
+
+/**
+ * Whether a queue entry is in the upload phase (XHR in flight or server persisting the upload).
+ * @param {{status: string}} entry
+ * @returns {boolean}
+ */
+export function isInUploadPhase(entry) {
+    return UPLOAD_PHASES.has(entry.status);
 }
 
 /**

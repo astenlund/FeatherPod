@@ -1,4 +1,5 @@
 import { STAGES_WITH_PROGRESS, TRANSCRIPTION_ACTIVE_STATUSES } from './config.js';
+import { isInUploadPhase } from './utils.js';
 import { progressAnimator } from './progress.js';
 
 // These callbacks are set by the orchestrator to avoid circular imports
@@ -89,7 +90,7 @@ function createProgressBar(entry) {
     progressBar.className = 'queue-item-progress';
     progressBar.id = 'queue-progress-' + entry.id;
 
-    if (entry.status === 'uploading' || entry.status === 'saving') {
+    if (isInUploadPhase(entry)) {
         progressBar.style.width = entry.progress + '%';
     } else if (entry.status === 'normalizing') {
         const transcriptionActive = TRANSCRIPTION_ACTIVE_STATUSES.has(entry.transcriptionStatus);
@@ -184,7 +185,7 @@ function createActionButton(entry) {
         return btn;
     }
 
-    if (entry.status === 'uploading' || entry.status === 'saving' || entry.status === 'normalizing') {
+    if (isInUploadPhase(entry) || entry.status === 'normalizing') {
         const btn = document.createElement('button');
         btn.className = 'queue-item-action queue-item-action--cancel';
         btn.type = 'button';
