@@ -30,7 +30,7 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
     private readonly string? _endpoint;
     private readonly string _locale;
     private readonly int _diarizationMaxSpeakers;
-    private readonly DefaultAzureCredential _credential = new();
+    private readonly TokenCredential _credential;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<SpeechTranscriptionService> _logger;
     private readonly TimeSpan _pollInterval = TimeSpan.FromSeconds(2);
@@ -43,12 +43,13 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
     /// </summary>
     public bool IsAvailable => !string.IsNullOrEmpty(_endpoint);
 
-    public SpeechTranscriptionService(IConfiguration configuration, IHttpClientFactory httpClientFactory, ILogger<SpeechTranscriptionService> logger)
+    public SpeechTranscriptionService(IConfiguration configuration, IHttpClientFactory httpClientFactory, ILogger<SpeechTranscriptionService> logger, TokenCredential? credential = null)
     {
         _endpoint = configuration["AzureSpeech:Endpoint"]?.TrimEnd('/');
         _locale = configuration.GetValue("AzureSpeech:Locale", "en-US")!;
         _diarizationMaxSpeakers = configuration.GetValue("AzureSpeech:DiarizationMaxSpeakers", 6);
         _pollTimeout = TimeSpan.FromMinutes(configuration.GetValue("AzureSpeech:BatchTimeoutMinutes", 30));
+        _credential = credential ?? new DefaultAzureCredential();
         _httpClientFactory = httpClientFactory;
         _logger = logger;
 
