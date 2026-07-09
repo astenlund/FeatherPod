@@ -428,10 +428,7 @@ internal static class EpisodeHelpers
 
             if (!response.IsSuccessStatusCode)
             {
-                var errorJson = await response.Content.ReadAsStringAsync();
-                var errorObj = JsonSerializer.Deserialize<JsonElement>(errorJson);
-                var errorMsg = errorObj.TryGetProperty("error", out var err) ? err.GetString() : "Unknown error";
-                Out.Error(Markup.Escape(errorMsg ?? "Unknown error"));
+                await ReportServerErrorAsync(response);
 
                 return false;
             }
@@ -458,10 +455,7 @@ internal static class EpisodeHelpers
 
             if (!response.IsSuccessStatusCode)
             {
-                var errorJson = await response.Content.ReadAsStringAsync();
-                var errorObj = JsonSerializer.Deserialize<JsonElement>(errorJson);
-                var errorMsg = errorObj.TryGetProperty("error", out var err) ? err.GetString() : "Unknown error";
-                Out.Error(Markup.Escape(errorMsg ?? "Unknown error"));
+                await ReportServerErrorAsync(response);
 
                 return false;
             }
@@ -476,13 +470,22 @@ internal static class EpisodeHelpers
         }
     }
 
-    internal static async Task<EpisodeOperationResult> UpdateEpisodeTitleAsync(
+    internal static Task<EpisodeOperationResult> UpdateEpisodeTitleAsync(
         HttpClient httpClient, string feedId, string episodeId, string newTitle,
         CancellationToken cancellationToken = default)
+        => PatchEpisodeAsync(httpClient, feedId, episodeId, new { title = newTitle }, "renaming episode", cancellationToken);
+
+    internal static Task<EpisodeOperationResult> UpdateEpisodeNoteAsync(
+        HttpClient httpClient, string feedId, string episodeId, string note,
+        CancellationToken cancellationToken = default)
+        => PatchEpisodeAsync(httpClient, feedId, episodeId, new { note }, "updating note", cancellationToken);
+
+    private static async Task<EpisodeOperationResult> PatchEpisodeAsync(
+        HttpClient httpClient, string feedId, string episodeId, object requestBody, string errorContext,
+        CancellationToken cancellationToken)
     {
         try
         {
-            var requestBody = new { title = newTitle };
             var json = JsonSerializer.Serialize(requestBody);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
 
@@ -500,29 +503,43 @@ internal static class EpisodeHelpers
                 return new() { Success = false, ErrorMessage = "Episode not found" };
             }
 
-            var errorJson = await response.Content.ReadAsStringAsync(cancellationToken);
-            var errorObj = JsonSerializer.Deserialize<JsonElement>(errorJson);
-            var errorMsg = errorObj.TryGetProperty("error", out var err) ? err.GetString() : "Unknown error";
-            Out.Error(Markup.Escape(errorMsg ?? "Unknown error"));
+            var errorMsg = await ReportServerErrorAsync(response, cancellationToken);
 
             return new() { Success = false, ErrorMessage = errorMsg };
         }
         catch (Exception ex)
         {
-            Out.Error($"Error renaming episode: {Markup.Escape(ex.Message)}");
+            Out.Error($"Error {errorContext}: {Markup.Escape(ex.Message)}");
 
             return new() { Success = false, ErrorMessage = ex.Message };
         }
     }
 
+    private static async Task<string?> ReportServerErrorAsync(HttpResponseMessage response, CancellationToken cancellationToken = default)
+    {
+        var errorJson = await response.Content.ReadAsStringAsync(cancellationToken);
+        var errorObj = JsonSerializer.Deserialize<JsonElement>(errorJson);
+        var errorMsg = errorObj.TryGetProperty("error", out var err) ? err.GetString() : "Unknown error";
+        Out.Error(Markup.Escape(errorMsg ?? "Unknown error"));
+
+        return errorMsg;
+    }
+
     internal static async Task<string?> SuggestTitleAsync(
-        HttpClient httpClient, string feedId, string episodeId,
+        HttpClient httpClient, string feedId, string episodeId, string? note = null,
         CancellationToken cancellationToken = default)
     {
         try
         {
+            HttpContent? requestBody = null;
+            if (!string.IsNullOrWhiteSpace(note))
+            {
+                var noteJson = JsonSerializer.Serialize(new { note });
+                requestBody = new StringContent(noteJson, Encoding.UTF8, "application/json");
+            }
+
             var response = await httpClient.PostAsync(
-                $"/api/feeds/{feedId}/episodes/{episodeId}/suggest-title", null, cancellationToken);
+                $"/api/feeds/{feedId}/episodes/{episodeId}/suggest-title", requestBody, cancellationToken);
 
             if (!response.IsSuccessStatusCode)
             {

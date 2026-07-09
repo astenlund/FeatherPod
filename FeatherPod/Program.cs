@@ -64,6 +64,23 @@ internal class Program
                     .WithDescription("Copy episode(s) from one feed to another")
                     .WithExample("episode", "copy")
                     .WithExample("episode", "copy", "--from", "feed1", "--to", "feed2", "--episode", "Episode*");
+
+                episode.AddBranch("note", note =>
+                {
+                    note.SetDescription("Manage episode notes");
+
+                    note.AddCommand<NoteSetCommand>("set")
+                        .WithDescription("Set or edit an episode note")
+                        .WithExample("episode", "note", "set", "abc123", "-f", "my-feed", "-n", "\"Context for AI\"");
+
+                    note.AddCommand<NoteGetCommand>("get")
+                        .WithDescription("Show an episode note")
+                        .WithExample("episode", "note", "get", "abc123", "-f", "my-feed");
+
+                    note.AddCommand<NoteClearCommand>("clear")
+                        .WithDescription("Clear an episode note")
+                        .WithExample("episode", "note", "clear", "abc123", "-f", "my-feed");
+                });
             });
 
             if (adminFeaturesEnabled)

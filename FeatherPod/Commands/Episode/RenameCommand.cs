@@ -68,7 +68,7 @@ internal sealed class RenameCommand : AsyncCommand<RenameSettings>
         }
 
         // AI path: fetch suggestion, then let user edit it
-        var suggestion = await FetchSuggestionWithSpinnerAsync(httpClient, feedId, episode, cancellationToken);
+        var suggestion = await FetchSuggestionWithSpinnerAsync(httpClient, feedId, episode, note: null, cancellationToken);
 
         if (suggestion == null)
         {
@@ -191,7 +191,7 @@ internal sealed class RenameCommand : AsyncCommand<RenameSettings>
         // --suggest only: fetch suggestion, then let user choose which to edit
         if (settings.Suggest && string.IsNullOrEmpty(settings.NewTitle))
         {
-            var suggestion = await FetchSuggestionWithSpinnerAsync(httpClient, feedId, episode, cancellationToken);
+            var suggestion = await FetchSuggestionWithSpinnerAsync(httpClient, feedId, episode, settings.Note, cancellationToken);
 
             if (suggestion == null)
             {
@@ -210,7 +210,7 @@ internal sealed class RenameCommand : AsyncCommand<RenameSettings>
         // -t + --suggest: fetch suggestion, then let user choose which to edit
         if (settings.Suggest && !string.IsNullOrEmpty(settings.NewTitle))
         {
-            var suggestion = await FetchSuggestionWithSpinnerAsync(httpClient, feedId, episode, cancellationToken);
+            var suggestion = await FetchSuggestionWithSpinnerAsync(httpClient, feedId, episode, settings.Note, cancellationToken);
 
             if (suggestion == null)
             {
@@ -231,7 +231,7 @@ internal sealed class RenameCommand : AsyncCommand<RenameSettings>
     }
 
     private static async Task<string?> FetchSuggestionWithSpinnerAsync(
-        HttpClient httpClient, string feedId, EpisodeModel episode,
+        HttpClient httpClient, string feedId, EpisodeModel episode, string? note,
         CancellationToken cancellationToken)
     {
         string? suggestion = null;
@@ -240,7 +240,7 @@ internal sealed class RenameCommand : AsyncCommand<RenameSettings>
             .Spinner(Spinner.Known.Dots)
             .StartAsync("[bold]Fetching AI suggestion...[/]", async _ =>
             {
-                suggestion = await EpisodeHelpers.SuggestTitleAsync(httpClient, feedId, episode.Id, cancellationToken);
+                suggestion = await EpisodeHelpers.SuggestTitleAsync(httpClient, feedId, episode.Id, note, cancellationToken);
             });
 
         return suggestion;

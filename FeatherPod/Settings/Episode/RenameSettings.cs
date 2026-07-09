@@ -21,6 +21,10 @@ internal sealed class RenameSettings : CommandSettings
     [Description("Fetch an AI-suggested title")]
     public bool Suggest { get; init; }
 
+    [CommandOption("-n|--note <NOTE>")]
+    [Description("Context note passed to the AI title suggestion")]
+    public string? Note { get; init; }
+
     [CommandOption("-e|--environment <ENV>")]
     [Description("Target environment (Dev, Test, Prod)")]
     public string? Environment { get; init; }

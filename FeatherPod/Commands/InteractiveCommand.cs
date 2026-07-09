@@ -9,8 +9,10 @@ using Spectre.Console.Cli;
 
 using static FeatherPod.Infrastructure.ConsoleWriter;
 
+using EpisodeModel = FeatherPod.Shared.Models.Episode;
 using EpisodeDeleteCommand = FeatherPod.Commands.Episode.DeleteCommand;
 using EpisodeListCommand = FeatherPod.Commands.Episode.ListCommand;
+using EpisodeNoteCore = FeatherPod.Commands.Episode.NoteCommandCore;
 using EpisodeRenameCommand = FeatherPod.Commands.Episode.RenameCommand;
 using FeedUpdateCommand = FeatherPod.Commands.Feed.UpdateCommand;
 using FeedCreateCommand = FeatherPod.Commands.Feed.CreateCommand;
@@ -1006,6 +1008,41 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                     break;
 
+                case MenuChoice.Note:
+                    if (!isConnected || httpClient == null)
+                    {
+                        Out.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                    }
+                    else if (currentFeed == null)
+                    {
+                        Out.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
+                        Out.BlankLine();
+                    }
+                    else
+                    {
+                        var noteEpisodes = await EpisodeHelpers.GetEpisodesAsync(httpClient, currentFeed.Id);
+                        if (noteEpisodes == null || noteEpisodes.Count == 0)
+                        {
+                            Out.MarkupLine("[yellow]No episodes available.[/]");
+                        }
+                        else
+                        {
+                            var noteEpisode = EpisodeHelpers.SelectEpisodeSingle(noteEpisodes);
+                            if (noteEpisode == null)
+                            {
+                                Out.Cancelled();
+                            }
+                            else
+                            {
+                                await HandleEpisodeNoteAsync(httpClient, currentFeed.Id, noteEpisode, cancellationToken);
+                            }
+                        }
+                    }
+
+                    WaitForKeyPress();
+
+                    break;
+
                 case MenuChoice.SwitchFeed:
                     if (!isConnected || httpClient == null)
                     {
@@ -1877,6 +1914,49 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         }
     }
 
+    private static async Task HandleEpisodeNoteAsync(HttpClient httpClient, string feedId, EpisodeModel episode, CancellationToken cancellationToken)
+    {
+        Out.BlankLine();
+        Out.MarkupLine($"  Title: [cyan]{Markup.Escape(episode.Title)}[/]");
+        EpisodeNoteCore.ShowNote(episode);
+        Out.BlankLine();
+
+        var action = new MenuBuilder<string?>()
+            .WithTitle("Episode note:")
+            .WithHint("(arrow keys or highlighted letter, Esc to cancel)")
+            .AddOption("S", "Set/edit note", "set")
+            .AddOption("C", "Clear note", "clear")
+            .AllowCancel()
+            .Show();
+
+        switch (action)
+        {
+            case "set":
+                Out.BlankLine();
+                var note = LineEditor.Edit("Note: ", episode.Note ?? "");
+                if (note != null)
+                {
+                    await EpisodeNoteCore.SetNoteAsync(httpClient, feedId, episode, note.Trim(), cancellationToken);
+                }
+                else
+                {
+                    Out.Cancelled();
+                }
+
+                break;
+
+            case "clear":
+                await EpisodeNoteCore.ClearNoteAsync(httpClient, feedId, episode, cancellationToken);
+
+                break;
+
+            default:
+                Out.Cancelled();
+
+                break;
+        }
+    }
+
     private static MenuChoice ShowMenu(FeedConfig? currentFeed, bool isConnected, CurrentUserInfo? currentUser, bool adminFeaturesEnabled)
     {
         Out.BlankLine().Flush();
@@ -1888,6 +1968,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             .AddOption("P", "Push episodes", MenuChoice.Push)
             .AddOption("D", "Delete episodes", MenuChoice.Delete)
             .AddOption("R", "Rename episode", MenuChoice.Rename)
+            .AddOption("N", "Episode note", MenuChoice.Note)
             .AddOption("V", "Move/Copy episodes", MenuChoice.MoveCopy);
 
         // Only show User Management and YouTube for Admin users when admin features are enabled
@@ -1919,6 +2000,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         Push,
         Delete,
         Rename,
+        Note,
         MoveCopy,
         UserManagement,
         YouTube,
