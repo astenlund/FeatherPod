@@ -3,7 +3,7 @@ import { isActiveWork, isInUploadPhase, showToast } from './utils.js';
 import { getApiKey } from './auth.js';
 import { getQueue } from './queue.js';
 
-export function isInstalledPwa() {
+function isInstalledPwa() {
     return FAKE_PWA || window.matchMedia('(display-mode: standalone)').matches;
 }
 
@@ -11,18 +11,33 @@ function isPushSupported() {
     return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 }
 
-export function isNotificationToggleAvailable() {
-    if (isNotificationToggleAvailable._cached !== undefined) {
-        return isNotificationToggleAvailable._cached;
-    }
-    const toggle = document.getElementById('notif-toggle');
-    isNotificationToggleAvailable._cached = !!(toggle && VAPID_PUBLIC_KEY && isPushSupported() && isInstalledPwa());
+let toggleAvailable;
 
-    return isNotificationToggleAvailable._cached;
+export function isNotificationToggleAvailable() {
+    if (toggleAvailable === undefined) {
+        const toggle = document.getElementById('notif-toggle');
+        toggleAvailable = !!(toggle && VAPID_PUBLIC_KEY && isPushSupported() && isInstalledPwa());
+    }
+
+    return toggleAvailable;
 }
 
 /**
- * Initialize the push notification toggle button.
+ * Set both representations of the toggle's enabled state (aria-pressed and localStorage) so they cannot drift.
+ * @param {boolean} enabled
+ */
+function setToggleState(enabled) {
+    document.getElementById('notif-toggle').setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    if (enabled) {
+        localStorage.setItem(NOTIF_ENABLED_KEY, 'true');
+    } else {
+        localStorage.removeItem(NOTIF_ENABLED_KEY);
+    }
+}
+
+/**
+ * Initialize the push notification toggle button. Restores a previously enabled
+ * toggle by re-subscribing, rolling the state back if the subscription fails.
  */
 export function initNotificationToggle() {
     if (!isNotificationToggleAvailable()) {
@@ -34,11 +49,12 @@ export function initNotificationToggle() {
     const hasActiveQueue = queue.some(e => isActiveWork(e));
     const wasEnabled = localStorage.getItem(NOTIF_ENABLED_KEY) === 'true';
     if (hasActiveQueue && wasEnabled && Notification.permission === 'granted') {
-        toggle.setAttribute('aria-pressed', 'true');
-        subscribeToPush().catch(() => {});
-        syncPushSession(undefined, queue);
+        setToggleState(true);
+        subscribeToPush()
+            .then(() => syncPushSession(undefined, queue))
+            .catch(() => setToggleState(false));
     } else {
-        localStorage.removeItem(NOTIF_ENABLED_KEY);
+        setToggleState(false);
         deleteServerSubscription();
     }
 
@@ -83,8 +99,8 @@ async function deleteServerSubscription() {
 
 /**
  * Sync active jobIds with the server's push session.
- * @param {string[]} [jobIds] - specific jobIds to track
- * @param {Array} uploadQueue - current upload queue
+ * @param {string[]} [jobIds] - specific jobIds to track; derived from uploadQueue when omitted
+ * @param {Array} uploadQueue - current upload queue (required; every caller passes a real queue)
  */
 export function syncPushSession(jobIds, uploadQueue) {
     if (!isNotificationToggleEnabled()) {
@@ -113,10 +129,8 @@ export function resetNotificationToggle() {
     if (!isNotificationToggleAvailable()) {
         return;
     }
-    const toggle = document.getElementById('notif-toggle');
-    const wasEnabled = toggle.getAttribute('aria-pressed') === 'true';
-    toggle.setAttribute('aria-pressed', 'false');
-    localStorage.removeItem(NOTIF_ENABLED_KEY);
+    const wasEnabled = isNotificationToggleEnabled();
+    setToggleState(false);
     if (wasEnabled) {
         deleteServerSubscription();
     }
@@ -149,8 +163,7 @@ async function handleNotificationToggle() {
     toggle.disabled = true;
 
     if (isEnabled) {
-        toggle.setAttribute('aria-pressed', 'false');
-        localStorage.removeItem(NOTIF_ENABLED_KEY);
+        setToggleState(false);
         if (FAKE_PWA) {
             toggle.disabled = false;
         } else {
@@ -163,8 +176,7 @@ async function handleNotificationToggle() {
                 }
             } catch (e) {
                 console.warn('Failed to unsubscribe from push notifications:', e);
-                toggle.setAttribute('aria-pressed', 'true');
-                localStorage.setItem(NOTIF_ENABLED_KEY, 'true');
+                setToggleState(true);
                 showToast("Couldn't disable notifications", 5000, 'notif-toggle-error');
             } finally {
                 toggle.disabled = false;
@@ -178,8 +190,7 @@ async function handleNotificationToggle() {
             return;
         }
 
-        toggle.setAttribute('aria-pressed', 'true');
-        localStorage.setItem(NOTIF_ENABLED_KEY, 'true');
+        setToggleState(true);
         if (FAKE_PWA) {
             showBatteryOptimizationHint();
             toggle.disabled = false;
@@ -190,8 +201,7 @@ async function handleNotificationToggle() {
                 showBatteryOptimizationHint();
             } catch (e) {
                 console.warn('Failed to subscribe to push notifications:', e);
-                toggle.setAttribute('aria-pressed', 'false');
-                localStorage.removeItem(NOTIF_ENABLED_KEY);
+                setToggleState(false);
                 showToast("Couldn't enable notifications", 5000, 'notif-toggle-error');
             } finally {
                 toggle.disabled = false;
