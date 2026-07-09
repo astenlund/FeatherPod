@@ -82,7 +82,7 @@ builder.Services.AddSingleton(sp =>
 
 builder.Services.AddSingleton<IAudioNormalizationService, AudioNormalizationService>();
 
-// HttpClient for App Service cache refresh
+// HttpClient for signaling job progress and completion to the App Service
 builder.Services.AddHttpClient();
 
 builder.Build().Run();

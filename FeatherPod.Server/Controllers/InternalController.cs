@@ -15,55 +15,17 @@ namespace FeatherPod.Server.Controllers;
 [Route("api/internal")]
 public class InternalController : ControllerBase
 {
-    private readonly EpisodeService _episodeService;
     private readonly IJobProgressChannel _progressChannel;
-    private readonly IFeedEventChannel _feedEventChannel;
     private readonly PushNotificationService _pushNotificationService;
     private readonly JobCompletionService _jobCompletionService;
     private readonly string? _internalKey;
 
-    public InternalController(EpisodeService episodeService, IJobProgressChannel progressChannel, IFeedEventChannel feedEventChannel, PushNotificationService pushNotificationService, JobCompletionService jobCompletionService, IConfiguration configuration)
+    public InternalController(IJobProgressChannel progressChannel, PushNotificationService pushNotificationService, JobCompletionService jobCompletionService, IConfiguration configuration)
     {
-        _episodeService = episodeService;
         _progressChannel = progressChannel;
-        _feedEventChannel = feedEventChannel;
         _pushNotificationService = pushNotificationService;
         _jobCompletionService = jobCompletionService;
         _internalKey = configuration["Internal:Key"];
-    }
-
-    /// <summary>
-    /// Refresh the in-memory cache for a feed.
-    /// Called by Azure Function after normalization completes.
-    /// </summary>
-    [HttpPost("feeds/{feedId}/refresh")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> RefreshFeedCache(string feedId)
-    {
-        if (ValidateInternalKey() is { } authError)
-        {
-            return authError;
-        }
-
-        if (!InputValidation.IsValidFeedId(feedId))
-        {
-            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
-        }
-
-        var feed = await _episodeService.GetFeedAsync(feedId);
-        if (feed == null)
-        {
-            return NotFound(new { error = $"Feed '{feedId}' not found" });
-        }
-
-        await _episodeService.SyncWithBlobStorageAsync(feedId);
-
-        _feedEventChannel.Publish(feedId, "episode-added");
-
-        return Ok(new { message = $"Cache refreshed for feed '{feedId}'" });
     }
 
     /// <summary>
