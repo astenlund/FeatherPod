@@ -276,6 +276,9 @@ FeatherPod episode push *.mp3 --delete-after       # Delete source files after u
 FeatherPod episode list -f my-podcast
 FeatherPod episode delete -f my-podcast            # Interactive multi-select
 FeatherPod episode rename -f my-podcast --suggest  # AI-suggested title with inline editing
+FeatherPod episode rename -f my-podcast --suggest --note "two hosts, ep 12"  # Extra context for the AI
+FeatherPod episode note set abc123 -f my-podcast -n "Context for AI title suggestions"
+FeatherPod episode note get / clear abc123 -f my-podcast
 FeatherPod episode move --from feed1 --to feed2 --episode "Episode*"
 FeatherPod episode copy --from feed1 --to feed2
 
@@ -293,6 +296,9 @@ FeatherPod feed check-integrity -f my-podcast
 
 # Users (requires: preferences admin-features enable)
 FeatherPod user create / list / delete / rotate-key / grant / revoke
+
+# Admin bootstrap (no API key needed; writes users.json directly to storage)
+FeatherPod admin seed                               # Create dev admin user and print its API key
 
 # YouTube (requires: preferences admin-features enable)
 FeatherPod youtube set-cookies cookies.txt          # Upload cookies.txt for yt-dlp auth
