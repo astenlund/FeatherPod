@@ -1,6 +1,7 @@
 using FeatherPod.Shared.Models;
 using FeatherPod.Server.Services;
 
+using static System.StringComparison;
 using static System.StringSplitOptions;
 using static FeatherPod.Shared.Models.UserRole;
 
@@ -92,35 +93,38 @@ public class ApiKeyAuthMiddleware
 
     private static bool IsProtectedEndpoint(string path, string method)
     {
+        // Endpoint routing matches paths case-insensitively, so every comparison here must too --
+        // a case-sensitive miss would classify a routable request as unprotected and skip auth entirely
         // Public endpoints (no authentication required)
-        if (method == "GET")
+        if (HttpMethods.IsGet(method))
         {
             // Public read endpoints
-            if (path.StartsWith("/api/version") ||
-                path.StartsWith("/api/feeds") && !path.Contains("/episodes") && !path.Contains("/icon") && !path.Contains("/check-integrity") && !path.Contains("/jobs") ||
-                path.StartsWith("/api/jobs/") ||
-                path.EndsWith("/feed.xml") ||
-                path.EndsWith("/icon.png") ||
-                path.Contains("/audio/"))
+            if (path.StartsWith("/api/version", OrdinalIgnoreCase) ||
+                path.StartsWith("/api/feeds", OrdinalIgnoreCase) && !path.Contains("/episodes", OrdinalIgnoreCase) && !path.Contains("/icon", OrdinalIgnoreCase) &&
+                    !path.Contains("/check-integrity", OrdinalIgnoreCase) && !path.Contains("/jobs", OrdinalIgnoreCase) ||
+                path.StartsWith("/api/jobs/", OrdinalIgnoreCase) ||
+                path.EndsWith("/feed.xml", OrdinalIgnoreCase) ||
+                path.EndsWith("/icon.png", OrdinalIgnoreCase) ||
+                path.Contains("/audio/", OrdinalIgnoreCase))
             {
                 return false;
             }
         }
 
         // Internal endpoints use their own X-Internal-Key authentication
-        if (path.StartsWith("/api/internal/"))
+        if (path.StartsWith("/api/internal/", OrdinalIgnoreCase))
         {
             return false;
         }
 
         // All other /api/* endpoints are protected by default
-        if (path.StartsWith("/api/"))
+        if (path.StartsWith("/api/", OrdinalIgnoreCase))
         {
             return true;
         }
 
         // Old-style endpoints (to be removed after migration)
-        return path.Contains("/api/episodes") || path.Contains("/api/icon");
+        return path.Contains("/api/episodes", OrdinalIgnoreCase) || path.Contains("/api/icon", OrdinalIgnoreCase);
     }
 
     private static async Task<bool> CheckPermissionsAsync(User user, string path, IUserService userService)
@@ -133,29 +137,29 @@ public class ApiKeyAuthMiddleware
 
         // Job status polling - allow any authenticated user
         // Note: Users can only get job IDs from their own upload responses
-        if (path.StartsWith("/api/jobs/"))
+        if (path.StartsWith("/api/jobs/", OrdinalIgnoreCase))
         {
             return true;
         }
 
         // YouTube cookie management - allow any authenticated user
         // Admin-only restrictions (POST, DELETE) are handled inside the controller
-        if (path.StartsWith("/api/youtube/cookies"))
+        if (path.StartsWith("/api/youtube/cookies", OrdinalIgnoreCase))
         {
             return true;
         }
 
         // User management endpoints are admin-only, except /api/users/me and rotating own key
-        if (path.StartsWith("/api/users"))
+        if (path.StartsWith("/api/users", OrdinalIgnoreCase))
         {
             // Allow any authenticated user to access /api/users/me
-            if (path.Equals("/api/users/me", StringComparison.OrdinalIgnoreCase))
+            if (path.Equals("/api/users/me", OrdinalIgnoreCase))
             {
                 return true;
             }
 
             // Allow users to rotate their own API key
-            if (path.Equals($"/api/users/{user.Id}/key/regenerate", StringComparison.OrdinalIgnoreCase))
+            if (path.Equals($"/api/users/{user.Id}/key/regenerate", OrdinalIgnoreCase))
             {
                 return true;
             }
@@ -164,13 +168,13 @@ public class ApiKeyAuthMiddleware
         }
 
         // Feed-level endpoints that handle their own authorization
-        if (path.Equals("/api/feeds/check-integrity", StringComparison.OrdinalIgnoreCase))
+        if (path.Equals("/api/feeds/check-integrity", OrdinalIgnoreCase))
         {
             return true;
         }
 
         // Feed-specific endpoints - check feed ownership
-        if (path.StartsWith("/api/feeds/"))
+        if (path.StartsWith("/api/feeds/", OrdinalIgnoreCase))
         {
             var feedId = ExtractFeedId(path);
             if (feedId != null)
@@ -180,7 +184,7 @@ public class ApiKeyAuthMiddleware
         }
 
         // Old-style feed-specific endpoints (to be removed after migration)
-        if (path.Contains("/api/episodes") || path.Contains("/api/icon"))
+        if (path.Contains("/api/episodes", OrdinalIgnoreCase) || path.Contains("/api/icon", OrdinalIgnoreCase))
         {
             var feedId = ExtractFeedIdFromLegacyPath(path);
             if (feedId != null)
@@ -200,7 +204,7 @@ public class ApiKeyAuthMiddleware
         // /api/feeds/{feedId}/icon
         // /api/feeds/{feedId}/episodes/{id}/move
 
-        if (!path.StartsWith("/api/feeds/"))
+        if (!path.StartsWith("/api/feeds/", OrdinalIgnoreCase))
         {
             return null;
         }
@@ -221,9 +225,9 @@ public class ApiKeyAuthMiddleware
 
         var segments = path.Split('/', RemoveEmptyEntries);
 
-        // Format: {feedId}/api/...
-        return segments is [_, "api", ..] ?
-            segments[0] : // feedId is the 1st segment (index 0)
+        // Format: {feedId}/api/... (the "api" literal matches case-insensitively like routing; the feedId keeps its case)
+        return segments is [var feedId, var api, ..] && api.Equals("api", OrdinalIgnoreCase) ?
+            feedId :
             null;
     }
 }
