@@ -14,6 +14,13 @@ let renameOriginalTitle = '';
 let notePanelSnapshot = '';
 /** @type {string} */
 let noteModalOriginalValue = '';
+/** @type {((episodeId: string, newTitle: string) => void)|null} */
+let onEpisodeRenamed = null;
+
+/** Register a callback invoked after an episode's title is renamed. */
+export function registerEpisodeRenamedCallback(fn) {
+    onEpisodeRenamed = fn;
+}
 
 export function getContextMenuTargetId() {
     return contextMenuTargetId;
@@ -615,6 +622,9 @@ export async function saveEpisodeChanges(episodeId, newTitle) {
                     updateHistoryInfoCard(ep);
                 }
             }
+
+            // Propagate the rename to any queue entries for this episode
+            onEpisodeRenamed?.(episodeId, updated.title);
         }
     } catch (err) {
         console.warn('Error saving episode:', err);

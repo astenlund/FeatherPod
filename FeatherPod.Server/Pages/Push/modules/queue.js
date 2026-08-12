@@ -506,6 +506,24 @@ async function processEntry(entry) {
 }
 
 /**
+ * Update the displayed name of a queue entry in place and repaint just the name
+ * element. Used by every title-change path (job status updates and history
+ * renames) so the queue has one surgical mechanism instead of the heavier
+ * full-item rebuild, which would recreate the progress bar that a normalizing
+ * entry's animator slot is driving.
+ * @param {QueueEntry} entry
+ * @param {string} title
+ */
+function updateQueueItemName(entry, title) {
+    entry.title = title;
+    const nameEl = document.querySelector('#queue-item-' + entry.id + ' .queue-item-name');
+    if (nameEl) {
+        nameEl.textContent = title;
+        nameEl.title = entry.fileName;
+    }
+}
+
+/**
  * Update a queue entry from a job status event. Tracks transcription state,
  * then updates the normalization progress bar (which also handles the
  * "Transcribing" indeterminate state when normalization is complete).
@@ -514,16 +532,41 @@ async function processEntry(entry) {
  */
 export function updateEntryFromJobStatus(entry, job) {
     if (job.title && job.title !== entry.title) {
-        entry.title = job.title;
-        const nameEl = document.querySelector('#queue-item-' + entry.id + ' .queue-item-name');
-        if (nameEl) {
-            nameEl.textContent = job.title;
-            nameEl.title = entry.fileName;
-        }
+        updateQueueItemName(entry, job.title);
     }
 
     updateTranscriptionState(entry, job);
     updateNormalizationProgress(entry, job);
+}
+
+/**
+ * Update the displayed title of any queue entries that reference the given episode.
+ * Matches by the resolved episode ID (terminal entries) or the job's episodeId
+ * (set by server-sync during normalization). Called when an episode is renamed
+ * in the history panel so the queue reflects the new name.
+ * @param {string} episodeId
+ * @param {string} newTitle
+ */
+export function updateQueueTitleForEpisode(episodeId, newTitle) {
+    let changed = false;
+
+    for (const entry of uploadQueue) {
+        const isMatch = entry.episode?.id === episodeId || entry.episodeId === episodeId;
+        if (!isMatch) {
+            continue;
+        }
+
+        updateQueueItemName(entry, newTitle);
+        if (entry.episode) {
+            entry.episode = { ...entry.episode, title: newTitle };
+        }
+
+        changed = true;
+    }
+
+    if (changed) {
+        saveQueueState();
+    }
 }
 
 /**
