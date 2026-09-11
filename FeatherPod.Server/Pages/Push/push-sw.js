@@ -20,6 +20,7 @@ const CACHED_ASSET_SUFFIXES = [
     '/modules/history.js',
     '/modules/editing.js',
     '/modules/server-sync.js',
+    '/modules/youtube-url.js',
     '/modules/youtube.js',
 ];
 

@@ -117,6 +117,27 @@ export default [
         },
     },
 
+    // Node unit tests for the pure push-page modules (run via `npm test`)
+    {
+        files: ['tests/**/*.js'],
+        plugins: {
+            import: importPlugin,
+        },
+        languageOptions: {
+            ecmaVersion: 'latest',
+            sourceType: 'module',
+            globals: {
+                process: 'readonly',
+            },
+        },
+        rules: {
+            ...sharedRules,
+            'import/no-unresolved': 'error',
+            'import/no-duplicates': 'error',
+            'import/named': 'error',
+        },
+    },
+
     // Service worker specific globals
     {
         files: [`${pushDir}push-sw.js`],

@@ -2,8 +2,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "lint": "eslint FeatherPod.Server/Pages/Push/",
-    "lint:fix": "eslint --fix FeatherPod.Server/Pages/Push/"
+    "lint": "eslint FeatherPod.Server/Pages/Push/ tests/",
+    "lint:fix": "eslint --fix FeatherPod.Server/Pages/Push/ tests/",
+    "test": "node --test \"tests/**/*.test.js\""
   },
   "devDependencies": {
     "eslint": "^9.39.4",

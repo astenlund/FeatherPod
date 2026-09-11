@@ -8,6 +8,10 @@
  * - Long-press (500ms) on select-file button or drop zone reads clipboard (iOS);
  *   falls back to a paste-input modal when Clipboard API is denied (iOS PWA)
  *
+ * URL parsing lives in youtube-url.js (pure, unit-tested); every detection path
+ * above funnels its text through extractYouTubeUrl, which returns the canonical
+ * watch URL rebuilt from the matched video id.
+ *
  * On detection, shows an import dialog with audio/video toggle, then POSTs to
  * /api/feeds/{feedId}/youtube with the oEmbed title for instant queue display.
  * On 202, creates a queue entry and hands off to existing queue monitoring.
@@ -17,15 +21,9 @@ import { FEED_ID } from './config.js';
 import { getApiKey, getUserRole } from './auth.js';
 import { getCurrentState } from './state.js';
 import { showToast } from './utils.js';
+import { extractYouTubeUrl } from './youtube-url.js';
 
 const YT_FORMAT_PREFS_KEY = 'featherpod_yt_format_prefs';
-const YT_VIDEO_REGEX = /(?:youtube\.com\/watch\?v=|youtu\.be\/|m\.youtube\.com\/watch\?v=)([a-zA-Z0-9_-]{11})/;
-const YT_REJECT_PATTERNS = [
-    /[?&]list=/,
-    /youtube\.com\/(?:channel\/|@|c\/)/,
-    /youtube\.com\/shorts\//,
-    /youtube\.com\/results/
-];
 
 /** @type {Function|null} Callback to create a queue entry from a YouTube 202 response */
 let onYouTubeJobCreated = null;
@@ -37,34 +35,6 @@ let onYouTubeJobCreated = null;
  */
 export function registerYouTubeJobCallback(callback) {
     onYouTubeJobCreated = callback;
-}
-
-/**
- * Extract a YouTube video URL from text. Returns the full URL if valid, null otherwise.
- * @param {string} text
- * @returns {string|null}
- */
-export function extractYouTubeUrl(text) {
-    if (!text) {
-        return null;
-    }
-
-    for (const pattern of YT_REJECT_PATTERNS) {
-        if (pattern.test(text)) {
-            return null;
-        }
-    }
-
-    const match = text.match(YT_VIDEO_REGEX);
-    if (!match) {
-        return null;
-    }
-
-    // Return the matched portion that contains the video URL
-    // Try to extract a full URL from the text
-    const urlMatch = text.match(/https?:\/\/[^\s<>"']+/);
-
-    return urlMatch ? urlMatch[0] : `https://www.youtube.com/watch?v=${match[1]}`;
 }
 
 /**
