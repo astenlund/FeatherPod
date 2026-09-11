@@ -24,22 +24,31 @@ export function isWakeLockTogglePressed() {
     return toggle?.getAttribute('aria-pressed') === 'true';
 }
 
+/**
+ * Wire the toggle's click handler and restore a persisted preference while the toggle is visible.
+ * Visibility owns the pressed state: a hidden toggle stays unpressed so the visibilitychange
+ * re-acquire in push.js stays idle after a reload with no active work.
+ */
 export function initWakeLockToggle() {
     if (!wakeLockAvailable) {
         return;
     }
-    if (localStorage.getItem(WAKE_LOCK_KEY) === 'true') {
+    const toggle = document.getElementById('wake-lock-toggle');
+    if (!toggle.hidden && localStorage.getItem(WAKE_LOCK_KEY) === 'true') {
         setToggleState(true);
     }
-    document.getElementById('wake-lock-toggle').addEventListener('click', handleWakeLockToggle);
+    toggle.addEventListener('click', handleWakeLockToggle);
 }
 
 /**
- * Request the screen wake lock.
+ * Request the screen wake lock unless one is already held.
  * @returns {Promise<boolean>} false only when this request was the latest one and it failed;
  *   a request superseded by a newer acquire or release leaves the outcome to that newer call
  */
 export async function acquireWakeLock() {
+    if (wakeLockSentinel) {
+        return true;
+    }
     const gen = ++wakeLockGeneration;
     try {
         const sentinel = await navigator.wakeLock.request('screen');
