@@ -767,27 +767,43 @@ document.getElementById('file-input').addEventListener('change', (e) => {
     e.target.value = '';
 });
 
-const dropZone = document.getElementById('drop-zone');
-dropZone.addEventListener('dragover', (e) => {
+/**
+ * Route a drop on either drop zone. A YouTube URL in the text payload wins over
+ * dropped files: a linked-thumbnail drag from YouTube search results carries both
+ * the image file and the watch URL, and the image must not reach the upload gate.
+ * Only when no YouTube URL is present do the dropped files go to the upload queue.
+ * @param {DragEvent} e
+ * @param {HTMLElement} zone
+ */
+function routeDrop(e, zone) {
     e.preventDefault();
-    dropZone.classList.add('drag-over');
-});
-dropZone.addEventListener('dragleave', (e) => {
-    e.preventDefault();
-    dropZone.classList.remove('drag-over');
-});
-dropZone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropZone.classList.remove('drag-over');
+    zone.classList.remove('drag-over');
+    if (handleYouTubeDrop(e)) {
+        return;
+    }
     const files = Array.from(e.dataTransfer.files);
     if (files.length > 0) {
         addFilesToQueue(files);
-
-        return;
     }
-    // No files -- check for YouTube URL (e.g. dragged from address bar)
-    handleYouTubeDrop(e);
-});
+}
+
+/**
+ * Attach drag-over highlighting and drop routing to a drop zone.
+ * @param {HTMLElement} zone
+ */
+function wireDropZone(zone) {
+    zone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        zone.classList.add('drag-over');
+    });
+    zone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        zone.classList.remove('drag-over');
+    });
+    zone.addEventListener('drop', (e) => routeDrop(e, zone));
+}
+
+wireDropZone(document.getElementById('drop-zone'));
 
 // Queue state file inputs
 document.getElementById('queue-add-files')?.addEventListener('click', () => {
@@ -804,25 +820,7 @@ document.getElementById('queue-file-input')?.addEventListener('change', (e) => {
 
 const queueDropZone = document.getElementById('queue-drop-zone');
 if (queueDropZone) {
-    queueDropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        queueDropZone.classList.add('drag-over');
-    });
-    queueDropZone.addEventListener('dragleave', (e) => {
-        e.preventDefault();
-        queueDropZone.classList.remove('drag-over');
-    });
-    queueDropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        queueDropZone.classList.remove('drag-over');
-        const files = Array.from(e.dataTransfer.files);
-        if (files.length > 0) {
-            addFilesToQueue(files);
-
-            return;
-        }
-        handleYouTubeDrop(e);
-    });
+    wireDropZone(queueDropZone);
 }
 
 // History section

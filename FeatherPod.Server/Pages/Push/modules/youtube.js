@@ -3,7 +3,8 @@
  *
  * Detects YouTube URLs from:
  * - Document-level paste events (runs before API key paste detection)
- * - Drop zone (when no files are dropped, checks text/plain and text/uri-list)
+ * - Drop zones (text/uri-list then text/plain, checked before any dropped files so a
+ *   linked-thumbnail drag from YouTube search results imports instead of uploading the image)
  * - ?yt= query param (from PWA share target redirect)
  * - Long-press (500ms) on select-file button or drop zone reads clipboard (iOS);
  *   falls back to a paste-input modal when Clipboard API is denied (iOS PWA)
@@ -62,12 +63,18 @@ export function handlePaste(e) {
 }
 
 /**
- * Handle a drop event when no files are present. Returns true if a YouTube URL was found.
+ * Handle a drop event. Scans the text payload for a YouTube URL, text/uri-list first
+ * (the canonical link slot of an anchor or linked-image drag) then text/plain, regardless
+ * of whether files were dropped alongside. Returns true if a YouTube URL was found, in
+ * which case the caller must not treat the dropped files as an upload.
  * @param {DragEvent} e
  * @returns {boolean}
  */
 export function handleDrop(e) {
-    const text = e.dataTransfer.getData('text/plain') || e.dataTransfer.getData('text/uri-list') || '';
+    const text = ['text/uri-list', 'text/plain']
+        .map(type => e.dataTransfer.getData(type))
+        .filter(Boolean)
+        .join('\n');
     const url = extractYouTubeUrl(text);
     if (!url) {
         return false;
