@@ -159,7 +159,7 @@ public class ApiKeyAuthMiddleware
             }
 
             // Allow users to rotate their own API key
-            if (path.Equals($"/api/users/{user.Id}/key/regenerate", OrdinalIgnoreCase))
+            if (IsOwnKeyRegenerationPath(path, user.Id))
             {
                 return true;
             }
@@ -195,6 +195,20 @@ public class ApiKeyAuthMiddleware
 
         // Default deny
         return false;
+    }
+
+    private static bool IsOwnKeyRegenerationPath(string path, string userId)
+    {
+        var segments = path.Split('/', RemoveEmptyEntries);
+
+        // Format: api/users/{userId}/key/regenerate (the literals match case-insensitively like routing; the userId segment
+        // must match the authenticated user's ID exactly, or a case-colliding ID could regenerate the other user's key)
+        return segments is [var api, var users, var routeUserId, var key, var regenerate] &&
+            api.Equals("api", OrdinalIgnoreCase) &&
+            users.Equals("users", OrdinalIgnoreCase) &&
+            routeUserId.Equals(userId, Ordinal) &&
+            key.Equals("key", OrdinalIgnoreCase) &&
+            regenerate.Equals("regenerate", OrdinalIgnoreCase);
     }
 
     private static string? ExtractFeedId(string path)

@@ -124,10 +124,11 @@ public sealed class UserService : IUserService, IDisposable
         await _lock.WaitAsync();
         try
         {
-            // Check if user already exists
-            if (_usersMetadata.Users.Any(u => u.Id == user.Id))
+            // Uniqueness is case-insensitive: routing matches the user-id path segment case-insensitively,
+            // so case-colliding IDs would let one user reach the other's per-user endpoints
+            if (_usersMetadata.Users.Any(u => u.Id.Equals(user.Id, StringComparison.OrdinalIgnoreCase)))
             {
-                throw new InvalidOperationException($"User with ID '{user.Id}' already exists.");
+                throw new InvalidOperationException($"User with ID '{user.Id}' already exists (user IDs are case-insensitive).");
             }
 
             // Create user with hashed key and salt

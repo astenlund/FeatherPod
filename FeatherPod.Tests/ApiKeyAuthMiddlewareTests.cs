@@ -221,6 +221,47 @@ public class ApiKeyAuthMiddlewareTests
         Assert.Equal("My-Feed", checkedFeedId);
     }
 
+    [Fact]
+    public async Task InvokeAsync_FeedOwner_RegenerateOwnKey_IsAuthorized()
+    {
+        // Arrange
+        var userService = new StubUserService { UserForApiKey = CreateFeedOwner() };
+
+        // Act
+        var (_, nextCalled) = await RunMiddlewareAsync("POST", "/API/Users/user1/Key/Regenerate", userService, ApiKey);
+
+        // Assert
+        Assert.True(nextCalled);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_FeedOwner_RegenerateCaseCollidingUserKey_Returns403()
+    {
+        // Arrange
+        var userService = new StubUserService { UserForApiKey = CreateFeedOwner() };
+
+        // Act
+        var (context, nextCalled) = await RunMiddlewareAsync("POST", "/api/users/USER1/key/regenerate", userService, ApiKey);
+
+        // Assert
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        Assert.False(nextCalled);
+    }
+
+    [Fact]
+    public async Task InvokeAsync_FeedOwner_RegenerateOtherUserKey_Returns403()
+    {
+        // Arrange
+        var userService = new StubUserService { UserForApiKey = CreateFeedOwner() };
+
+        // Act
+        var (context, nextCalled) = await RunMiddlewareAsync("POST", "/api/users/user2/key/regenerate", userService, ApiKey);
+
+        // Assert
+        Assert.Equal(StatusCodes.Status403Forbidden, context.Response.StatusCode);
+        Assert.False(nextCalled);
+    }
+
     private static User CreateFeedOwner() => new()
     {
         Id = "user1",

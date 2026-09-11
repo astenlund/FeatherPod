@@ -117,6 +117,42 @@ public class UserServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task CreateUserAsync_ShouldRejectCaseCollidingUserId()
+    {
+        // Arrange
+        var service = CreateService();
+        await service.LoadUsersAsync();
+
+        var user1 = new User
+        {
+            Id = "testuser",
+            Name = "Test User",
+            Email = "test@example.com",
+            Role = UserRole.FeedOwner,
+            OwnedFeeds = [],
+            ApiKeyHash = "",
+            CreatedAt = DateTime.UtcNow
+        };
+        await service.CreateUserAsync(user1);
+
+        var user2 = new User
+        {
+            Id = "TestUser",
+            Name = "Another User",
+            Email = "another@example.com",
+            Role = UserRole.FeedOwner,
+            OwnedFeeds = [],
+            ApiKeyHash = "",
+            CreatedAt = DateTime.UtcNow
+        };
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await service.CreateUserAsync(user2));
+        Assert.Single(await service.GetAllUsersAsync());
+    }
+
+    [Fact]
     public async Task GetUserByIdAsync_ShouldReturnUser_WhenExists()
     {
         // Arrange
