@@ -12,6 +12,7 @@ const YT_REJECT_PATTERNS = [
     /youtube\.com\/shorts\//,
     /youtube\.com\/results/
 ];
+const YT_FILE_NAME_REGEX = /^([a-zA-Z0-9_-]{11})\.(m4a|mp4)$/;
 
 /**
  * Build the canonical watch URL for a video id.
@@ -45,4 +46,17 @@ export function extractYouTubeUrl(text) {
     const match = text.match(YT_VIDEO_REGEX);
 
     return match ? canonicalYouTubeUrl(match[1]) : null;
+}
+
+/**
+ * Parse the server-shaped file name of a YouTube import job (<videoId>.m4a for audio,
+ * <videoId>.mp4 for video) back into its video id and format. Returns null for any
+ * other name, including ordinary uploads.
+ * @param {string|null|undefined} fileName
+ * @returns {{videoId: string, format: 'audio'|'video'}|null}
+ */
+export function parseYouTubeFileName(fileName) {
+    const match = typeof fileName === 'string' ? fileName.match(YT_FILE_NAME_REGEX) : null;
+
+    return match ? { videoId: match[1], format: match[2] === 'mp4' ? 'video' : 'audio' } : null;
 }

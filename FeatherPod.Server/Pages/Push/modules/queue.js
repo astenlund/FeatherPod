@@ -9,6 +9,7 @@ import { resetWakeLockToggle, setWakeLockToggleVisible } from './wake-lock.js';
 import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetchBrowserUploads, initHistorySection, invalidateBrowserUploadsCache } from './history.js';
 import { getDismissedJobIds, saveDismissedJobIds, notifyLocalSourceUploaded } from './server-sync.js';
 import { showYouTubeCookieDialog } from './youtube.js';
+import { parseYouTubeFileName } from './youtube-url.js';
 
 /** @type {Array<import('../push.js').QueueEntry>} */
 let uploadQueue = [];
@@ -22,6 +23,19 @@ let nextEntryId = 0;
 const Q_MORPH_DURATION = 400;
 
 const COLLAPSED_HEIGHT_DEFAULT = 280;
+
+/**
+ * Build the descriptor youtube.js needs to re-submit an import after a cookie upload.
+ * The video id and format come from the server-shaped fileName (<videoId>.m4a|.mp4),
+ * so entries discovered from other devices qualify too; null for any other name.
+ * @param {Object} entry - Failed queue entry whose job reported authRequired
+ * @returns {{videoId: string, format: 'audio'|'video', title: string|null, entryId: string}|null}
+ */
+function cookieRetryFor(entry) {
+    const parsed = parseYouTubeFileName(entry.fileName);
+
+    return parsed ? { ...parsed, title: entry.title ?? null, entryId: entry.id } : null;
+}
 
 /**
  * Build a minimal episode object from job status data for local history,
@@ -771,7 +785,7 @@ function monitorEntryNormalization(entry) {
                 entry.status = 'failed';
                 entry.error = lastStatus?.error || 'Normalization failed';
                 if (lastStatus?.authRequired) {
-                    showYouTubeCookieDialog();
+                    showYouTubeCookieDialog(cookieRetryFor(entry));
                 }
                 progressAnimator.removeSlot(entry.id);
                 updateQueueItemInDOM(entry);
@@ -862,7 +876,7 @@ async function pollEntryNormalization(entry) {
                 entry.status = 'failed';
                 entry.error = job.error || 'Normalization failed';
                 if (job.authRequired) {
-                    showYouTubeCookieDialog();
+                    showYouTubeCookieDialog(cookieRetryFor(entry));
                 }
                 progressAnimator.removeSlot(entry.id);
 

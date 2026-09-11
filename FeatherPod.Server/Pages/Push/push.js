@@ -28,7 +28,7 @@ import { initNotificationToggle } from './modules/notifications.js';
 import { progressAnimator } from './modules/progress.js';
 import { showState, getCurrentState, updateQueueTitle, showError, showWarningBanner, setNoKeyError, cacheLayoutDimensions } from './modules/state.js';
 import { renderQueueList } from './modules/queue-ui.js';
-import { getQueue, initQueue, restoreQueueState, addFilesToQueue, clearQueueState, clearTerminalEntries, monitorEntryNormalizationInBackground, updateQueueTitleForEpisode } from './modules/queue.js';
+import { getQueue, initQueue, restoreQueueState, addFilesToQueue, clearQueueState, clearTerminalEntries, dismissEntry, monitorEntryNormalizationInBackground, updateQueueTitleForEpisode } from './modules/queue.js';
 import { initHistorySection, collapseHistoryImmediate, toggleHistorySection, changeHistoryFilter, selectHistoryUpload, updateHistoryListScrollState, getHistoryFilter, getHistoryPanelPushedState, setHistoryPanelPushedState, getHistoryData, getHistorySelectedId, refreshHistoryList } from './modules/history.js';
 import { getContextMenuTargetId, hideContextMenu, showRenameModal, hideRenameModal, showDeleteConfirm, hideDeleteConfirm, deleteEpisode, saveEpisodeChanges, updateRenameSaveState, toggleNotePanel, closeNotePanel, commitNoteAndRefreshSuggestion, handleNoteInput, isNotePanelOpen, registerEpisodeRenamedCallback } from './modules/editing.js';
 import { loadDismissedJobIds, connectFeedEvents, fetchRecentJobs, mergeServerJobs, connectLocalSource, consumeSharedFiles, getLocalSourceConfig, setLocalSourceConfig, getFeedEventsSource, getLocalSourceEvents, setLocalSourceEvents } from './modules/server-sync.js';
@@ -154,7 +154,7 @@ registerEpisodeRenamedCallback(updateQueueTitleForEpisode);
 
 // Wire up YouTube import
 initYouTubeImport();
-registerYouTubeJobCallback((jobResponse) => {
+registerYouTubeJobCallback((jobResponse, { replacesEntryId = null } = {}) => {
     // Create a queue entry from the YouTube job 202 response
     const entry = {
         id: 'yt_' + jobResponse.jobId,
@@ -188,6 +188,12 @@ registerYouTubeJobCallback((jobResponse) => {
 
     renderQueueList(true);
     monitorEntryNormalizationInBackground(entry);
+
+    if (replacesEntryId) {
+        // The failed entry this import retries after a cookie upload. Dismissed only after
+        // its replacement is queued so the queue never transiently empties.
+        dismissEntry(replacesEntryId);
+    }
 });
 
 // Document-level paste listener for YouTube URLs (runs before API key paste detection)

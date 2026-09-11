@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { canonicalYouTubeUrl, extractYouTubeUrl } from '../../FeatherPod.Server/Pages/Push/modules/youtube-url.js';
+import { canonicalYouTubeUrl, extractYouTubeUrl, parseYouTubeFileName } from '../../FeatherPod.Server/Pages/Push/modules/youtube-url.js';
 
 const VIDEO_ID = 'dQw4w9WgXcQ';
 const CANONICAL = `https://www.youtube.com/watch?v=${VIDEO_ID}`;
@@ -62,4 +62,15 @@ test('returns null for empty input and text without a video URL', () => {
 
 test('canonicalYouTubeUrl builds the www watch URL', () => {
     assert.equal(canonicalYouTubeUrl(VIDEO_ID), CANONICAL);
+});
+
+test('parseYouTubeFileName recovers the video id and format from a job file name', () => {
+    assert.deepEqual(parseYouTubeFileName(`${VIDEO_ID}.m4a`), { videoId: VIDEO_ID, format: 'audio' });
+    assert.deepEqual(parseYouTubeFileName(`${VIDEO_ID}.mp4`), { videoId: VIDEO_ID, format: 'video' });
+});
+
+test('parseYouTubeFileName returns null for names that are not YouTube job files', () => {
+    for (const name of ['episode.mp3', 'YouTube import', `${VIDEO_ID}.mp3`, `tooshort.m4a`, `${VIDEO_ID}x.m4a`, '', null, undefined]) {
+        assert.equal(parseYouTubeFileName(name), null, String(name));
+    }
 });

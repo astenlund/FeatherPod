@@ -16,13 +16,19 @@
  * On detection, shows an import dialog with audio/video toggle, then POSTs to
  * /api/feeds/{feedId}/youtube with the oEmbed title for instant queue display.
  * On 202, creates a queue entry and hands off to existing queue monitoring.
+ *
+ * Bot detection surfaces asynchronously: the job fails with authRequired after the 202,
+ * and queue.js opens the cookie dialog with a retry descriptor for that failed entry.
+ * After a successful cookie upload the import is re-submitted from that descriptor and
+ * the replacement 202 dismisses the failed entry; without a descriptor (the ?ytcookies
+ * dev path) the modal simply closes.
  */
 
 import { FEED_ID } from './config.js';
 import { getApiKey, getUserRole } from './auth.js';
 import { getCurrentState } from './state.js';
 import { showToast } from './utils.js';
-import { extractYouTubeUrl } from './youtube-url.js';
+import { canonicalYouTubeUrl, extractYouTubeUrl } from './youtube-url.js';
 
 const YT_FORMAT_PREFS_KEY = 'featherpod_yt_format_prefs';
 
@@ -32,7 +38,8 @@ let onYouTubeJobCreated = null;
 /**
  * Register the callback invoked when a YouTube job is successfully created.
  * Called from push.js during init.
- * @param {Function} callback - (jobResponse: object) => void
+ * @param {Function} callback - (jobResponse: object, options: {replacesEntryId: string|null}) => void;
+ *   replacesEntryId names the failed queue entry this job retries after a cookie upload
  */
 export function registerYouTubeJobCallback(callback) {
     onYouTubeJobCreated = callback;
@@ -141,10 +148,33 @@ function saveChannelFormatPref(channel, format) {
 // ============================================================================
 
 /**
- * @type {{url: string, channel: string|null, title: string|null}|null}
+ * @type {number}
+ * Generation of the interaction that currently owns the modal. Advanced whenever
+ * ownership changes: a new import dialog, the cookie dialog, or closing. Every
+ * continuation that resumes after a network await (import submit, cookie upload, oEmbed
+ * metadata) captures the generation when it starts and leaves the modal alone once it
+ * has moved on, so an older interaction can never close, clear or re-enable a newer one.
+ */
+let modalGeneration = 0;
+
+/**
+ * @type {{url: string, channel: string|null, title: string|null, replacesEntryId: string|null, submitting: boolean}|null}
  * Import currently shown in the dialog. `channel` and `title` arrive later via oEmbed.
+ * `replacesEntryId` names the failed queue entry this import retries after a cookie
+ * upload; it is bound to this import only, so a later import of another video can
+ * never dismiss that entry. `submitting` is true while its POST is in flight and keeps
+ * the Import button disabled whatever the radios or metadata do meanwhile.
  */
 let pendingImport = null;
+
+/**
+ * @type {{videoId: string, format: 'audio'|'video', title: string|null, entryId: string}|null}
+ * Import to re-submit after a successful cookie upload, built by queue.js from the failed
+ * entry whose authRequired failure opened the cookie dialog. Null when the dialog was
+ * opened without one (the ?ytcookies dev path). Consumed by the cookie upload and
+ * cleared whenever the modal closes or a new import starts.
+ */
+let pendingRetry = null;
 
 /**
  * Kick off a YouTube import: optionally defer, then show the confirmation dialog.
@@ -164,12 +194,17 @@ function beginImport(url, deferMs = 0) {
  * @param {string} url
  */
 function showImportDialog(url) {
-    pendingImport = { url, channel: null, title: null };
+    const generation = ++modalGeneration;
+    pendingImport = { url, channel: null, title: null, replacesEntryId: null, submitting: false };
+    pendingRetry = null;
 
     const overlay = document.getElementById('youtube-modal-overlay');
     if (!overlay) {
         return;
     }
+
+    // A new import takes the modal over from the cookie dialog if that is what is showing
+    hideCookieDialog();
 
     // Reset state
     const titleEl = overlay.querySelector('.yt-modal-video-title');
@@ -203,7 +238,7 @@ function showImportDialog(url) {
 
     // Fetch oEmbed metadata and apply it when it arrives
     fetchVideoMeta(url).then(data => {
-        if (!data || pendingImport?.url !== url) {
+        if (!data || generation !== modalGeneration) {
             return;
         }
         if (titleEl && data.title) {
@@ -233,7 +268,7 @@ function updateImportButtonState(overlay) {
     const importBtn = overlay?.querySelector('.yt-modal-import');
     const checked = overlay?.querySelector('input[name="yt-format"]:checked');
     if (importBtn) {
-        importBtn.disabled = !checked;
+        importBtn.disabled = !checked || Boolean(pendingImport?.submitting);
     }
 }
 
@@ -259,11 +294,13 @@ async function fetchVideoMeta(url) {
  * Hide the import dialog.
  */
 export function hideImportDialog() {
+    modalGeneration++;
     const overlay = document.getElementById('youtube-modal-overlay');
     if (overlay) {
         overlay.hidden = true;
     }
     pendingImport = null;
+    pendingRetry = null;
 }
 
 /**
@@ -281,7 +318,7 @@ function getSelectedFormat() {
  * Submit the YouTube import request to the server.
  */
 async function submitImport() {
-    if (!pendingImport) {
+    if (!pendingImport || pendingImport.submitting) {
         return;
     }
 
@@ -289,6 +326,14 @@ async function submitImport() {
     const importBtn = overlay?.querySelector('.yt-modal-import');
     const errorEl = overlay?.querySelector('.yt-modal-error');
     const spinner = overlay?.querySelector('.yt-modal-spinner');
+
+    // Bind to this request and this modal generation: the dialog can be dismissed or
+    // handed to another interaction while the POST is in flight, and a job the server
+    // accepted must still reach the queue.
+    const request = pendingImport;
+    const generation = modalGeneration;
+    const dialogStillOurs = () => generation === modalGeneration;
+    request.submitting = true;
 
     if (importBtn) {
         importBtn.disabled = true;
@@ -310,7 +355,7 @@ async function submitImport() {
                 'Content-Type': 'application/json',
                 'X-API-Key': apiKey
             },
-            body: JSON.stringify({ url: pendingImport.url, format, title: pendingImport.title })
+            body: JSON.stringify({ url: request.url, format, title: request.title })
         });
 
         if (!response.ok) {
@@ -320,22 +365,26 @@ async function submitImport() {
 
         const jobResponse = await response.json();
 
-        saveChannelFormatPref(pendingImport.channel, format);
-        hideImportDialog();
+        saveChannelFormatPref(request.channel, format);
+        if (dialogStillOurs()) {
+            hideImportDialog();
+        }
 
         if (onYouTubeJobCreated) {
-            onYouTubeJobCreated(jobResponse);
+            onYouTubeJobCreated(jobResponse, { replacesEntryId: request.replacesEntryId });
         }
     } catch (err) {
+        request.submitting = false;
+        if (!dialogStillOurs()) {
+            return;
+        }
         if (errorEl) {
             errorEl.textContent = err.message || 'Import failed';
             errorEl.hidden = false;
         }
-        if (importBtn) {
-            importBtn.disabled = false;
-        }
+        updateImportButtonState(overlay);
     } finally {
-        if (spinner) {
+        if (spinner && dialogStillOurs()) {
             spinner.hidden = true;
         }
     }
@@ -346,10 +395,12 @@ async function submitImport() {
 // ============================================================================
 
 /**
- * Show the cookie upload dialog inside the YouTube modal.
+ * Show the cookie upload dialog inside the YouTube modal. Takes over the modal from any
+ * import interaction still in flight (its accepted job still reaches the queue).
  * Admin users see a file picker; non-admin users see a "temporarily unavailable" message.
  */
 function showCookieDialog() {
+    modalGeneration++;
     const overlay = document.getElementById('youtube-modal-overlay');
     if (!overlay) {
         return;
@@ -400,6 +451,7 @@ function showCookieDialog() {
 async function uploadCookieFile(file) {
     const overlay = document.getElementById('youtube-modal-overlay');
     const statusEl = overlay?.querySelector('.yt-cookie-status');
+    const generation = modalGeneration;
 
     if (statusEl) {
         statusEl.textContent = 'Uploading...';
@@ -417,24 +469,57 @@ async function uploadCookieFile(file) {
             body: formData
         });
 
+        if (generation !== modalGeneration) {
+            // The dialog that started this upload was dismissed or replaced meanwhile; the
+            // cookies are stored server-side regardless, but no UI belongs to it any more.
+            return;
+        }
+
         if (!response.ok) {
             const data = await response.json().catch(() => ({}));
             throw new Error(data.error || `Upload failed (${response.status})`);
         }
 
-        if (statusEl) {
-            statusEl.textContent = 'Cookies uploaded. Retrying import...';
-        }
-
-        // Close cookie dialog and retry the original import
         hideCookieDialog();
-        await submitImport();
+        const retry = pendingRetry;
+        pendingRetry = null;
+        if (retry) {
+            await resubmitImport(retry);
+        } else {
+            hideImportDialog();
+            showToast('Cookies uploaded');
+        }
     } catch (err) {
-        if (statusEl) {
+        if (statusEl && generation === modalGeneration) {
             statusEl.textContent = err.message || 'Upload failed';
             statusEl.className = 'yt-cookie-status yt-cookie-error';
         }
     }
+}
+
+/**
+ * Re-run an import whose job failed on bot detection, now that cookies are uploaded:
+ * rebuild the import dialog for the video, preselect the format the failed job used,
+ * and submit immediately. The 202 then replaces the failed entry via the job callback;
+ * the entry id travels on pendingImport so only this video's success can dismiss it.
+ * @param {{videoId: string, format: 'audio'|'video', title: string|null, entryId: string}} retry
+ */
+async function resubmitImport(retry) {
+    showImportDialog(canonicalYouTubeUrl(retry.videoId));
+    pendingImport.title = retry.title;
+    pendingImport.replacesEntryId = retry.entryId;
+
+    const overlay = document.getElementById('youtube-modal-overlay');
+    const titleEl = overlay?.querySelector('.yt-modal-video-title');
+    if (titleEl && retry.title) {
+        titleEl.textContent = retry.title;
+    }
+    const radio = overlay?.querySelector(`input[name="yt-format"][value="${retry.format}"]`);
+    if (radio) {
+        radio.checked = true;
+    }
+
+    await submitImport();
 }
 
 /**
@@ -459,9 +544,13 @@ function hideCookieDialog() {
 }
 
 /**
- * Show the cookie dialog from external callers (e.g., queue.js on authRequired failure).
+ * Show the cookie dialog from external callers (queue.js on authRequired failure, the
+ * ?ytcookies dev flag).
+ * @param {{videoId: string, format: 'audio'|'video', title: string|null, entryId: string}|null} [retry]
+ *   Import to re-submit after a successful cookie upload; null just closes the modal afterwards
  */
-export function showYouTubeCookieDialog() {
+export function showYouTubeCookieDialog(retry = null) {
+    pendingRetry = retry;
     showCookieDialog();
 }
 
