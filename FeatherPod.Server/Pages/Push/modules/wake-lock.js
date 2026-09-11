@@ -1,15 +1,21 @@
 import { WAKE_LOCK_KEY } from './config.js';
 
+const wakeLockAvailable = 'wakeLock' in navigator;
+
 let wakeLockSentinel = null;
 let wakeLockGeneration = 0;
 
-function isWakeLockAvailable() {
-    if (isWakeLockAvailable._cached !== undefined) {
-        return isWakeLockAvailable._cached;
+/**
+ * Set both representations of the toggle's enabled state (aria-pressed and localStorage) so they cannot drift.
+ * @param {boolean} enabled
+ */
+function setToggleState(enabled) {
+    document.getElementById('wake-lock-toggle').setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    if (enabled) {
+        localStorage.setItem(WAKE_LOCK_KEY, 'true');
+    } else {
+        localStorage.removeItem(WAKE_LOCK_KEY);
     }
-    isWakeLockAvailable._cached = !!navigator.wakeLock;
-
-    return isWakeLockAvailable._cached;
 }
 
 export function isWakeLockTogglePressed() {
@@ -19,16 +25,20 @@ export function isWakeLockTogglePressed() {
 }
 
 export function initWakeLockToggle() {
-    if (!isWakeLockAvailable()) {
+    if (!wakeLockAvailable) {
         return;
     }
-    const toggle = document.getElementById('wake-lock-toggle');
     if (localStorage.getItem(WAKE_LOCK_KEY) === 'true') {
-        toggle.setAttribute('aria-pressed', 'true');
+        setToggleState(true);
     }
-    toggle.addEventListener('click', handleWakeLockToggle);
+    document.getElementById('wake-lock-toggle').addEventListener('click', handleWakeLockToggle);
 }
 
+/**
+ * Request the screen wake lock.
+ * @returns {Promise<boolean>} false only when this request was the latest one and it failed;
+ *   a request superseded by a newer acquire or release leaves the outcome to that newer call
+ */
 export async function acquireWakeLock() {
     const gen = ++wakeLockGeneration;
     try {
@@ -36,16 +46,19 @@ export async function acquireWakeLock() {
         if (gen !== wakeLockGeneration) {
             await sentinel.release();
 
-            return;
+            return true;
         }
         wakeLockSentinel = sentinel;
-        wakeLockSentinel.addEventListener('release', () => {
+        sentinel.addEventListener('release', () => {
             if (wakeLockSentinel === sentinel) {
                 wakeLockSentinel = null;
             }
         });
+
+        return true;
     } catch {
-        // Silently fail
+        // Denied (for example while the document is hidden); the caller decides whether to roll back
+        return gen !== wakeLockGeneration;
     }
 }
 
@@ -63,40 +76,39 @@ async function releaseWakeLock() {
 }
 
 async function handleWakeLockToggle() {
-    const toggle = document.getElementById('wake-lock-toggle');
-    const isEnabled = toggle.getAttribute('aria-pressed') === 'true';
-
-    if (isEnabled) {
-        toggle.setAttribute('aria-pressed', 'false');
-        localStorage.removeItem(WAKE_LOCK_KEY);
+    if (isWakeLockTogglePressed()) {
+        setToggleState(false);
         await releaseWakeLock();
     } else {
-        toggle.setAttribute('aria-pressed', 'true');
-        localStorage.setItem(WAKE_LOCK_KEY, 'true');
-        await acquireWakeLock();
-        if (!wakeLockSentinel) {
-            toggle.setAttribute('aria-pressed', 'false');
+        setToggleState(true);
+        if (!(await acquireWakeLock())) {
+            setToggleState(false);
         }
     }
 }
 
 export function setWakeLockToggleVisible(visible) {
-    if (!isWakeLockAvailable()) {
+    if (!wakeLockAvailable) {
         return;
     }
-    const toggle = document.getElementById('wake-lock-toggle');
-    toggle.hidden = !visible;
+    document.getElementById('wake-lock-toggle').hidden = !visible;
 
     if (visible && localStorage.getItem(WAKE_LOCK_KEY) === 'true') {
-        toggle.setAttribute('aria-pressed', 'true');
+        setToggleState(true);
         acquireWakeLock();
     } else if (!visible) {
         releaseWakeLock();
     }
 }
 
+/**
+ * Clear the pressed state and release the lock when the queue finishes, so a later tab
+ * reactivation does not re-acquire it while idle. Deliberately leaves WAKE_LOCK_KEY alone:
+ * the preference persists across queue completions and re-enables the toggle on the next
+ * active work, which is why this does not go through setToggleState.
+ */
 export function resetWakeLockToggle() {
-    if (!isWakeLockAvailable()) {
+    if (!wakeLockAvailable) {
         return;
     }
     document.getElementById('wake-lock-toggle').setAttribute('aria-pressed', 'false');
