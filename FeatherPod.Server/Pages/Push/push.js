@@ -29,8 +29,8 @@ import { progressAnimator } from './modules/progress.js';
 import { showState, getCurrentState, updateQueueTitle, showError, showWarningBanner, setNoKeyError, cacheLayoutDimensions } from './modules/state.js';
 import { renderQueueList } from './modules/queue-ui.js';
 import { getQueue, initQueue, restoreQueueState, addFilesToQueue, clearQueueState, clearTerminalEntries, dismissEntry, monitorEntryNormalizationInBackground, updateQueueTitleForEpisode } from './modules/queue.js';
-import { initHistorySection, collapseHistoryImmediate, toggleHistorySection, changeHistoryFilter, selectHistoryUpload, updateHistoryListScrollState, getHistoryFilter, getHistoryPanelPushedState, setHistoryPanelPushedState, getHistoryData, getHistorySelectedId, refreshHistoryList } from './modules/history.js';
-import { getContextMenuTargetId, hideContextMenu, showRenameModal, hideRenameModal, showDeleteConfirm, hideDeleteConfirm, deleteEpisode, saveEpisodeChanges, updateRenameSaveState, toggleNotePanel, closeNotePanel, commitNoteAndRefreshSuggestion, handleNoteInput, isNotePanelOpen, registerEpisodeRenamedCallback } from './modules/editing.js';
+import { registerHistoryContextMenuCallback, initHistorySection, collapseHistoryImmediate, toggleHistorySection, changeHistoryFilter, selectHistoryUpload, updateHistoryListScrollState, getHistoryFilter, getHistoryPanelPushedState, setHistoryPanelPushedState, getHistoryData, getHistorySelectedId, refreshHistoryList } from './modules/history.js';
+import { showContextMenu, getContextMenuTargetId, hideContextMenu, showRenameModal, hideRenameModal, showDeleteConfirm, hideDeleteConfirm, deleteEpisode, saveEpisodeChanges, updateRenameSaveState, toggleNotePanel, closeNotePanel, commitNoteAndRefreshSuggestion, handleNoteInput, isNotePanelOpen, registerEpisodeRenamedCallback } from './modules/editing.js';
 import { loadDismissedJobIds, connectFeedEvents, fetchRecentJobs, mergeServerJobs, connectLocalSource, consumeSharedFiles, getLocalSourceConfig, setLocalSourceConfig, getFeedEventsSource, getLocalSourceEvents, setLocalSourceEvents } from './modules/server-sync.js';
 import { handlePaste as handleYouTubePaste, handleDrop as handleYouTubeDrop, handleLongPressClipboard, consumeLongPressFlag, initYouTubeImport, registerYouTubeJobCallback, showYouTubeCookieDialog } from './modules/youtube.js';
 
@@ -148,6 +148,9 @@ if (navigator.serviceWorker) {
 
 // Wire up queue-ui callbacks
 initQueue();
+
+/** Wire history actions before initialization, including first-visit key entry. */
+registerHistoryContextMenuCallback(showContextMenu);
 
 // Propagate history-panel renames to matching queue entries
 registerEpisodeRenamedCallback(updateQueueTitleForEpisode);

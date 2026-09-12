@@ -2,7 +2,6 @@ import { FEED_ID, HISTORY_STORAGE_KEY, HISTORY_FILTER_KEY, MAX_LOCAL_HISTORY } f
 import { formatDuration, formatDate, formatRelativeTime, formatBytes } from './utils.js';
 import { getApiKey } from './auth.js';
 import { getCurrentState, getCollapsedHeight, getCachedContainerWidth, getCachedCollapsedMargin, COLLAPSED_WIDTH } from './state.js';
-import { showContextMenu } from './editing.js';
 
 /** @type {Array<Object>|null} */
 let historyData = null;
@@ -18,6 +17,17 @@ let pendingFilterRequest = 0;
 let cachedBrowserUploads = null;
 /** @type {Array<Object>|null} */
 let cachedAllUploads = null;
+/** @type {((episodeId: string, x: number, y: number) => void)|null} */
+let onContextMenu = null;
+
+/**
+ * Register the context-menu action before history initialization.
+ * The orchestrator supplies the editing action to keep history independent of editing.
+ * @param {(episodeId: string, x: number, y: number) => void} callback
+ */
+export function registerHistoryContextMenuCallback(callback) {
+    onContextMenu = callback;
+}
 
 // Animation timing constants (match CSS --h-* variables)
 const H_BLUR_DELAY = 150;
@@ -735,7 +745,7 @@ function renderHistoryList(uploads, focusFirst = false, skipAnimation = false) {
         item.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             selectHistoryUpload(upload.id);
-            showContextMenu(upload.id, e.clientX, e.clientY);
+            onContextMenu?.(upload.id, e.clientX, e.clientY);
         });
 
         // Mobile long-press context menu
@@ -750,7 +760,7 @@ function renderHistoryList(uploads, focusFirst = false, skipAnimation = false) {
             longPressTimer = setTimeout(() => {
                 longPressTimer = null;
                 selectHistoryUpload(upload.id);
-                showContextMenu(upload.id, touch.clientX, touch.clientY);
+                onContextMenu?.(upload.id, touch.clientX, touch.clientY);
             }, 500);
         });
 
