@@ -1,6 +1,6 @@
 import { FEED_ID } from './config.js';
 import { getApiKey } from './auth.js';
-import { removeFromLocalHistory, updateLocalHistoryTitle, getHistoryData, getHistorySelectedId, selectHistoryUpload, updateHistoryInfoCard, updateHistoryListScrollState, invalidateBrowserUploadsCache, invalidateAllUploadsCache, getHistoryEmptyMessage } from './history.js';
+import { removeFromLocalHistory, updateHistoryEpisode, getHistoryData, getHistorySelectedId, selectHistoryUpload, updateHistoryInfoCard, updateHistoryListScrollState, invalidateBrowserUploadsCache, invalidateAllUploadsCache, getHistoryEmptyMessage } from './history.js';
 
 /** @type {string|null} */
 let contextMenuTargetId = null;
@@ -464,14 +464,7 @@ export function commitNoteAndRefreshSuggestion() {
  * @param {string} note
  */
 function saveEpisodeNote(episodeId, note) {
-    // Update historyData in-place
-    const historyData = getHistoryData();
-    if (historyData) {
-        const index = historyData.findIndex(e => e.id === episodeId);
-        if (index >= 0) {
-            historyData[index] = { ...historyData[index], note: note || null };
-        }
-    }
+    updateHistoryEpisode(episodeId, { note: note || null });
 
     updateNoteButtonState(!!note);
 
@@ -549,9 +542,30 @@ export function updateRenameSaveState() {
 }
 
 /**
- * Save episode changes (title and/or note) via the API and optimistically update the UI.
+ * Build a partial update against the rename modal's original title and note.
+ * Empty notes are included when clearing a note; unchanged fields are omitted.
+ * @param {string} title - Trimmed, non-empty title.
+ * @param {string} note - Trimmed note.
+ * @returns {{title?: string, note?: string}}
+ */
+function buildEpisodePatch(title, note) {
+    const patchBody = {};
+    if (title !== renameOriginalTitle) {
+        patchBody.title = title;
+    }
+    if (note !== noteModalOriginalValue.trim()) {
+        patchBody.note = note;
+    }
+
+    return patchBody;
+}
+
+/**
+ * Save changed title/note fields, apply the server response to history, and propagate
+ * successful title changes to the queue. Keep the modal open if the save fails.
  * @param {string} episodeId
  * @param {string} newTitle
+ * @returns {Promise<void>}
  */
 export async function saveEpisodeChanges(episodeId, newTitle) {
     const trimmed = newTitle.trim();
@@ -559,16 +573,9 @@ export async function saveEpisodeChanges(episodeId, newTitle) {
         return;
     }
 
-    const patchBody = {};
-    if (trimmed !== renameOriginalTitle) {
-        patchBody.title = trimmed;
-    }
-
     const noteInput = document.getElementById('rename-note-input');
     const noteText = noteInput?.value?.trim() || '';
-    if (noteText !== noteModalOriginalValue.trim()) {
-        patchBody.note = noteText;
-    }
+    const patchBody = buildEpisodePatch(trimmed, noteText);
 
     if (Object.keys(patchBody).length === 0) {
         hideRenameModal();
@@ -590,40 +597,9 @@ export async function saveEpisodeChanges(episodeId, newTitle) {
         }
 
         const updated = await response.json();
-        const historyData = getHistoryData();
-
-        // Update historyData in-place
-        if (historyData) {
-            const index = historyData.findIndex(e => e.id === episodeId);
-            if (index >= 0) {
-                historyData[index] = { ...historyData[index], title: updated.title, note: updated.note || null };
-            }
-        }
-
-        if (patchBody.title) {
-            // Update localStorage history
-            updateLocalHistoryTitle(episodeId, updated.title);
-
-            // Invalidate caches
-            invalidateBrowserUploadsCache();
-            invalidateAllUploadsCache();
-
-            // Update the DOM item directly
-            const item = document.querySelector('#history-list .upload-item[data-id="' + episodeId + '"] .upload-title');
-            if (item) {
-                item.textContent = updated.title;
-            }
-
-            // Update info card if this is the selected episode
-            const historySelectedId = getHistorySelectedId();
-            if (historySelectedId === episodeId && historyData) {
-                const ep = historyData.find(e => e.id === episodeId);
-                if (ep) {
-                    updateHistoryInfoCard(ep);
-                }
-            }
-
-            // Propagate the rename to any queue entries for this episode
+        const titleChanged = !!patchBody.title;
+        updateHistoryEpisode(episodeId, { title: updated.title, note: updated.note || null }, titleChanged);
+        if (titleChanged) {
             onEpisodeRenamed?.(episodeId, updated.title);
         }
     } catch (err) {

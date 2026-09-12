@@ -176,7 +176,7 @@ export function removeFromLocalHistory(episodeId) {
  * @param {string} episodeId
  * @param {string} newTitle
  */
-export function updateLocalHistoryTitle(episodeId, newTitle) {
+function updateLocalHistoryTitle(episodeId, newTitle) {
     try {
         const hist = loadLocalHistory();
         const entry = hist.find(e => e.id === episodeId);
@@ -186,6 +186,42 @@ export function updateLocalHistoryTitle(episodeId, newTitle) {
         }
     } catch (e) {
         console.warn('Failed to update localStorage history:', e);
+    }
+}
+
+/**
+ * Apply title/note metadata to the in-memory episode. A title change also updates
+ * local history, invalidates server caches, and refreshes the list and selected info card.
+ * Note-only updates keep the existing title presentation and cache behavior.
+ * @param {string} episodeId
+ * @param {{title?: string, note?: string|null}} changes
+ * @param {boolean} [titleChanged=false]
+ */
+export function updateHistoryEpisode(episodeId, changes, titleChanged = false) {
+    let episode = null;
+    if (historyData) {
+        const index = historyData.findIndex(e => e.id === episodeId);
+        if (index >= 0) {
+            episode = { ...historyData[index], ...changes };
+            historyData[index] = episode;
+        }
+    }
+
+    if (!titleChanged) {
+        return;
+    }
+
+    updateLocalHistoryTitle(episodeId, changes.title);
+    invalidateBrowserUploadsCache();
+    invalidateAllUploadsCache();
+
+    const item = document.querySelector('#history-list .upload-item[data-id="' + episodeId + '"] .upload-title');
+    if (item) {
+        item.textContent = changes.title;
+    }
+
+    if (historySelectedId === episodeId && episode) {
+        updateHistoryInfoCard(episode);
     }
 }
 
