@@ -1,4 +1,4 @@
-namespace FeatherPod.Server.Services;
+namespace FeatherPod.Shared.Services;
 
 /// <summary>
 /// Resolves the playback duration of an audio file at a local path. Abstracted so the

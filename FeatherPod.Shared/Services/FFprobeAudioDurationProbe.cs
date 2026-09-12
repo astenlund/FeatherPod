@@ -1,9 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
-using FeatherPod.Shared;
-using FeatherPod.Shared.Services;
+using Microsoft.Extensions.Logging;
 
-namespace FeatherPod.Server.Services;
+namespace FeatherPod.Shared.Services;
 
 /// <summary>
 /// <see cref="IAudioDurationProbe"/> backed by ffprobe (shipped with ffmpeg via

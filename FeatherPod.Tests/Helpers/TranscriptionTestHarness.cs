@@ -1,6 +1,7 @@
 using FeatherPod.Server.Services;
 using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
+using FeatherPod.Shared.Services;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
