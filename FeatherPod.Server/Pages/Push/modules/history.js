@@ -59,7 +59,7 @@ export function invalidateBrowserUploadsCache() {
     cachedBrowserUploads = null;
 }
 
-export function invalidateAllUploadsCache() {
+function invalidateAllUploadsCache() {
     cachedAllUploads = null;
 }
 
@@ -161,7 +161,7 @@ export function saveToLocalHistory(episode) {
  * Remove an episode from localStorage history.
  * @param {string} episodeId
  */
-export function removeFromLocalHistory(episodeId) {
+function removeFromLocalHistory(episodeId) {
     try {
         const hist = loadLocalHistory();
         const filtered = hist.filter(e => e.id !== episodeId);
@@ -169,6 +169,48 @@ export function removeFromLocalHistory(episodeId) {
     } catch (e) {
         console.warn('Failed to update localStorage history:', e);
     }
+}
+
+/**
+ * Remove a confirmed deletion from current history, local storage, and server caches.
+ * Select the nearest remaining episode when deleting the selection, or clear the
+ * info card when empty. Remove the row and refresh the empty state and scroll mask.
+ * @param {string} episodeId
+ */
+export function removeHistoryEpisode(episodeId) {
+    if (historyData) {
+        const index = historyData.findIndex(e => e.id === episodeId);
+        if (index >= 0) {
+            historyData.splice(index, 1);
+
+            if (historySelectedId === episodeId) {
+                if (historyData.length > 0) {
+                    const newIndex = Math.min(index, historyData.length - 1);
+                    selectHistoryUpload(historyData[newIndex].id);
+                } else {
+                    historySelectedId = null;
+                    updateHistoryInfoCard(null);
+                }
+            }
+        }
+    }
+
+    removeFromLocalHistory(episodeId);
+
+    invalidateBrowserUploadsCache();
+    invalidateAllUploadsCache();
+
+    const item = document.querySelector('#history-list .upload-item[data-id="' + episodeId + '"]');
+    if (item) {
+        item.remove();
+    }
+
+    const emptyState = document.getElementById('history-empty');
+    if (historyData && historyData.length === 0 && emptyState) {
+        emptyState.textContent = getHistoryEmptyMessage();
+        emptyState.style.display = 'block';
+    }
+    updateHistoryListScrollState();
 }
 
 /**
@@ -612,7 +654,7 @@ async function fetchHistoryByFilter() {
  * Get the appropriate empty state message for the current filter.
  * @returns {string}
  */
-export function getHistoryEmptyMessage() {
+function getHistoryEmptyMessage() {
     switch (historyFilter) {
         case 'local':
             return 'No uploads from this browser yet';
@@ -632,7 +674,7 @@ export function getHistoryEmptyMessage() {
  * Expanded state resets when switching episodes.
  * @param {Object|null} episode
  */
-export function updateHistoryInfoCard(episode) {
+function updateHistoryInfoCard(episode) {
     const infoCard = document.getElementById('history-info');
     if (!infoCard) {
         return;

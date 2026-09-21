@@ -1,6 +1,6 @@
 import { FEED_ID } from './config.js';
 import { getApiKey } from './auth.js';
-import { removeFromLocalHistory, updateHistoryEpisode, getHistoryData, getHistorySelectedId, selectHistoryUpload, updateHistoryInfoCard, updateHistoryListScrollState, invalidateBrowserUploadsCache, invalidateAllUploadsCache, getHistoryEmptyMessage } from './history.js';
+import { removeHistoryEpisode, updateHistoryEpisode, getHistoryData } from './history.js';
 
 /** @type {string|null} */
 let contextMenuTargetId = null;
@@ -109,11 +109,11 @@ export function hideDeleteConfirm() {
 }
 
 /**
- * Delete an episode via the API and optimistically update the UI.
+ * Delete an episode via the API, then update history and close the confirmation.
+ * A missing episode (404) is treated as already deleted; failures leave the UI intact.
  * @param {string} episodeId
  */
 export async function deleteEpisode(episodeId) {
-    const historyData = getHistoryData();
     try {
         const response = await fetch('/api/feeds/' + FEED_ID + '/episodes/' + episodeId, {
             method: 'DELETE',
@@ -131,49 +131,7 @@ export async function deleteEpisode(episodeId) {
         return;
     }
 
-    // Remove from historyData
-    if (historyData) {
-        const index = historyData.findIndex(e => e.id === episodeId);
-        if (index >= 0) {
-            historyData.splice(index, 1);
-
-            // Update selection
-            const historySelectedId = getHistorySelectedId();
-            if (historySelectedId === episodeId) {
-                if (historyData.length > 0) {
-                    const newIndex = Math.min(index, historyData.length - 1);
-                    selectHistoryUpload(historyData[newIndex].id);
-                } else {
-                    updateHistoryInfoCard(null);
-                }
-            }
-        }
-    }
-
-    // Remove from localStorage history
-    removeFromLocalHistory(episodeId);
-
-    // Invalidate caches
-    invalidateBrowserUploadsCache();
-    invalidateAllUploadsCache();
-
-    // Remove the DOM element
-    const item = document.querySelector('#history-list .upload-item[data-id="' + episodeId + '"]');
-    if (item) {
-        item.remove();
-    }
-
-    // Update empty state and scroll
-    const list = document.getElementById('history-list');
-    const emptyState = document.getElementById('history-empty');
-    if (historyData && historyData.length === 0 && emptyState) {
-        emptyState.textContent = getHistoryEmptyMessage();
-        emptyState.style.display = 'block';
-    }
-    if (list) {
-        updateHistoryListScrollState();
-    }
-
+    removeHistoryEpisode(episodeId);
     hideDeleteConfirm();
 }
 
