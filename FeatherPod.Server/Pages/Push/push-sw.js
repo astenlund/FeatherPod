@@ -90,18 +90,11 @@ self.addEventListener('notificationclick', (event) => {
 self.addEventListener('fetch', (event) => {
     const url = new URL(event.request.url);
 
-    // Share target POST -- unchanged
+    // File shares can include descriptive text; attachments take priority.
     if (event.request.method === 'POST' && url.pathname.endsWith('/push')) {
         event.respondWith((async () => {
             try {
                 const formData = await event.request.formData();
-
-                const sharedText = formData.get('shared_text');
-                if (sharedText) {
-                    const redirectUrl = new URL(event.request.url);
-                    redirectUrl.searchParams.set('yt', sharedText);
-                    return Response.redirect(redirectUrl.href, 303);
-                }
 
                 const files = formData.getAll('audio');
                 if (files.length > 0) {
@@ -109,6 +102,14 @@ self.addEventListener('fetch', (event) => {
                     for (const file of files) {
                         const key = `/shared/${Date.now()}-${Math.random().toString(36).slice(2)}-${file.name}`;
                         await cache.put(key, new Response(file));
+                    }
+                } else {
+                    const sharedText = formData.get('shared_text');
+                    if (sharedText) {
+                        const redirectUrl = new URL(event.request.url);
+                        redirectUrl.searchParams.set('yt', sharedText);
+
+                        return Response.redirect(redirectUrl.href, 303);
                     }
                 }
             } catch (e) {
