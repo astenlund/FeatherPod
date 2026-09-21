@@ -1,6 +1,9 @@
-import { STAGES_WITH_PROGRESS, TRANSCRIPTION_ACTIVE_STATUSES } from './config.js';
+import { STAGES_WITH_PROGRESS, TRANSCRIPTION_ACTIVE_STATUSES, COLLAPSED_HEIGHT_DEFAULT } from './config.js';
 import { isInUploadPhase } from './utils.js';
 import { progressAnimator } from './progress.js';
+import { getCollapsedHeight, COLLAPSED_WIDTH } from './state.js';
+
+const Q_MORPH_DURATION = 400;
 
 // These callbacks are set by the orchestrator to avoid circular imports
 let onRemoveFromQueue = null;
@@ -19,6 +22,73 @@ export function registerQueueCallbacks({ removeFromQueue, cancelEntry, retryEntr
     onRetryEntry = retryEntry;
     onDismissEntry = dismissEntry;
     getUploadQueue = getQueue;
+}
+
+/**
+ * Animate the queue drop zone morphing from the ready-state drop zone dimensions.
+ * Mirrors the history section morph pattern: set explicit start -> reflow -> transition to target.
+ */
+export function animateQueueDropZoneMorph() {
+    const queueDZ = document.getElementById('queue-drop-zone');
+    if (!queueDZ) {
+        return;
+    }
+
+    const targetHeight = queueDZ.getBoundingClientRect().height;
+
+    queueDZ.classList.add('queue-drop-zone--morphing');
+    queueDZ.style.height = getCollapsedHeight() + 'px';
+
+    void queueDZ.offsetHeight;
+    queueDZ.style.height = targetHeight + 'px';
+
+    setTimeout(() => {
+        queueDZ.classList.remove('queue-drop-zone--morphing');
+        queueDZ.style.height = '';
+    }, Q_MORPH_DURATION);
+}
+
+/**
+ * Prepare the ready-state drop zone for a morph animation before it becomes visible.
+ * Sets the morphing class and start height while #drop-zone is still hidden (display: none),
+ * so blur-fade-in is suppressed when showState('ready') makes it visible.
+ * @param {number} startHeight - The height to start from (queue drop zone height).
+ */
+export function prepareReadyDropZoneMorph(startHeight) {
+    const dropZone = document.getElementById('drop-zone');
+    if (!dropZone) {
+        return;
+    }
+
+    dropZone.classList.add('drop-zone--morphing');
+    dropZone.style.height = startHeight + 'px';
+}
+
+/**
+ * Run the ready-state drop zone morph transition. Must be called after showState('ready')
+ * and prepareReadyDropZoneMorph() so the element is visible with its start height committed.
+ */
+export function animateReadyDropZoneMorph() {
+    const dropZone = document.getElementById('drop-zone');
+    if (!dropZone) {
+        return;
+    }
+
+    const targetHeight = dropZone.classList.contains('drop-zone--has-artwork')
+        ? COLLAPSED_WIDTH
+        : COLLAPSED_HEIGHT_DEFAULT;
+
+    void dropZone.offsetHeight;
+
+    dropZone.style.height = targetHeight + 'px';
+
+    setTimeout(() => {
+        dropZone.style.animation = 'none';
+        dropZone.querySelector('.btn-primary')?.style.setProperty('animation', 'none');
+        dropZone.querySelector('.hint')?.style.setProperty('animation', 'none');
+        dropZone.classList.remove('drop-zone--morphing');
+        dropZone.style.height = '';
+    }, Q_MORPH_DURATION);
 }
 
 export function renderQueueList(animateNew) {
@@ -242,6 +312,20 @@ function createDismissButton(entry) {
     });
 
     return btn;
+}
+
+/**
+ * Paint an entry's current title without rebuilding its row or progress bar.
+ * The queue owns title mutations; keeping the existing progress element preserves
+ * the animator slot during both job updates and history renames.
+ * @param {import('../push.js').QueueEntry} entry
+ */
+export function updateQueueItemName(entry) {
+    const nameEl = document.querySelector('#queue-item-' + entry.id + ' .queue-item-name');
+    if (nameEl) {
+        nameEl.textContent = entry.title || entry.fileName;
+        nameEl.title = entry.fileName;
+    }
 }
 
 export function updateQueueItemInDOM(entry) {

@@ -1,4 +1,4 @@
-import { STATES, DEBUG_TITLE_ANIMATION, STR_INVALID_KEY, STR_NO_ACCESS, STR_API_KEY_REQUIRED } from './config.js';
+import { COLLAPSED_HEIGHT_DEFAULT, STATES, DEBUG_TITLE_ANIMATION, STR_INVALID_KEY, STR_NO_ACCESS, STR_API_KEY_REQUIRED } from './config.js';
 import { setNotificationToggleVisible } from './notifications.js';
 import { setWakeLockToggleVisible } from './wake-lock.js';
 
@@ -16,7 +16,6 @@ const TITLE_ANIMATION_PAUSE_DELAY = 300;
 let cachedContainerWidth = 0;
 let cachedCollapsedMargin = 0;
 export const COLLAPSED_WIDTH = 500;
-const COLLAPSED_HEIGHT_DEFAULT = 280;
 
 function animateTitle(targetWord) {
     const titleEl = document.getElementById('page-title');
@@ -216,6 +215,7 @@ export function setNoKeyError(errorType) {
     }
 }
 
+/** Measure the ready drop zone, falling back to its artwork or shared default height. */
 export function getCollapsedHeight() {
     const dropZone = document.getElementById('drop-zone');
     if (!dropZone) {

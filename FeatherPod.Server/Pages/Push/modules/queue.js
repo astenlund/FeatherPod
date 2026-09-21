@@ -1,9 +1,9 @@
 import { FEED_ID, JOB_TTL_MS, QUEUE_STORAGE_KEY, STAGES_WITH_PROGRESS, STR_INVALID_KEY, STR_NO_FEED_ACCESS, TRANSCRIPTION_ACTIVE_STATUSES } from './config.js';
 import { isValidMediaFile, isActiveWork, isInUploadPhase, tryParseJson } from './utils.js';
 import { getApiKey } from './auth.js';
-import { showState, getCurrentState, updateQueueTitle, getCollapsedHeight, COLLAPSED_WIDTH } from './state.js';
+import { showState, getCurrentState, updateQueueTitle } from './state.js';
 import { progressAnimator } from './progress.js';
-import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQueueItemFromDOM, getEntryProgressBar, rebindProgressAnimator, registerQueueCallbacks, createQueueItemElement } from './queue-ui.js';
+import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQueueItemFromDOM, getEntryProgressBar, rebindProgressAnimator, registerQueueCallbacks, createQueueItemElement, animateQueueDropZoneMorph, prepareReadyDropZoneMorph, animateReadyDropZoneMorph, updateQueueItemName } from './queue-ui.js';
 import { resetNotificationToggle, syncPushSession, notifyQueueComplete, setNotificationToggleVisible } from './notifications.js';
 import { resetWakeLockToggle, setWakeLockToggleVisible } from './wake-lock.js';
 import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetchBrowserUploads, initHistorySection, invalidateBrowserUploadsCache } from './history.js';
@@ -19,10 +19,6 @@ let activeUploadId = null;
 let isUploading = false;
 /** @type {number} */
 let nextEntryId = 0;
-
-const Q_MORPH_DURATION = 400;
-
-const COLLAPSED_HEIGHT_DEFAULT = 280;
 
 /**
  * Build the descriptor youtube.js needs to re-submit an import after a cookie upload.
@@ -76,73 +72,6 @@ export function getIsUploading() {
  */
 export function generateEntryId() {
     return 'q' + (nextEntryId++) + '_' + Date.now().toString(36);
-}
-
-/**
- * Animate the queue drop zone morphing from the ready-state drop zone dimensions.
- * Mirrors the history section morph pattern: set explicit start -> reflow -> transition to target.
- */
-function animateQueueDropZoneMorph() {
-    const queueDZ = document.getElementById('queue-drop-zone');
-    if (!queueDZ) {
-        return;
-    }
-
-    const targetHeight = queueDZ.getBoundingClientRect().height;
-
-    queueDZ.classList.add('queue-drop-zone--morphing');
-    queueDZ.style.height = getCollapsedHeight() + 'px';
-
-    void queueDZ.offsetHeight;
-    queueDZ.style.height = targetHeight + 'px';
-
-    setTimeout(() => {
-        queueDZ.classList.remove('queue-drop-zone--morphing');
-        queueDZ.style.height = '';
-    }, Q_MORPH_DURATION);
-}
-
-/**
- * Prepare the ready-state drop zone for a morph animation before it becomes visible.
- * Sets the morphing class and start height while #drop-zone is still hidden (display: none),
- * so blur-fade-in is suppressed when showState('ready') makes it visible.
- * @param {number} startHeight - The height to start from (queue drop zone height).
- */
-export function prepareReadyDropZoneMorph(startHeight) {
-    const dropZone = document.getElementById('drop-zone');
-    if (!dropZone) {
-        return;
-    }
-
-    dropZone.classList.add('drop-zone--morphing');
-    dropZone.style.height = startHeight + 'px';
-}
-
-/**
- * Run the ready-state drop zone morph transition. Must be called after showState('ready')
- * and prepareReadyDropZoneMorph() so the element is visible with its start height committed.
- */
-export function animateReadyDropZoneMorph() {
-    const dropZone = document.getElementById('drop-zone');
-    if (!dropZone) {
-        return;
-    }
-
-    const targetHeight = dropZone.classList.contains('drop-zone--has-artwork')
-        ? COLLAPSED_WIDTH
-        : COLLAPSED_HEIGHT_DEFAULT;
-
-    void dropZone.offsetHeight;
-
-    dropZone.style.height = targetHeight + 'px';
-
-    setTimeout(() => {
-        dropZone.style.animation = 'none';
-        dropZone.querySelector('.btn-primary')?.style.setProperty('animation', 'none');
-        dropZone.querySelector('.hint')?.style.setProperty('animation', 'none');
-        dropZone.classList.remove('drop-zone--morphing');
-        dropZone.style.height = '';
-    }, Q_MORPH_DURATION);
 }
 
 /**
@@ -520,33 +449,16 @@ async function processEntry(entry) {
 }
 
 /**
- * Update the displayed name of a queue entry in place and repaint just the name
- * element. Used by every title-change path (job status updates and history
- * renames) so the queue has one surgical mechanism instead of the heavier
- * full-item rebuild, which would recreate the progress bar that a normalizing
- * entry's animator slot is driving.
- * @param {QueueEntry} entry
- * @param {string} title
- */
-function updateQueueItemName(entry, title) {
-    entry.title = title;
-    const nameEl = document.querySelector('#queue-item-' + entry.id + ' .queue-item-name');
-    if (nameEl) {
-        nameEl.textContent = title;
-        nameEl.title = entry.fileName;
-    }
-}
-
-/**
  * Update a queue entry from a job status event. Tracks transcription state,
- * then updates the normalization progress bar (which also handles the
- * "Transcribing" indeterminate state when normalization is complete).
+ * applies title changes to the model and its label, then updates the progress bar
+ * (including the indeterminate "Transcribing" state when normalization is complete).
  * @param {QueueEntry} entry
  * @param {Object} job - JobStatusResponse from server
  */
 export function updateEntryFromJobStatus(entry, job) {
     if (job.title && job.title !== entry.title) {
-        updateQueueItemName(entry, job.title);
+        entry.title = job.title;
+        updateQueueItemName(entry);
     }
 
     updateTranscriptionState(entry, job);
@@ -570,7 +482,8 @@ export function updateQueueTitleForEpisode(episodeId, newTitle) {
             continue;
         }
 
-        updateQueueItemName(entry, newTitle);
+        entry.title = newTitle;
+        updateQueueItemName(entry);
         if (entry.episode) {
             entry.episode = { ...entry.episode, title: newTitle };
         }

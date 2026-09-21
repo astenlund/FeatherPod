@@ -42,6 +42,8 @@ export const NOTIF_HINT_SHOWN_KEY = 'featherpod_notif_hint_shown';
 export const WAKE_LOCK_KEY = 'featherpod_wake_' + FEED_ID;
 
 // Constants
+/** Fallback drop-zone height in pixels when no artwork or measured height is available. */
+export const COLLAPSED_HEIGHT_DEFAULT = 280;
 export const MAX_LOCAL_HISTORY = 50;
 export const QUEUE_SYNC_TIMEOUT = 3000;
 export const JOB_TTL_MS = 60 * 60 * 1000;
