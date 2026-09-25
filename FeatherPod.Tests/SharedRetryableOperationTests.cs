@@ -4,7 +4,7 @@ namespace FeatherPod.Tests;
 
 public class SharedRetryableOperationTests
 {
-    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan WaitLimit = TimeSpan.FromSeconds(5);
 
     [Fact]
     public async Task RunAsync_ConcurrentCallers_ShareOneRun()
@@ -22,7 +22,7 @@ public class SharedRetryableOperationTests
         // Act
         var runs = Enumerable.Range(0, 8).Select(_ => operation.RunAsync(CancellationToken.None)).ToList();
         release.SetResult(true);
-        var results = await Task.WhenAll(runs).WaitAsync(Timeout);
+        var results = await Task.WhenAll(runs).WaitAsync(WaitLimit);
 
         // Assert
         Assert.All(results, Assert.True);
@@ -40,10 +40,10 @@ public class SharedRetryableOperationTests
 
             return Task.FromResult(true);
         });
-        await operation.RunAsync(CancellationToken.None).WaitAsync(Timeout);
+        await operation.RunAsync(CancellationToken.None).WaitAsync(WaitLimit);
 
         // Act
-        var result = await operation.RunAsync(CancellationToken.None).WaitAsync(Timeout);
+        var result = await operation.RunAsync(CancellationToken.None).WaitAsync(WaitLimit);
 
         // Assert
         Assert.True(result);
@@ -56,10 +56,10 @@ public class SharedRetryableOperationTests
         // Arrange
         var calls = 0;
         var operation = new SharedRetryableOperation(() => Task.FromResult(Interlocked.Increment(ref calls) > 1));
-        var first = await operation.RunAsync(CancellationToken.None).WaitAsync(Timeout);
 
         // Act
-        var second = await operation.RunAsync(CancellationToken.None).WaitAsync(Timeout);
+        var first = await operation.RunAsync(CancellationToken.None).WaitAsync(WaitLimit);
+        var second = await operation.RunAsync(CancellationToken.None).WaitAsync(WaitLimit);
 
         // Assert
         Assert.False(first);
@@ -81,12 +81,13 @@ public class SharedRetryableOperationTests
 
             return Task.FromResult(true);
         });
-        await Assert.ThrowsAsync<IOException>(() => operation.RunAsync(CancellationToken.None).WaitAsync(Timeout));
 
         // Act
-        var result = await operation.RunAsync(CancellationToken.None).WaitAsync(Timeout);
+        var firstFailure = await Record.ExceptionAsync(() => operation.RunAsync(CancellationToken.None).WaitAsync(WaitLimit));
+        var result = await operation.RunAsync(CancellationToken.None).WaitAsync(WaitLimit);
 
         // Assert
+        Assert.IsType<IOException>(firstFailure);
         Assert.True(result);
         Assert.Equal(2, calls);
     }
@@ -106,7 +107,7 @@ public class SharedRetryableOperationTests
         release.SetResult(true);
 
         // Assert
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelledRun.WaitAsync(Timeout));
-        Assert.True(await otherRun.WaitAsync(Timeout));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelledRun.WaitAsync(WaitLimit));
+        Assert.True(await otherRun.WaitAsync(WaitLimit));
     }
 }
