@@ -90,19 +90,17 @@ public class FFmpegBinaryManager
     }
 
     /// <summary>
-    /// Returns the local download directory when it holds an ffmpeg binary, or null when
-    /// ffmpeg would resolve from the system PATH instead.
+    /// Returns the local download directory when it holds both ffmpeg and ffprobe, or null when
+    /// the binaries would resolve from the system PATH instead.
     /// </summary>
     public static string? GetLocalFFmpegDirectory()
     {
-        var binDir = GetBinaryDirectory();
-
-        return File.Exists(Path.Combine(binDir, ExecutableName("ffmpeg"))) ? binDir : null;
+        return GetLocalFFmpegDirectory(GetBinaryDirectory());
     }
 
     /// <summary>
     /// Check if FFmpeg is available (either in the local download directory or on PATH).
-    /// The local download wins, matching <see cref="GetFFmpegPath"/>, so FFMpegCore and direct
+    /// A complete local download wins, matching <see cref="GetFFmpegPath"/>, so FFMpegCore and direct
     /// process calls resolve the same binaries.
     /// </summary>
     public bool IsFFmpegAvailable()
@@ -179,6 +177,16 @@ public class FFmpegBinaryManager
 
         // Direct download for CLI scenario
         return await DownloadFFmpegCoreAsync(binDir);
+    }
+
+    internal static string? GetLocalFFmpegDirectory(string binDir)
+    {
+        return CheckLocalBinaries(binDir) ? binDir : null;
+    }
+
+    internal static string ResolveExecutablePath(string binDir, string tool)
+    {
+        return GetLocalFFmpegDirectory(binDir) is { } localDir ? Path.Combine(localDir, ExecutableName(tool)) : tool;
     }
 
     private Task<bool> DownloadMissingFFmpegAsync()
@@ -390,9 +398,7 @@ public class FFmpegBinaryManager
 
     private static string ResolveExecutablePath(string tool)
     {
-        var localPath = Path.Combine(GetBinaryDirectory(), ExecutableName(tool));
-
-        return File.Exists(localPath) ? localPath : tool;
+        return ResolveExecutablePath(GetBinaryDirectory(), tool);
     }
 
     private void ConfigureFFMpegCore(string binDir)
