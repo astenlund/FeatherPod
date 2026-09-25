@@ -144,7 +144,7 @@ internal static partial class FFmpegService
 
                 if (success)
                 {
-                    Out.MarkupLine($"[grey]Original: {analysis.InputI} LUFS → Normalized: {config.TargetLoudness} LUFS[/]");
+                    Out.MarkupLine($"[grey]Original: {analysis.InputI} LUFS -> Normalized: {config.TargetLoudness} LUFS[/]");
                     return outputPath;
                 }
 
@@ -168,7 +168,7 @@ internal static partial class FFmpegService
         var truePeak = config.TruePeak.ToString("G", CultureInfo.InvariantCulture);
         var loudnessRange = config.LoudnessRange.ToString("G", CultureInfo.InvariantCulture);
 
-        var ffmpegPath = GetFFmpegPath();
+        var ffmpegPath = FFmpegBinaryManager.GetFFmpegPath();
 
         using var process = new Process();
         process.StartInfo = new()
@@ -246,7 +246,7 @@ internal static partial class FFmpegService
         var truePeak = config.TruePeak.ToString("G", CultureInfo.InvariantCulture);
         var loudnessRange = config.LoudnessRange.ToString("G", CultureInfo.InvariantCulture);
 
-        var ffmpegPath = GetFFmpegPath();
+        var ffmpegPath = FFmpegBinaryManager.GetFFmpegPath();
 
         using var process = new Process();
         process.StartInfo = new()
@@ -408,7 +408,7 @@ internal static partial class FFmpegService
         try
         {
             // Try FFProbe to get creation_time from container metadata
-            var ffprobePath = GetFFprobePath();
+            var ffprobePath = FFmpegBinaryManager.GetFFprobePath();
 
             using var process = new Process();
             process.StartInfo = new()
@@ -436,30 +436,6 @@ internal static partial class FFmpegService
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// Get the path to the FFmpeg executable.
-    /// </summary>
-    private static string GetFFmpegPath()
-    {
-        var binDir = FFmpegBinaryManager.GetBinaryDirectory();
-        var ffmpegName = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
-        var localPath = Path.Combine(binDir, ffmpegName);
-
-        return File.Exists(localPath) ? localPath : "ffmpeg";
-    }
-
-    /// <summary>
-    /// Get the path to the FFprobe executable.
-    /// </summary>
-    private static string GetFFprobePath()
-    {
-        var binDir = FFmpegBinaryManager.GetBinaryDirectory();
-        var ffprobeName = OperatingSystem.IsWindows() ? "ffprobe.exe" : "ffprobe";
-        var localPath = Path.Combine(binDir, ffprobeName);
-
-        return File.Exists(localPath) ? localPath : "ffprobe";
     }
 
     [GeneratedRegex("""time=(\d+):(\d+):(\d+\.\d+)""", RegexOptions.Compiled)]

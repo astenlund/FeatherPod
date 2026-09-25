@@ -254,7 +254,7 @@ public partial class AudioNormalizationService : IAudioNormalizationService
         var truePeakStr = TruePeak.ToString("G", CultureInfo.InvariantCulture);
         var loudnessRangeStr = LoudnessRange.ToString("G", CultureInfo.InvariantCulture);
 
-        var ffmpegPath = GetFFmpegPath();
+        var ffmpegPath = FFmpegBinaryManager.GetFFmpegPath();
         _logger.LogDebug("Using FFmpeg at: {FfmpegPath}, Exists: {Exists}", ffmpegPath, File.Exists(ffmpegPath));
 
         // Send initial progress immediately so client knows the stage has started
@@ -473,18 +473,6 @@ public partial class AudioNormalizationService : IAudioNormalizationService
                $"measured_I={analysis.InputI}:measured_TP={analysis.InputTp}:" +
                $"measured_LRA={analysis.InputLra}:measured_thresh={analysis.InputThresh}:" +
                $"offset={analysis.TargetOffset}:print_format=summary";
-    }
-
-    /// <summary>
-    /// Get the path to the FFmpeg executable.
-    /// </summary>
-    private static string GetFFmpegPath()
-    {
-        var binDir = FFmpegBinaryManager.GetBinaryDirectory();
-        var ffmpegName = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
-        var localPath = Path.Combine(binDir, ffmpegName);
-
-        return File.Exists(localPath) ? localPath : "ffmpeg";
     }
 
     [GeneratedRegex("""\{[^{}]*"input_i"[^{}]*\}""", RegexOptions.Singleline)]

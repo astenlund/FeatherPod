@@ -107,7 +107,7 @@ public class YouTubeDownloadService : BackgroundService
             return;
         }
 
-        var ffmpegDir = GetLocalFfmpegDir();
+        var ffmpegDir = FFmpegBinaryManager.GetLocalFFmpegDirectory();
 
         // Create output directory early -- also used as cookie temp dir
         var outputDir = Path.Combine(Path.GetTempPath(), "FeatherPod", job.JobId);
@@ -376,14 +376,6 @@ public class YouTubeDownloadService : BackgroundService
         var entity = await _jobService.GetJobStatusAsync(jobId, cancellationToken);
 
         return entity?.GetJobStatus() == JobStatus.Cancelled;
-    }
-
-    private static string? GetLocalFfmpegDir()
-    {
-        var dir = FFmpegBinaryManager.GetBinaryDirectory();
-        var ffmpegName = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
-
-        return File.Exists(Path.Combine(dir, ffmpegName)) ? dir : null;
     }
 
     private void CleanupTempDirectory(string outputDir)

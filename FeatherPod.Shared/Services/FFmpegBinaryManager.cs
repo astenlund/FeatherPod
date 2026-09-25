@@ -72,6 +72,33 @@ public class FFmpegBinaryManager
     }
 
     /// <summary>
+    /// Resolves the path to the ffmpeg executable (local download or system PATH).
+    /// </summary>
+    public static string GetFFmpegPath()
+    {
+        return ResolveExecutablePath("ffmpeg");
+    }
+
+    /// <summary>
+    /// Resolves the path to the ffprobe executable (local download or system PATH).
+    /// </summary>
+    public static string GetFFprobePath()
+    {
+        return ResolveExecutablePath("ffprobe");
+    }
+
+    /// <summary>
+    /// Returns the local download directory when it holds an ffmpeg binary, or null when
+    /// ffmpeg would resolve from the system PATH instead.
+    /// </summary>
+    public static string? GetLocalFFmpegDirectory()
+    {
+        var binDir = GetBinaryDirectory();
+
+        return File.Exists(Path.Combine(binDir, ExecutableName("ffmpeg"))) ? binDir : null;
+    }
+
+    /// <summary>
     /// Check if FFmpeg is available (either on PATH or in local download directory).
     /// </summary>
     public bool IsFFmpegAvailable()
@@ -344,13 +371,19 @@ public class FFmpegBinaryManager
             return false;
         }
 
-        var ffmpegName = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
-        var ffprobeName = OperatingSystem.IsWindows() ? "ffprobe.exe" : "ffprobe";
+        return File.Exists(Path.Combine(binDir, ExecutableName("ffmpeg"))) && File.Exists(Path.Combine(binDir, ExecutableName("ffprobe")));
+    }
 
-        var ffmpegPath = Path.Combine(binDir, ffmpegName);
-        var ffprobePath = Path.Combine(binDir, ffprobeName);
+    private static string ExecutableName(string tool)
+    {
+        return OperatingSystem.IsWindows() ? $"{tool}.exe" : tool;
+    }
 
-        return File.Exists(ffmpegPath) && File.Exists(ffprobePath);
+    private static string ResolveExecutablePath(string tool)
+    {
+        var localPath = Path.Combine(GetBinaryDirectory(), ExecutableName(tool));
+
+        return File.Exists(localPath) ? localPath : tool;
     }
 
     private void ConfigureFFMpegCore(string binDir)
@@ -376,29 +409,5 @@ public class FFmpegBinaryManager
 
             _logger?.LogDebug("Configured FFMpegCore to use binaries from {BinDir}", binDir);
         }
-    }
-
-    /// <summary>
-    /// Resolves the path to the ffmpeg executable (local download or system PATH).
-    /// </summary>
-    public static string GetFFmpegPath()
-    {
-        var binDir = GetBinaryDirectory();
-        var name = OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
-        var localPath = Path.Combine(binDir, name);
-
-        return File.Exists(localPath) ? localPath : "ffmpeg";
-    }
-
-    /// <summary>
-    /// Resolves the path to the ffprobe executable (local download or system PATH).
-    /// </summary>
-    public static string GetFFprobePath()
-    {
-        var binDir = GetBinaryDirectory();
-        var name = OperatingSystem.IsWindows() ? "ffprobe.exe" : "ffprobe";
-        var localPath = Path.Combine(binDir, name);
-
-        return File.Exists(localPath) ? localPath : "ffprobe";
     }
 }
