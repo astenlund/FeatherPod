@@ -1,76 +1,37 @@
-using System.Diagnostics;
-using System.Globalization;
-using Microsoft.Extensions.Logging;
+using FFMpegCore;
 
 namespace FeatherPod.Shared.Services;
 
 /// <summary>
-/// <see cref="IAudioDurationProbe"/> backed by ffprobe (shipped with ffmpeg via
-/// <see cref="FFmpegBinaryManager"/>). Runs <c>ffprobe -show_entries format=duration</c>
-/// and parses a <see cref="double"/> seconds value.
+/// <see cref="IAudioDurationProbe"/> backed by FFMpegCore's <see cref="FFProbe"/>. Ensures the
+/// ffmpeg/ffprobe binaries through <see cref="FFmpegBinaryManager"/> first, which also points
+/// FFMpegCore at a locally downloaded copy.
 /// </summary>
 public sealed class FFprobeAudioDurationProbe : IAudioDurationProbe
 {
-    private readonly ILogger<FFprobeAudioDurationProbe> _logger;
+    private readonly FFmpegBinaryManager _binaryManager;
 
-    public FFprobeAudioDurationProbe(ILogger<FFprobeAudioDurationProbe> logger)
+    public FFprobeAudioDurationProbe(FFmpegBinaryManager binaryManager)
     {
-        _logger = logger;
+        _binaryManager = binaryManager;
     }
 
     public async Task<TimeSpan> GetDurationAsync(string filePath, CancellationToken ct)
     {
-        var ffprobePath = FFmpegBinaryManager.GetFFprobePath();
-        using var process = new Process
+        if (!await _binaryManager.EnsureFFmpegAvailableAsync(ct))
         {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = ffprobePath,
-                ArgumentList = { "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filePath },
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            },
-        };
-
-        process.Start();
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
-
-        try
-        {
-            await process.WaitForExitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            try
-            {
-                process.Kill(entireProcessTree: true);
-            }
-            catch (InvalidOperationException)
-            {
-                // Process already exited
-            }
-
-            throw;
+            throw new InvalidOperationException("FFmpeg is not available for probing audio duration");
         }
 
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
+        var analysis = await FFProbe.AnalyseAsync(filePath, cancellationToken: ct);
 
-        if (process.ExitCode != 0)
+        // FFMpegCore reports a missing or unparseable duration as zero, which would silently
+        // route the file down the Fast path; treat it as a probe failure instead.
+        if (analysis.Duration <= TimeSpan.Zero)
         {
-            throw new InvalidOperationException($"ffprobe failed for {filePath} (exit {process.ExitCode}): {stderr.Truncate(500)}");
+            throw new InvalidOperationException($"ffprobe reported no duration for {Path.GetFileName(filePath)}");
         }
 
-        if (!double.TryParse(stdout.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds))
-        {
-            _logger.LogWarning("ffprobe produced unparseable duration {Stdout} for {FilePath}", stdout, filePath);
-
-            return TimeSpan.Zero;
-        }
-
-        return TimeSpan.FromSeconds(seconds);
+        return analysis.Duration;
     }
 }

@@ -1,7 +1,8 @@
-using System.Diagnostics;
 using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
+using FFMpegCore;
+using FFMpegCore.Enums;
 
 namespace FeatherPod.Server.Services;
 
@@ -29,6 +30,7 @@ public class TranscriptionBackgroundService : BackgroundService
     private readonly IJobProgressChannel _progressChannel;
     private readonly JobCompletionService _completionService;
     private readonly IAudioDurationProbe _durationProbe;
+    private readonly FFmpegBinaryManager _ffmpegBinaryManager;
     private readonly ILogger<TranscriptionBackgroundService> _logger;
     private readonly SemaphoreSlim _concurrency;
     private readonly bool _useFastTranscription;
@@ -42,6 +44,7 @@ public class TranscriptionBackgroundService : BackgroundService
         IJobProgressChannel progressChannel,
         JobCompletionService completionService,
         IAudioDurationProbe durationProbe,
+        FFmpegBinaryManager ffmpegBinaryManager,
         IHostApplicationLifetime lifetime,
         IConfiguration configuration,
         ILogger<TranscriptionBackgroundService> logger)
@@ -53,6 +56,7 @@ public class TranscriptionBackgroundService : BackgroundService
         _progressChannel = progressChannel;
         _completionService = completionService;
         _durationProbe = durationProbe;
+        _ffmpegBinaryManager = ffmpegBinaryManager;
         _logger = logger;
 
         lifetime.ApplicationStopping.Register(() => _channel.Complete());
@@ -326,48 +330,22 @@ public class TranscriptionBackgroundService : BackgroundService
     /// </summary>
     private async Task<string> ConvertToWavAsync(string tempInputFile, string jobId, CancellationToken ct)
     {
+        if (!await _ffmpegBinaryManager.EnsureFFmpegAvailableAsync(ct))
+        {
+            throw new InvalidOperationException("FFmpeg is not available for WAV conversion");
+        }
+
         var tempWavFile = Path.Combine(GetOrCreateTempDir(), $"transcribe-{jobId}.wav");
 
-        var ffmpegPath = FFmpegBinaryManager.GetFFmpegPath();
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = ffmpegPath,
-                ArgumentList = { "-i", tempInputFile, "-ar", "16000", "-ac", "1", "-f", "wav", tempWavFile, "-y" },
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            },
-        };
-
-        process.Start();
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
-
-        try
-        {
-            await process.WaitForExitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            try
-            {
-                process.Kill(entireProcessTree: true);
-            }
-            catch (InvalidOperationException)
-            {
-                // Process already exited
-            }
-
-            throw;
-        }
-
-        var stderr = await stderrTask;
-
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"FFmpeg WAV conversion failed (exit {process.ExitCode}): {stderr.Truncate(500)}");
-        }
+        await FFMpegArguments
+            .FromFileInput(tempInputFile)
+            .OutputToFile(tempWavFile, overwrite: true, options => options
+                .WithAudioSamplingRate(16000)
+                .WithCustomArgument("-ac 1")
+                .ForceFormat("wav"))
+            .CancellableThrough(ct)
+            .WithLogLevel(FFMpegLogLevel.Error)
+            .ProcessAsynchronously();
 
         _logger.LogInformation("Converted to WAV for transcription job {JobId}: {InputSize} -> {OutputSize} bytes",
             jobId, new FileInfo(tempInputFile).Length, new FileInfo(tempWavFile).Length);

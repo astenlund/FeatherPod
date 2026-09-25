@@ -20,6 +20,7 @@ public class FFmpegBinaryManager
     private readonly ILogger<FFmpegBinaryManager>? _logger;
     private readonly BlobContainerClient? _blobContainer;
     private readonly Lock _lock = new();
+    private readonly SharedRetryableOperation _sharedDownload;
 
     private bool? _isAvailable;
     private bool _configured;
@@ -33,6 +34,7 @@ public class FFmpegBinaryManager
     {
         _logger = logger;
         _blobContainer = blobContainer;
+        _sharedDownload = new SharedRetryableOperation(DownloadMissingFFmpegAsync);
     }
 
     /// <summary>
@@ -99,7 +101,9 @@ public class FFmpegBinaryManager
     }
 
     /// <summary>
-    /// Check if FFmpeg is available (either on PATH or in local download directory).
+    /// Check if FFmpeg is available (either in the local download directory or on PATH).
+    /// The local download wins, matching <see cref="GetFFmpegPath"/>, so FFMpegCore and direct
+    /// process calls resolve the same binaries.
     /// </summary>
     public bool IsFFmpegAvailable()
     {
@@ -115,21 +119,19 @@ public class FFmpegBinaryManager
                 return _isAvailable.Value;
             }
 
-            // First, check system PATH
-            if (CheckSystemPath())
-            {
-                _logger?.LogInformation("FFmpeg found on system PATH");
-                _isAvailable = true;
-
-                return true;
-            }
-
-            // Then check local download directory
             var binDir = GetBinaryDirectory();
             if (CheckLocalBinaries(binDir))
             {
                 ConfigureFFMpegCore(binDir);
                 _logger?.LogInformation("FFmpeg found in local directory: {BinDir}", binDir);
+                _isAvailable = true;
+
+                return true;
+            }
+
+            if (CheckSystemPath())
+            {
+                _logger?.LogInformation("FFmpeg found on system PATH");
                 _isAvailable = true;
 
                 return true;
@@ -143,9 +145,10 @@ public class FFmpegBinaryManager
     }
 
     /// <summary>
-    /// Ensures FFmpeg is available, downloading if necessary.
+    /// Ensures FFmpeg is available, downloading if necessary. Concurrent callers share one
+    /// in-flight download; a failed download is forgotten so the next call retries.
     /// </summary>
-    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="cancellationToken">Cancels this caller's wait, not the shared download.</param>
     /// <returns>True if FFmpeg is available after this call.</returns>
     public async Task<bool> EnsureFFmpegAvailableAsync(CancellationToken cancellationToken = default)
     {
@@ -154,9 +157,7 @@ public class FFmpegBinaryManager
             return true;
         }
 
-        _logger?.LogInformation("FFmpeg not found, attempting to download...");
-
-        return await DownloadFFmpegAsync(cancellationToken);
+        return await _sharedDownload.RunAsync(cancellationToken);
     }
 
     /// <summary>
@@ -178,6 +179,14 @@ public class FFmpegBinaryManager
 
         // Direct download for CLI scenario
         return await DownloadFFmpegCoreAsync(binDir);
+    }
+
+    private Task<bool> DownloadMissingFFmpegAsync()
+    {
+        _logger?.LogInformation("FFmpeg not found, attempting to download...");
+
+        // Shared by every waiting caller, so no single caller's token may cancel it.
+        return DownloadFFmpegAsync(CancellationToken.None);
     }
 
     private async Task<bool> DownloadWithDistributedLockAsync(string binDir, CancellationToken cancellationToken = default)

@@ -93,8 +93,10 @@ class Program
             builder.Services.AddSingleton<IAiService, AiService>();
         }
 
-        // YouTube import services
+        // FFmpeg binaries, shared by YouTube import and transcription
         builder.Services.AddSingleton<FFmpegBinaryManager>();
+
+        // YouTube import services
         builder.Services.AddSingleton<YtDlpBinaryManager>();
         builder.Services.AddSingleton<YtDlpService>();
         builder.Services.AddSingleton<YouTubeCookieService>();
