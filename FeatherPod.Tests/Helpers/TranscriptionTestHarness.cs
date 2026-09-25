@@ -100,7 +100,7 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
             new NullJobProgressChannel(),
             completionService,
             Duration,
-            new FFmpegBinaryManager(),
+            new WavConverter(new FFmpegBinaryManager(), NullLogger<WavConverter>.Instance),
             _lifetime,
             configuration,
             NullLogger<TranscriptionBackgroundService>.Instance);

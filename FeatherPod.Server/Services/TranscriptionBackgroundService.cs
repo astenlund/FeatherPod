@@ -1,8 +1,6 @@
 using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using FeatherPod.Shared.Services;
-using FFMpegCore;
-using FFMpegCore.Enums;
 
 namespace FeatherPod.Server.Services;
 
@@ -30,7 +28,7 @@ public class TranscriptionBackgroundService : BackgroundService
     private readonly IJobProgressChannel _progressChannel;
     private readonly JobCompletionService _completionService;
     private readonly IAudioDurationProbe _durationProbe;
-    private readonly FFmpegBinaryManager _ffmpegBinaryManager;
+    private readonly WavConverter _wavConverter;
     private readonly ILogger<TranscriptionBackgroundService> _logger;
     private readonly SemaphoreSlim _concurrency;
     private readonly bool _useFastTranscription;
@@ -44,7 +42,7 @@ public class TranscriptionBackgroundService : BackgroundService
         IJobProgressChannel progressChannel,
         JobCompletionService completionService,
         IAudioDurationProbe durationProbe,
-        FFmpegBinaryManager ffmpegBinaryManager,
+        WavConverter wavConverter,
         IHostApplicationLifetime lifetime,
         IConfiguration configuration,
         ILogger<TranscriptionBackgroundService> logger)
@@ -56,7 +54,7 @@ public class TranscriptionBackgroundService : BackgroundService
         _progressChannel = progressChannel;
         _completionService = completionService;
         _durationProbe = durationProbe;
-        _ffmpegBinaryManager = ffmpegBinaryManager;
+        _wavConverter = wavConverter;
         _logger = logger;
 
         lifetime.ApplicationStopping.Register(() => _channel.Complete());
@@ -325,27 +323,14 @@ public class TranscriptionBackgroundService : BackgroundService
     }
 
     /// <summary>
-    /// Convert <paramref name="tempInputFile"/> to 16 kHz mono WAV via FFmpeg. Returns the
-    /// temp WAV path. Pure local I/O -- no blob upload (callers do that separately for batch).
+    /// Convert <paramref name="tempInputFile"/> to 16 kHz mono WAV via <see cref="WavConverter"/>.
+    /// Returns the temp WAV path (a failed conversion leaves none behind). Pure local I/O -- no
+    /// blob upload (callers do that separately for batch).
     /// </summary>
     private async Task<string> ConvertToWavAsync(string tempInputFile, string jobId, CancellationToken ct)
     {
-        if (!await _ffmpegBinaryManager.EnsureFFmpegAvailableAsync(ct))
-        {
-            throw new InvalidOperationException("FFmpeg is not available for WAV conversion");
-        }
-
         var tempWavFile = Path.Combine(GetOrCreateTempDir(), $"transcribe-{jobId}.wav");
-
-        await FFMpegArguments
-            .FromFileInput(tempInputFile)
-            .OutputToFile(tempWavFile, overwrite: true, options => options
-                .WithAudioSamplingRate(16000)
-                .WithCustomArgument("-ac 1")
-                .ForceFormat("wav"))
-            .CancellableThrough(ct)
-            .WithLogLevel(FFMpegLogLevel.Error)
-            .ProcessAsynchronously();
+        await _wavConverter.ConvertAsync(tempInputFile, tempWavFile, ct);
 
         _logger.LogInformation("Converted to WAV for transcription job {JobId}: {InputSize} -> {OutputSize} bytes",
             jobId, new FileInfo(tempInputFile).Length, new FileInfo(tempWavFile).Length);
