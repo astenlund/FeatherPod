@@ -42,35 +42,7 @@ public class FFmpegBinaryManager
     /// </summary>
     public static string GetBinaryDirectory()
     {
-        // Azure App Service/Functions: Use HOME directory for persistent storage
-        var websiteName = Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME");
-        if (websiteName != null)
-        {
-            var home = Environment.GetEnvironmentVariable("HOME");
-            if (!string.IsNullOrEmpty(home))
-            {
-                // Windows: D:\home, Linux: /home
-                return Path.Combine(home, ".featherpod", "ffmpeg");
-            }
-        }
-
-        if (OperatingSystem.IsWindows())
-        {
-            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-
-            return Path.Combine(localAppData, "FeatherPod", "ffmpeg");
-        }
-
-        // Linux/macOS: Use XDG Base Directory spec ($XDG_DATA_HOME or ~/.local/share)
-        var xdgDataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
-        if (!string.IsNullOrEmpty(xdgDataHome))
-        {
-            return Path.Combine(xdgDataHome, "FeatherPod", "ffmpeg");
-        }
-
-        var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
-        return Path.Combine(userHome, ".local", "share", "FeatherPod", "ffmpeg");
+        return NativeBinaryPaths.GetToolDirectory("ffmpeg");
     }
 
     /// <summary>
@@ -186,7 +158,7 @@ public class FFmpegBinaryManager
 
     internal static string ResolveExecutablePath(string binDir, string tool)
     {
-        return GetLocalFFmpegDirectory(binDir) is { } localDir ? Path.Combine(localDir, ExecutableName(tool)) : tool;
+        return GetLocalFFmpegDirectory(binDir) is { } localDir ? Path.Combine(localDir, NativeBinaryPaths.ExecutableFileName(tool)) : tool;
     }
 
     private Task<bool> DownloadMissingFFmpegAsync()
@@ -388,12 +360,7 @@ public class FFmpegBinaryManager
             return false;
         }
 
-        return File.Exists(Path.Combine(binDir, ExecutableName("ffmpeg"))) && File.Exists(Path.Combine(binDir, ExecutableName("ffprobe")));
-    }
-
-    private static string ExecutableName(string tool)
-    {
-        return OperatingSystem.IsWindows() ? $"{tool}.exe" : tool;
+        return File.Exists(Path.Combine(binDir, NativeBinaryPaths.ExecutableFileName("ffmpeg"))) && File.Exists(Path.Combine(binDir, NativeBinaryPaths.ExecutableFileName("ffprobe")));
     }
 
     private static string ResolveExecutablePath(string tool)

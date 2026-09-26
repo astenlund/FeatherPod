@@ -31,42 +31,12 @@ public class YtDlpBinaryManager
     {
         _logger = logger;
         _httpClient = httpClient ?? CreateDefaultHttpClient();
-        _binaryDirectory = ResolveBinaryDirectory();
-        _binaryPath = Path.Combine(_binaryDirectory, OperatingSystem.IsWindows() ? "yt-dlp.exe" : "yt-dlp");
-        _denoPath = Path.Combine(_binaryDirectory, OperatingSystem.IsWindows() ? "deno.exe" : "deno");
+        _binaryDirectory = GetBinaryDirectory();
+        _binaryPath = Path.Combine(_binaryDirectory, NativeBinaryPaths.ExecutableFileName("yt-dlp"));
+        _denoPath = Path.Combine(_binaryDirectory, NativeBinaryPaths.ExecutableFileName("deno"));
     }
 
-    public static string GetBinaryDirectory() => ResolveBinaryDirectory();
-
-    private static string ResolveBinaryDirectory()
-    {
-        var websiteName = Environment.GetEnvironmentVariable("WEBSITE_SITE_NAME");
-        if (websiteName != null)
-        {
-            var home = Environment.GetEnvironmentVariable("HOME");
-            if (!string.IsNullOrEmpty(home))
-            {
-                return Path.Combine(home, ".featherpod", "yt-dlp");
-            }
-        }
-
-        if (OperatingSystem.IsWindows())
-        {
-            var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-
-            return Path.Combine(localAppData, "FeatherPod", "yt-dlp");
-        }
-
-        var xdgDataHome = Environment.GetEnvironmentVariable("XDG_DATA_HOME");
-        if (!string.IsNullOrEmpty(xdgDataHome))
-        {
-            return Path.Combine(xdgDataHome, "FeatherPod", "yt-dlp");
-        }
-
-        var userHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
-        return Path.Combine(userHome, ".local", "share", "FeatherPod", "yt-dlp");
-    }
+    public static string GetBinaryDirectory() => NativeBinaryPaths.GetToolDirectory("yt-dlp");
 
     public string GetBinaryPath() => _binaryPath;
 
