@@ -10,7 +10,10 @@ import { syncPushSession } from './notifications.js';
 
 /** @type {EventSource|null} */
 let feedEventsSource = null;
-/** @type {Map<string, number>} */
+/**
+ * @type {Map<string, number>} dismissedAt by jobId, for jobs recent-jobs merges must not add; changed only through
+ * loadDismissedJobIds, recordDismissedJobs and dropDismissedJob
+ */
 let dismissedJobIds = new Map();
 /** @type {number} requestedAt of the newest recent-jobs snapshot merged so far (performance.now()) */
 let newestMergedSnapshotRequestedAt = -Infinity;
@@ -66,42 +69,87 @@ export function notifyLocalSourceUploaded(localSourceIndex) {
 }
 
 /**
- * Save dismissedJobIds to localStorage for persistence across page reloads.
- * Each entry stores the original dismissal timestamp for 1-hour TTL filtering.
+ * Read the dismissals saved in localStorage, without the ones older than JOB_TTL_MS.
+ * @returns {Map<string, number>} dismissedAt by jobId
  */
-export function saveDismissedJobIds() {
+function readSavedDismissals() {
+    const saved = new Map();
+    const entries = tryParseJson(localStorage.getItem(DISMISSED_STORAGE_KEY));
+    if (!Array.isArray(entries)) {
+        return saved;
+    }
+    const oneHourAgo = Date.now() - JOB_TTL_MS;
+    for (const entry of entries) {
+        if (entry?.jobId && entry.dismissedAt && entry.dismissedAt >= oneHourAgo) {
+            saved.set(entry.jobId, entry.dismissedAt);
+        }
+    }
+
+    return saved;
+}
+
+/**
+ * Apply a change to the dismissals saved in localStorage, dropping expired ones on the way. The saved list is read
+ * back and changed job by job rather than replaced with this tab's map, so dismissals that other tabs of this browser
+ * saved after this tab loaded survive.
+ * @param {(saved: Map<string, number>) => void} change - Mutates the saved dismissals (dismissedAt by jobId)
+ */
+function updateSavedDismissals(change) {
     try {
-        const entries = Array.from(dismissedJobIds, ([jobId, dismissedAt]) => ({ jobId, dismissedAt }));
-        localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify(entries));
-    } catch (e) {
-        // Ignore
+        const saved = readSavedDismissals();
+        change(saved);
+        localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify(Array.from(saved, ([jobId, dismissedAt]) => ({ jobId, dismissedAt }))));
+    } catch {
+        // Storage unavailable or full: the saved list keeps its previous contents
     }
 }
 
 /**
- * Load dismissedJobIds from localStorage, filtering out entries older than 1 hour.
+ * Load the dismissals saved in localStorage into dismissedJobIds, dropping expired ones from storage.
  */
 export function loadDismissedJobIds() {
-    const saved = localStorage.getItem(DISMISSED_STORAGE_KEY);
-    if (!saved) {
-        return;
-    }
-    const entries = tryParseJson(saved);
-    if (!entries || !Array.isArray(entries)) {
-        return;
-    }
-    const oneHourAgo = Date.now() - JOB_TTL_MS;
-    let pruned = false;
-    for (const entry of entries) {
-        if (entry.jobId && entry.dismissedAt && entry.dismissedAt >= oneHourAgo) {
-            dismissedJobIds.set(entry.jobId, entry.dismissedAt);
-        } else {
-            pruned = true;
+    updateSavedDismissals(saved => {
+        for (const [jobId, dismissedAt] of saved) {
+            dismissedJobIds.set(jobId, dismissedAt);
         }
+    });
+}
+
+/**
+ * Record jobs as dismissed in dismissedJobIds and in localStorage, so recent-jobs merges skip them for JOB_TTL_MS,
+ * reloads included.
+ * @param {string[]} jobIds
+ */
+export function recordDismissedJobs(jobIds) {
+    if (jobIds.length === 0) {
+        return;
     }
-    if (pruned) {
-        saveDismissedJobIds();
+    const dismissedAt = Date.now();
+    for (const jobId of jobIds) {
+        dismissedJobIds.set(jobId, dismissedAt);
     }
+    updateSavedDismissals(saved => {
+        for (const jobId of jobIds) {
+            saved.set(jobId, dismissedAt);
+        }
+    });
+}
+
+/**
+ * Drop a job's dismissal from dismissedJobIds and from localStorage, from each only while it still holds dismissedAt,
+ * so a dismissal that another path or tab recorded since is kept.
+ * @param {string} jobId
+ * @param {number} dismissedAt - The timestamp of the dismissal to drop
+ */
+export function dropDismissedJob(jobId, dismissedAt) {
+    if (dismissedJobIds.get(jobId) === dismissedAt) {
+        dismissedJobIds.delete(jobId);
+    }
+    updateSavedDismissals(saved => {
+        if (saved.get(jobId) === dismissedAt) {
+            saved.delete(jobId);
+        }
+    });
 }
 
 /**

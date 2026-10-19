@@ -7,7 +7,7 @@ import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQ
 import { resetNotificationToggle, syncPushSession, notifyQueueComplete } from './notifications.js';
 import { resetWakeLockToggle } from './wake-lock.js';
 import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetchBrowserUploads, initHistorySection, invalidateBrowserUploadsCache } from './history.js';
-import { getDismissedJobIds, saveDismissedJobIds, notifyLocalSourceUploaded } from './server-sync.js';
+import { getDismissedJobIds, recordDismissedJobs, dropDismissedJob, notifyLocalSourceUploaded } from './server-sync.js';
 import { showYouTubeCookieDialog } from './youtube.js';
 import { parseYouTubeFileName } from './youtube-url.js';
 
@@ -210,8 +210,7 @@ export async function dismissEntry(entryId) {
 
     const jobId = entry.jobId;
     if (jobId) {
-        getDismissedJobIds().set(jobId, Date.now());
-        saveDismissedJobIds();
+        recordDismissedJobs([jobId]);
     }
 
     uploadQueue.splice(index, 1);
@@ -595,7 +594,7 @@ async function finalizeCompletedEntry(entry, jobStatus) {
 }
 
 /**
- * Apply terminal "cancelled" state to an entry: record its job in dismissedJobIds, clear the
+ * Apply terminal "cancelled" state to an entry: record its job as dismissed, clear the
  * progress animator slot, drop the DOM item, and remove it from the upload queue if it is still there
  * (a recent-jobs merge, or an earlier call from cancelEntry, can remove it while a poll status request is in flight). Shared by the
  * aborted-upload path in processEntry, cancelEntry, the SSE progress handler, the SSE done handler,
@@ -608,8 +607,7 @@ async function finalizeCompletedEntry(entry, jobStatus) {
 function finalizeCancelledEntry(entry) {
     entry.status = 'cancelled';
     if (entry.jobId) {
-        getDismissedJobIds().set(entry.jobId, Date.now());
-        saveDismissedJobIds();
+        recordDismissedJobs([entry.jobId]);
     }
     progressAnimator.removeSlot(entry.id);
     removeQueueItemFromDOM(entry.id);
@@ -838,10 +836,10 @@ async function pollEntryNormalization(entry) {
 /**
  * Cancel a single queue entry, removing it from the queue and DOM.
  * Queued: removes immediately. Uploading: aborts XHR. Normalizing: closes SSE, finalizes the entry (which records the
- * job in dismissedJobIds, so a recent-jobs snapshot fetched before the cancel cannot re-add it), POSTs cancel. When the
+ * job as dismissed, so a recent-jobs snapshot fetched before the cancel cannot re-add it), POSTs cancel. When the
  * request throws or returns a non-OK status other than 404 (the job is gone), the job may still be running, may have
- * completed first or may already be cancelled, so the dismissal this cancel recorded is dropped again, if no other path
- * has replaced it, and the next snapshot shows the job unless the server lists it as Cancelled. A snapshot requested
+ * completed first or may already be cancelled, so the dismissal this cancel recorded is dropped again wherever no other
+ * path or tab has replaced it, and the next snapshot shows the job unless the server lists it as Cancelled. A snapshot requested
  * before the cancel and merged after that drop can still briefly re-add a job the server did cancel.
  * @param {string} entryId
  */
@@ -897,9 +895,8 @@ export async function cancelEntry(entryId) {
             } catch {
                 // No response: if the server did cancel the job, later snapshots list it as Cancelled and skip it
             }
-            if (!cancelled && getDismissedJobIds().get(jobId) === dismissedAt) {
-                getDismissedJobIds().delete(jobId);
-                saveDismissedJobIds();
+            if (!cancelled) {
+                dropDismissedJob(jobId, dismissedAt);
             }
         }
     }
@@ -955,7 +952,7 @@ export function retryEntry(entryId) {
  * Called when the tab regains focus or the PWA resumes, so stale terminal entries
  * don't linger until a full page refresh. Recent entries are kept so the user can
  * see completions that happened while the tab was inactive.
- * Adds cleared jobIds to dismissedJobIds to prevent mergeServerJobs from re-adding them.
+ * Records the cleared entries' jobs as dismissed so mergeServerJobs does not re-add them.
  */
 export function clearTerminalEntries() {
     const oneHourAgo = Date.now() - JOB_TTL_MS;
@@ -965,11 +962,7 @@ export function clearTerminalEntries() {
     if (terminalEntries.length === 0) {
         return;
     }
-    const dismissedJobIds = getDismissedJobIds();
     for (const entry of terminalEntries) {
-        if (entry.jobId) {
-            dismissedJobIds.set(entry.jobId, Date.now());
-        }
         if (entry.eventSource) {
             entry.eventSource.close();
             entry.eventSource = null;
@@ -986,7 +979,7 @@ export function clearTerminalEntries() {
             uploadQueue.splice(idx, 1);
         }
     }
-    saveDismissedJobIds();
+    recordDismissedJobs(terminalEntries.filter(e => e.jobId).map(e => e.jobId));
     saveQueueState();
     checkAllComplete();
 }
