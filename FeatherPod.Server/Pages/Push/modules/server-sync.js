@@ -196,7 +196,10 @@ function removeEntry(uploadQueue, entry) {
     progressAnimator.removeSlot(entry.id);
 
     removeQueueItemFromDOM(entry.id);
-    uploadQueue.splice(uploadQueue.indexOf(entry), 1);
+    const index = uploadQueue.indexOf(entry);
+    if (index !== -1) {
+        uploadQueue.splice(index, 1);
+    }
     if (entry._resolveMonitor) {
         entry._resolveMonitor();
         entry._resolveMonitor = null;

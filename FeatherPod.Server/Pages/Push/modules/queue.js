@@ -596,7 +596,8 @@ async function finalizeCompletedEntry(entry, jobStatus) {
 
 /**
  * Apply terminal "cancelled" state to an entry: record its job in dismissedJobIds, clear the
- * progress animator slot, drop the DOM item, and remove it from the upload queue. Shared by the
+ * progress animator slot, drop the DOM item, and remove it from the upload queue if it is still there
+ * (a recent-jobs merge, or an earlier call from cancelEntry, can remove it while a poll status request is in flight). Shared by the
  * aborted-upload path in processEntry, cancelEntry, the SSE progress handler, the SSE done handler,
  * and the poll fallback, so a cancel made on this page and one made elsewhere (another tab or
  * device, a direct API call) both keep a recent-jobs snapshot requested before the cancel from
@@ -612,7 +613,10 @@ function finalizeCancelledEntry(entry) {
     }
     progressAnimator.removeSlot(entry.id);
     removeQueueItemFromDOM(entry.id);
-    uploadQueue.splice(uploadQueue.indexOf(entry), 1);
+    const index = uploadQueue.indexOf(entry);
+    if (index !== -1) {
+        uploadQueue.splice(index, 1);
+    }
     saveQueueState();
 }
 
