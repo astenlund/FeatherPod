@@ -265,6 +265,8 @@ function advanceQueue() {
  * Check if all entries have reached a terminal state.
  * When all are terminal, stays in queue state and animates title to "Pushed".
  * When queue is empty, transitions back to ready state.
+ * Either way both toggles end unpressed: a hidden bell must not keep its push subscription for work
+ * discovered later, and a hidden wake-lock toggle must not re-acquire the lock on tab reactivation.
  */
 export function checkAllComplete() {
     if (uploadQueue.length === 0) {
@@ -273,6 +275,7 @@ export function checkAllComplete() {
             prepareReadyDropZoneMorph(queueDZHeight);
         }
         clearQueueState();
+        resetNotificationToggle();
         resetWakeLockToggle();
         showState('ready', false, collapseHistoryImmediate);
         if (queueDZHeight > 0) {
