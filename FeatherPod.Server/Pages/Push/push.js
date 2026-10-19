@@ -458,8 +458,10 @@ async function init() {
  * would. Safe to re-run (hashchange re-invokes init): restoreQueueState leaves a live queue alone, and
  * the DOM deduplicates the toggle initializers' click listeners. showInitialView does not choose a view over a
  * key prompt that init raised after the run began (see keyPromptGeneration); local-source or shared-file intake
- * can still switch to the queue view on its own. The recent-jobs snapshot requested at the start is merged once:
- * by showInitialView when it gets it in time, otherwise after the history fetch.
+ * can still switch to the queue view on its own. The recent-jobs snapshot requested at the start is handed to
+ * mergeServerJobs once: by showInitialView when it gets it in time, otherwise after the history fetch. mergeServerJobs
+ * ignores it when a snapshot requested later (on a job-added event, on tab reactivation or by a later startup run) has
+ * already been merged, since that one has already reconciled the queue.
  */
 async function startSession() {
     const promptGeneration = keyPromptGeneration;
@@ -510,7 +512,8 @@ function isInitialViewPending() {
  * @param {Promise<import('./modules/server-sync.js').RecentJobsSnapshot|null>} serverJobsPromise
  * @param {boolean} focusReady - Focus the file picker button when showing the ready view
  * @param {number} promptGeneration - keyPromptGeneration captured when the calling startup run began
- * @returns {Promise<boolean>} Whether the snapshot arrived within the sync wait and was merged here
+ * @returns {Promise<boolean>} Whether the snapshot arrived within the sync wait and was handed to mergeServerJobs here
+ *     (which ignores a null snapshot, and one requested before a snapshot it has already merged)
  */
 async function showInitialView(serverJobsPromise, focusReady, promptGeneration) {
     let merged = false;

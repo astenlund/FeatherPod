@@ -12,6 +12,8 @@ import { syncPushSession } from './notifications.js';
 let feedEventsSource = null;
 /** @type {Map<string, number>} */
 let dismissedJobIds = new Map();
+/** @type {number} requestedAt of the newest recent-jobs snapshot merged so far (performance.now()) */
+let newestMergedSnapshotRequestedAt = -Infinity;
 /** @type {{host: string, token: string}|null} */
 let localSourceConfig = null;
 /** @type {EventSource|null} */
@@ -148,7 +150,8 @@ export function connectFeedEvents() {
  * @typedef {Object} RecentJobsSnapshot
  * @property {Array<Object>} jobs - The server's recent jobs, terminal ones included
  * @property {number} requestedAt - performance.now() when the request was sent; jobs whose ids the page received later
- *     (see QueueEntry.jobIdReceivedAt) can be missing from the snapshot without being stale
+ *     (see QueueEntry.jobIdReceivedAt) can be missing from the snapshot without being stale, and mergeServerJobs ignores
+ *     a snapshot requested before the newest one it has merged
  */
 
 /**
@@ -391,13 +394,19 @@ function addNewServerEntries(uploadQueue, serverJobs, existingJobIds) {
  * - addNewServerEntries: appends unknown server jobs (e.g., from CLI or another tab)
  * then repaints the affected DOM, resumes SSE monitoring, refreshes the queue title and toggles
  * (so work discovered after the queue finished gets its toggles back), and persists queue state.
- * If the snapshot is null (fetch failed), skips reconciliation entirely.
+ * If the snapshot is null (fetch failed), skips reconciliation entirely. A snapshot requested before
+ * the newest one already merged is outdated (responses can arrive out of order) and is ignored, so it
+ * cannot roll a job's stage and progress back.
  * @param {RecentJobsSnapshot|null} snapshot
  */
 export function mergeServerJobs(snapshot) {
     if (snapshot === null) {
         return; // Server fetch failed -- don't reconcile, let SSE handle it
     }
+    if (snapshot.requestedAt < newestMergedSnapshotRequestedAt) {
+        return;
+    }
+    newestMergedSnapshotRequestedAt = snapshot.requestedAt;
 
     const serverJobs = snapshot.jobs;
     const uploadQueue = getQueue();
