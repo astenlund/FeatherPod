@@ -3,7 +3,7 @@ import { isValidMediaFile, isActiveWork, isInUploadPhase, tryParseJson } from '.
 import { getApiKey } from './auth.js';
 import { showState, getCurrentState, refreshQueueActivity } from './state.js';
 import { progressAnimator } from './progress.js';
-import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQueueItemFromDOM, getEntryProgressBar, rebindProgressAnimator, registerQueueCallbacks, createQueueItemElement, animateQueueDropZoneMorph, prepareReadyDropZoneMorph, animateReadyDropZoneMorph, updateQueueItemName } from './queue-ui.js';
+import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQueueItemFromDOM, getEntryProgressBar, registerQueueCallbacks, createQueueItemElement, animateQueueDropZoneMorph, prepareReadyDropZoneMorph, animateReadyDropZoneMorph, updateQueueItemName } from './queue-ui.js';
 import { resetNotificationToggle, syncPushSession, notifyQueueComplete } from './notifications.js';
 import { resetWakeLockToggle } from './wake-lock.js';
 import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetchBrowserUploads, initHistorySection, invalidateBrowserUploadsCache } from './history.js';
@@ -162,7 +162,6 @@ export function addFilesToQueue(files) {
         renderQueueList(false);
     }
 
-    rebindProgressAnimator();
     saveQueueState();
 
     if (!isUploading) {

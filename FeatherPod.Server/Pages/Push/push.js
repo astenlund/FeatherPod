@@ -27,7 +27,7 @@ import { initWakeLockToggle, isWakeLockTogglePressed, acquireWakeLock } from './
 import { initNotificationToggle } from './modules/notifications.js';
 import { progressAnimator } from './modules/progress.js';
 import { showState, getCurrentState, refreshQueueActivity, showError, showWarningBanner, setNoKeyError, cacheLayoutDimensions } from './modules/state.js';
-import { renderQueueList, rebindProgressAnimator } from './modules/queue-ui.js';
+import { renderQueueList } from './modules/queue-ui.js';
 import { getQueue, initQueue, restoreQueueState, addFilesToQueue, clearQueueState, clearTerminalEntries, dismissEntry, monitorEntryNormalizationInBackground, updateQueueTitleForEpisode } from './modules/queue.js';
 import { registerHistoryContextMenuCallback, initHistorySection, collapseHistoryImmediate, toggleHistorySection, changeHistoryFilter, selectHistoryUpload, updateHistoryListScrollState, getHistoryFilter, getHistoryPanelPushedState, setHistoryPanelPushedState, getHistoryData, getHistorySelectedId, refreshHistoryList } from './modules/history.js';
 import { showContextMenu, getContextMenuTargetId, hideContextMenu, showRenameModal, hideRenameModal, showDeleteConfirm, hideDeleteConfirm, deleteEpisode, saveEpisodeChanges, updateRenameSaveState, toggleNotePanel, closeNotePanel, commitNoteAndRefreshSuggestion, handleNoteInput, isNotePanelOpen, registerEpisodeRenamedCallback } from './modules/editing.js';
@@ -506,8 +506,7 @@ function isInitialViewPending() {
 
 /**
  * Merge the server's recent jobs (waiting at most QUEUE_SYNC_TIMEOUT), then show the queue if it holds
- * entries, otherwise the ready view. Rebinds the animator because the list is rebuilt under any live slots.
- * Leaves the view alone when init raised the key prompt after the calling run began.
+ * entries, otherwise the ready view. Leaves the view alone when init raised the key prompt after the calling run began.
  * @param {Promise<import('./modules/server-sync.js').RecentJobsSnapshot|null>} serverJobsPromise
  * @param {boolean} focusReady - Focus the file picker button when showing the ready view
  * @param {number} promptGeneration - keyPromptGeneration captured when the calling startup run began
@@ -536,7 +535,6 @@ async function showInitialView(serverJobsPromise, focusReady, promptGeneration) 
         const hasActive = queue.some(e => isActiveWork(e));
         showState('queue', hasActive, collapseHistoryImmediate);
         renderQueueList();
-        rebindProgressAnimator();
         refreshQueueActivity(hasActive);
     } else {
         showState('ready');

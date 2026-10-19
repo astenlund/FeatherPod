@@ -91,6 +91,11 @@ export function animateReadyDropZoneMorph() {
     }, Q_MORPH_DURATION);
 }
 
+/**
+ * Rebuild the whole queue list from the upload queue, then rebind every live progress animator slot to
+ * its entry's new bar, so no slot keeps animating a detached element.
+ * @param {boolean} [animateNew] - Fade in entries that were not in the list before
+ */
 export function renderQueueList(animateNew) {
     const container = document.getElementById('queue-list');
     if (!container) {
@@ -107,6 +112,8 @@ export function renderQueueList(animateNew) {
         }
         container.prepend(el);
     }
+
+    rebindProgressAnimator();
 }
 
 export function createQueueItemElement(entry) {
@@ -355,6 +362,6 @@ export function getEntryProgressBar(entryId) {
     return document.getElementById('queue-progress-' + entryId);
 }
 
-export function rebindProgressAnimator() {
+function rebindProgressAnimator() {
     progressAnimator.rebindAllProgressBars(getEntryProgressBar);
 }

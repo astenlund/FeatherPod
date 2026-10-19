@@ -2,7 +2,7 @@ import { FEED_ID, DISMISSED_STORAGE_KEY, JOB_TTL_MS } from './config.js';
 import { isActiveWork, isInUploadPhase, tryParseJson } from './utils.js';
 import { getApiKey } from './auth.js';
 import { getQueue, getActiveUploadId, generateEntryId, addFilesToQueue, monitorEntryNormalizationInBackground, saveQueueState, checkAllComplete } from './queue.js';
-import { renderQueueList, updateQueueItemInDOM, removeQueueItemFromDOM, rebindProgressAnimator } from './queue-ui.js';
+import { renderQueueList, updateQueueItemInDOM, removeQueueItemFromDOM } from './queue-ui.js';
 import { progressAnimator } from './progress.js';
 import { showState, getCurrentState, refreshQueueActivity } from './state.js';
 import { refreshHistoryList, initHistorySection, collapseHistoryImmediate } from './history.js';
@@ -433,7 +433,6 @@ export function mergeServerJobs(snapshot) {
     } else if (newEntries.length > 0 && currentState === 'queue') {
         // New entries to add -- must rebuild the full list
         renderQueueList(true);
-        rebindProgressAnimator();
     } else if (changedEntryIds.size > 0 && currentState === 'queue') {
         // Only update entries that actually changed -- avoids replacing all DOM elements
         // which would interrupt blur-fade-in animations on recently-added items
