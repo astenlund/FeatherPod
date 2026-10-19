@@ -596,9 +596,10 @@ async function finalizeCompletedEntry(entry, jobStatus) {
 
 /**
  * Apply terminal "cancelled" state to an entry: clear the progress animator slot,
- * drop the DOM item, and remove it from the upload queue. Shared by the SSE progress
- * handler, the SSE done handler, and the poll fallback. Callers are responsible for
- * any monitor-specific teardown (e.g., finishMonitoring).
+ * drop the DOM item, and remove it from the upload queue. Shared by the aborted-upload
+ * path in processEntry, cancelEntry, the SSE progress handler, the SSE done handler, and
+ * the poll fallback. Callers are responsible for any monitor-specific teardown (e.g.,
+ * finishMonitoring).
  * @param {QueueEntry} entry
  */
 function finalizeCancelledEntry(entry) {
@@ -824,7 +825,8 @@ async function pollEntryNormalization(entry) {
 
 /**
  * Cancel a single queue entry, removing it from the queue and DOM.
- * Queued: removes immediately. Uploading: aborts XHR. Normalizing: closes SSE, POSTs cancel.
+ * Queued: removes immediately. Uploading: aborts XHR. Normalizing: closes SSE, records the job in dismissedJobIds
+ * (as dismissEntry does) so a recent-jobs snapshot fetched before the cancel cannot re-add it, POSTs cancel.
  * @param {string} entryId
  */
 export async function cancelEntry(entryId) {
@@ -849,6 +851,10 @@ export async function cancelEntry(entryId) {
 
     if (entry.status === 'normalizing') {
         const jobId = entry.jobId;
+        if (jobId) {
+            getDismissedJobIds().set(jobId, Date.now());
+            saveDismissedJobIds();
+        }
 
         if (entry.eventSource) {
             entry.eventSource.close();
