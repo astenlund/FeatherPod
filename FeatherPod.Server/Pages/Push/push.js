@@ -116,6 +116,9 @@ if (navigator.serviceWorker) {
  * @property {number} progress - Progress percentage (0-100)
  * @property {string|null} stage - Normalization stage (Queued, Analyzing, Normalizing, Finishing, Completed)
  * @property {string|null} jobId - Server normalization job ID
+ * @property {number|null} [jobIdReceivedAt] - performance.now() when this page received jobId, from a 202 response or
+ *     from the snapshot merge that discovered the job (not persisted); a recent-jobs snapshot requested earlier can lack
+ *     the job, so mergeServerJobs does not treat it as stale
  * @property {string|null} episodeId - Episode ID after completion
  * @property {Episode|null} episode - Full episode data after completion
  * @property {string|null} error - Error message if failed
@@ -166,6 +169,7 @@ registerYouTubeJobCallback((jobResponse, { replacesEntryId = null } = {}) => {
         progress: 0,
         stage: 'Queued',
         jobId: jobResponse.jobId,
+        jobIdReceivedAt: performance.now(),
         episodeId: jobResponse.episodeId,
         episode: null,
         error: null,
@@ -454,13 +458,15 @@ async function init() {
  * would. Safe to re-run (hashchange re-invokes init): restoreQueueState leaves a live queue alone, and
  * the DOM deduplicates the toggle initializers' click listeners. showInitialView does not choose a view over a
  * key prompt that init raised after the run began (see keyPromptGeneration); local-source or shared-file intake
- * can still switch to the queue view on its own.
+ * can still switch to the queue view on its own. The recent-jobs snapshot requested at the start is merged once:
+ * by showInitialView when it gets it in time, otherwise after the history fetch.
  */
 async function startSession() {
     const promptGeneration = keyPromptGeneration;
     loadDismissedJobIds();
     connectFeedEvents();
     const serverJobsPromise = fetchRecentJobs();
+    let snapshotMerged = false;
 
     if (getLocalSourceConfig()) {
         await restoreQueueState();
@@ -468,11 +474,11 @@ async function startSession() {
 
         // connectLocalSource shows the queue itself when the CLI offers files
         if (isInitialViewPending()) {
-            await showInitialView(serverJobsPromise, false, promptGeneration);
+            snapshotMerged = await showInitialView(serverJobsPromise, false, promptGeneration);
         }
     } else if (!(await consumeSharedFiles())) {
         await restoreQueueState();
-        await showInitialView(serverJobsPromise, true, promptGeneration);
+        snapshotMerged = await showInitialView(serverJobsPromise, true, promptGeneration);
     }
 
     // Wire the toggles once the view (and so their visibility) is settled, before the network-bound history fetch
@@ -480,9 +486,11 @@ async function startSession() {
     initWakeLockToggle();
     await initHistorySection();
 
-    // Merge the startup snapshot once more in every branch: it is the first merge whenever showInitialView did not
-    // merge it (skipped, or its sync wait timed out), and a repeat otherwise
-    serverJobsPromise.then(mergeServerJobs).catch(() => {});
+    // Merge the startup snapshot when showInitialView did not (skipped, or its sync wait timed out). Merging it a
+    // second time would roll back stage and progress that SSE advanced since.
+    if (!snapshotMerged) {
+        serverJobsPromise.then(mergeServerJobs).catch(() => {});
+    }
 }
 
 /**
@@ -500,24 +508,27 @@ function isInitialViewPending() {
  * Merge the server's recent jobs (waiting at most QUEUE_SYNC_TIMEOUT), then show the queue if it holds
  * entries, otherwise the ready view. Rebinds the animator because the list is rebuilt under any live slots.
  * Leaves the view alone when init raised the key prompt after the calling run began.
- * @param {Promise<Array<Object>|null>} serverJobsPromise
+ * @param {Promise<import('./modules/server-sync.js').RecentJobsSnapshot|null>} serverJobsPromise
  * @param {boolean} focusReady - Focus the file picker button when showing the ready view
  * @param {number} promptGeneration - keyPromptGeneration captured when the calling startup run began
+ * @returns {Promise<boolean>} Whether the snapshot arrived within the sync wait and was merged here
  */
 async function showInitialView(serverJobsPromise, focusReady, promptGeneration) {
+    let merged = false;
     try {
-        const serverJobs = await Promise.race([
+        const snapshot = await Promise.race([
             serverJobsPromise,
             new Promise((_, reject) => setTimeout(() => reject(), QUEUE_SYNC_TIMEOUT))
         ]);
-        mergeServerJobs(serverJobs);
+        mergeServerJobs(snapshot);
+        merged = true;
     } catch {
-        // Timeout or fetch error -- proceed with local-only state; startSession merges the late response
+        // Sync wait timed out -- proceed with local-only state; startSession merges the late response
     }
 
     // init raised a newer key prompt while this run was starting (see keyPromptGeneration): leave it up
     if (isKeyPromptSuperseded(promptGeneration)) {
-        return;
+        return merged;
     }
 
     const queue = getQueue();
@@ -533,6 +544,8 @@ async function showInitialView(serverJobsPromise, focusReady, promptGeneration) 
             document.getElementById('select-file').focus();
         }
     }
+
+    return merged;
 }
 
 // ============================================================================

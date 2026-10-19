@@ -145,12 +145,20 @@ export function connectFeedEvents() {
 }
 
 /**
+ * @typedef {Object} RecentJobsSnapshot
+ * @property {Array<Object>} jobs - The server's recent jobs, terminal ones included
+ * @property {number} requestedAt - performance.now() when the request was sent; jobs whose ids the page received later
+ *     (see QueueEntry.jobIdReceivedAt) can be missing from the snapshot without being stale
+ */
+
+/**
  * Fetch recent normalization jobs (last hour) for this feed from the server.
  * Returns all jobs including terminal ones within the time window.
  * Returns null on any error (silent fallback to local-only state).
- * @returns {Promise<Array<Object>|null>}
+ * @returns {Promise<RecentJobsSnapshot|null>}
  */
 export async function fetchRecentJobs() {
+    const requestedAt = performance.now();
     try {
         const response = await fetch('/api/feeds/' + FEED_ID + '/jobs?since=1h', {
             headers: { 'X-API-Key': getApiKey() }
@@ -159,7 +167,7 @@ export async function fetchRecentJobs() {
             return null;
         }
 
-        return await response.json();
+        return { jobs: await response.json(), requestedAt };
     } catch (err) {
         return null;
     }
@@ -194,15 +202,19 @@ function removeEntry(uploadQueue, entry) {
 
 /**
  * Remove stale local entries: normalizing/failed entries whose jobId is absent from the
- * server response (job cleaned up or older than one hour). Closes any SSE, clears the
- * animator slot, removes the DOM node, and resolves a pending monitor.
+ * server response (job cleaned up or older than one hour). Entries that received their jobId
+ * after the snapshot was requested are kept: the snapshot can predate their job. Closes any SSE,
+ * clears the animator slot, removes the DOM node, and resolves a pending monitor.
  * @param {Array<Object>} uploadQueue
  * @param {Map<string, Object>} serverJobMap - Server jobs keyed by jobId
+ * @param {number} requestedAt - When the snapshot behind serverJobMap was requested (performance.now())
  * @returns {boolean} True if any entry was removed
  */
-function removeStaleEntries(uploadQueue, serverJobMap) {
+function removeStaleEntries(uploadQueue, serverJobMap, requestedAt) {
     let removed = false;
-    const staleEntries = uploadQueue.filter(e => e.jobId && (e.status === 'normalizing' || e.status === 'failed') && !serverJobMap.has(e.jobId));
+    // Entries restored from storage have no jobIdReceivedAt: they received their job ids before any snapshot of this page
+    const staleEntries = uploadQueue.filter(e => e.jobId && (e.status === 'normalizing' || e.status === 'failed') && !serverJobMap.has(e.jobId)
+        && (e.jobIdReceivedAt ?? -Infinity) < requestedAt);
     for (const stale of staleEntries) {
         removeEntry(uploadQueue, stale);
         removed = true;
@@ -323,7 +335,8 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds) {
  * Build entries for server jobs not already present in the local queue. Skips cancelled
  * jobs, user-dismissed jobs, and jobs whose fileName matches a currently-uploading entry
  * (dedup for in-flight uploads where the SSE event arrives before the XHR 202 response
- * sets the jobId). Entries are returned but not yet pushed onto the queue.
+ * sets the jobId). Entries are returned but not yet pushed onto the queue. Each is stamped
+ * with jobIdReceivedAt, so an older snapshot merged later cannot remove it as stale.
  * @param {Array<Object>} uploadQueue
  * @param {Array<Object>} serverJobs
  * @param {Set<string>} existingJobIds - jobIds present in the queue before reconciliation
@@ -346,6 +359,7 @@ function addNewServerEntries(uploadQueue, serverJobs, existingJobIds) {
                 progress: serverJob.progressPercent ?? (isServerTerminal ? 100 : 0),
                 stage: serverJob.stage || 'Queued',
                 jobId: serverJob.jobId,
+                jobIdReceivedAt: performance.now(),
                 episodeId: serverJob.episodeId || null,
                 episode: null,
                 error: serverJob.error || null,
@@ -371,25 +385,27 @@ function addNewServerEntries(uploadQueue, serverJobs, existingJobIds) {
  * Merge server-known recent jobs into the local upload queue.
  * The server response contains ALL recent jobs (active + terminal from last hour).
  * Coordinates three behavior-preserving phases over the shared queue:
- * - removeStaleEntries: drops normalizing/failed entries whose jobId is gone from the server
+ * - removeStaleEntries: drops normalizing/failed entries whose jobId is gone from the server,
+ *   unless the entry received its jobId after the snapshot was requested
  * - reconcileExistingEntries: applies the status ladder to entries the server still knows
  * - addNewServerEntries: appends unknown server jobs (e.g., from CLI or another tab)
  * then repaints the affected DOM, resumes SSE monitoring, refreshes the queue title and toggles
  * (so work discovered after the queue finished gets its toggles back), and persists queue state.
- * If serverJobs is null (fetch failed), skips reconciliation entirely.
- * @param {Array<Object>|null} serverJobs
+ * If the snapshot is null (fetch failed), skips reconciliation entirely.
+ * @param {RecentJobsSnapshot|null} snapshot
  */
-export function mergeServerJobs(serverJobs) {
-    if (serverJobs === null) {
+export function mergeServerJobs(snapshot) {
+    if (snapshot === null) {
         return; // Server fetch failed -- don't reconcile, let SSE handle it
     }
 
+    const serverJobs = snapshot.jobs;
     const uploadQueue = getQueue();
     const serverJobMap = new Map(serverJobs.map(j => [j.jobId, j]));
     const existingJobIds = new Set(uploadQueue.map(e => e.jobId).filter(Boolean));
     const changedEntryIds = new Set();
 
-    const removedStale = removeStaleEntries(uploadQueue, serverJobMap);
+    const removedStale = removeStaleEntries(uploadQueue, serverJobMap, snapshot.requestedAt);
     const removedReconciled = reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds);
     const removedEntries = removedStale || removedReconciled;
     const newEntries = addNewServerEntries(uploadQueue, serverJobs, existingJobIds);

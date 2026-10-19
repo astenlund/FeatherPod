@@ -404,6 +404,7 @@ async function processEntry(entry) {
         } else if (response.status === 202) {
             const jobResponse = JSON.parse(response.body);
             entry.jobId = jobResponse.jobId;
+            entry.jobIdReceivedAt = performance.now();
             entry.title = jobResponse.title || null;
             entry.status = 'normalizing';
             entry.stage = 'Queued';
@@ -900,6 +901,7 @@ export function retryEntry(entryId) {
     entry.progress = 0;
     entry.stage = null;
     entry.jobId = null;
+    entry.jobIdReceivedAt = null;
     entry.episodeId = null;
     entry.episode = null;
     entry.error = null;
