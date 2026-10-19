@@ -26,10 +26,6 @@ let localSourceSeen = new Set();
 /** @type {number|null} */
 let localSourceHeartbeatInterval = null;
 
-export function getDismissedJobIds() {
-    return dismissedJobIds;
-}
-
 export function getLocalSourceConfig() {
     return localSourceConfig;
 }
@@ -119,20 +115,22 @@ export function loadDismissedJobIds() {
  * Record jobs as dismissed in dismissedJobIds and in localStorage, so recent-jobs merges skip them for JOB_TTL_MS,
  * reloads included.
  * @param {string[]} jobIds
+ * @returns {number} The time recorded as their dismissal, which dropDismissedJob takes to drop one again
  */
 export function recordDismissedJobs(jobIds) {
-    if (jobIds.length === 0) {
-        return;
-    }
     const dismissedAt = Date.now();
-    for (const jobId of jobIds) {
-        dismissedJobIds.set(jobId, dismissedAt);
-    }
-    updateSavedDismissals(saved => {
+    if (jobIds.length > 0) {
         for (const jobId of jobIds) {
-            saved.set(jobId, dismissedAt);
+            dismissedJobIds.set(jobId, dismissedAt);
         }
-    });
+        updateSavedDismissals(saved => {
+            for (const jobId of jobIds) {
+                saved.set(jobId, dismissedAt);
+            }
+        });
+    }
+
+    return dismissedAt;
 }
 
 /**

@@ -7,7 +7,7 @@ import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQ
 import { resetNotificationToggle, syncPushSession, notifyQueueComplete } from './notifications.js';
 import { resetWakeLockToggle } from './wake-lock.js';
 import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetchBrowserUploads, initHistorySection, invalidateBrowserUploadsCache } from './history.js';
-import { getDismissedJobIds, recordDismissedJobs, dropDismissedJob, notifyLocalSourceUploaded } from './server-sync.js';
+import { recordDismissedJobs, dropDismissedJob, notifyLocalSourceUploaded } from './server-sync.js';
 import { showYouTubeCookieDialog } from './youtube.js';
 import { parseYouTubeFileName } from './youtube-url.js';
 
@@ -603,12 +603,11 @@ async function finalizeCompletedEntry(entry, jobStatus) {
  * re-adding the job. Callers are responsible for any monitor-specific teardown (e.g.,
  * finishMonitoring).
  * @param {QueueEntry} entry
+ * @returns {number|undefined} The time the job's dismissal was recorded, or undefined for an entry without a job
  */
 function finalizeCancelledEntry(entry) {
     entry.status = 'cancelled';
-    if (entry.jobId) {
-        recordDismissedJobs([entry.jobId]);
-    }
+    const dismissedAt = entry.jobId ? recordDismissedJobs([entry.jobId]) : undefined;
     progressAnimator.removeSlot(entry.id);
     removeQueueItemFromDOM(entry.id);
     const index = uploadQueue.indexOf(entry);
@@ -616,6 +615,8 @@ function finalizeCancelledEntry(entry) {
         uploadQueue.splice(index, 1);
     }
     saveQueueState();
+
+    return dismissedAt;
 }
 
 /**
@@ -872,7 +873,7 @@ export async function cancelEntry(entryId) {
         }
 
         progressAnimator.reset(entry.id);
-        finalizeCancelledEntry(entry);
+        const dismissedAt = finalizeCancelledEntry(entry);
 
         // Force-resolve the monitoring promise so the promise chain completes
         if (entry._resolveMonitor) {
@@ -884,7 +885,6 @@ export async function cancelEntry(entryId) {
 
         // A cancel that may not have taken effect drops this cancel's dismissal, so the next snapshot can show the job again
         if (jobId) {
-            const dismissedAt = getDismissedJobIds().get(jobId);
             let cancelled = false;
             try {
                 const response = await fetch('/api/jobs/' + jobId + '/cancel', {
