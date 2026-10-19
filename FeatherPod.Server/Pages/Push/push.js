@@ -27,7 +27,7 @@ import { initWakeLockToggle, isWakeLockTogglePressed, acquireWakeLock } from './
 import { initNotificationToggle } from './modules/notifications.js';
 import { progressAnimator } from './modules/progress.js';
 import { showState, getCurrentState, refreshQueueActivity, showError, showWarningBanner, setNoKeyError, cacheLayoutDimensions } from './modules/state.js';
-import { renderQueueList } from './modules/queue-ui.js';
+import { renderQueueList, rebindProgressAnimator } from './modules/queue-ui.js';
 import { getQueue, initQueue, restoreQueueState, addFilesToQueue, clearQueueState, clearTerminalEntries, dismissEntry, monitorEntryNormalizationInBackground, updateQueueTitleForEpisode } from './modules/queue.js';
 import { registerHistoryContextMenuCallback, initHistorySection, collapseHistoryImmediate, toggleHistorySection, changeHistoryFilter, selectHistoryUpload, updateHistoryListScrollState, getHistoryFilter, getHistoryPanelPushedState, setHistoryPanelPushedState, getHistoryData, getHistorySelectedId, refreshHistoryList } from './modules/history.js';
 import { showContextMenu, getContextMenuTargetId, hideContextMenu, showRenameModal, hideRenameModal, showDeleteConfirm, hideDeleteConfirm, deleteEpisode, saveEpisodeChanges, updateRenameSaveState, toggleNotePanel, closeNotePanel, commitNoteAndRefreshSuggestion, handleNoteInput, isNotePanelOpen, registerEpisodeRenamedCallback } from './modules/editing.js';
@@ -209,6 +209,29 @@ const API_KEY_REGEX = /fp_[a-zA-Z0-9-]+_[A-Za-z0-9_-]{22}(?=[^A-Za-z0-9_-]|$)/;
 /** Whether initNoKeyState has already been called (prevents duplicate listeners) */
 let noKeyStateInitialized = false;
 
+/**
+ * Advances each time init raises the key prompt (including from its asynchronous key validation). A startup
+ * run captures it when it begins; once it has moved, the prompt is newer than the run, so the run leaves it up
+ * instead of choosing a view.
+ */
+let keyPromptGeneration = 0;
+
+/**
+ * Whether init raised a newer key prompt since keyPromptGeneration was captured as `generation`. The newer prompt then
+ * owns the page, so a continuation that captured `generation` (a startup run, a key entry) must leave it alone.
+ * @param {number} generation
+ * @returns {boolean}
+ */
+function isKeyPromptSuperseded(generation) {
+    return keyPromptGeneration !== generation;
+}
+
+/**
+ * keyPromptGeneration of the prompt whose typed key is being validated, or null. Repeat Enter/Save presses on that
+ * prompt are ignored; a newer prompt is not blocked by an older validation that is still finishing.
+ */
+let validatingPromptGeneration = null;
+
 // ============================================================================
 // applyDevState -- dev-only forced UI state
 // ============================================================================
@@ -300,9 +323,12 @@ async function init() {
     cacheLayoutDimensions();
 
     function showNoKeyUI(errorType = null) {
+        keyPromptGeneration++;
         if (errorType) {
             clearApiKey();
         }
+        // A prompt raised while an earlier key entry is still starting up must not inherit its disabled controls
+        resetNoKeyState();
         setNoKeyError(errorType);
         showState('no-key');
         initNoKeyState();
@@ -414,58 +440,71 @@ async function init() {
         return;
     }
 
+    await startSession();
+}
+
+// ============================================================================
+// startSession -- everything startup does once an API key is set
+// ============================================================================
+
+/**
+ * Run the startup that needs an API key: dismissed-job ids, the feed event stream, local-source or
+ * shared-file intake, the saved queue, the initial view, both toggles and history. Shared by init()
+ * and key entry (transitionToReadyState), so entering a key leaves the page as a reload with that key
+ * would. Safe to re-run (hashchange re-invokes init): restoreQueueState leaves a live queue alone, and
+ * the DOM deduplicates the toggle initializers' click listeners. showInitialView does not choose a view over a
+ * key prompt that init raised after the run began (see keyPromptGeneration); local-source or shared-file intake
+ * can still switch to the queue view on its own.
+ */
+async function startSession() {
+    const promptGeneration = keyPromptGeneration;
     loadDismissedJobIds();
     connectFeedEvents();
     const serverJobsPromise = fetchRecentJobs();
 
-    // Local source mode
     if (getLocalSourceConfig()) {
         await restoreQueueState();
         await connectLocalSource();
 
-        if (getCurrentState() === null) {
-            try {
-                const serverJobs = await Promise.race([
-                    serverJobsPromise,
-                    new Promise((_, reject) => setTimeout(() => reject(), QUEUE_SYNC_TIMEOUT))
-                ]);
-                mergeServerJobs(serverJobs);
-            } catch {
-                // Timeout -- proceed with local-only state
-            }
-
-            const queue = getQueue();
-            if (queue.length > 0) {
-                const hasActive = queue.some(e => isActiveWork(e));
-                showState('queue', hasActive, collapseHistoryImmediate);
-                renderQueueList();
-                refreshQueueActivity(hasActive);
-            } else {
-                showState('ready');
-            }
+        // connectLocalSource shows the queue itself when the CLI offers files
+        if (isInitialViewPending()) {
+            await showInitialView(serverJobsPromise, false, promptGeneration);
         }
-        await initHistorySection();
-        initNotificationToggle();
-        initWakeLockToggle();
-        serverJobsPromise.then(mergeServerJobs).catch(() => {});
-
-        return;
+    } else if (!(await consumeSharedFiles())) {
+        await restoreQueueState();
+        await showInitialView(serverJobsPromise, true, promptGeneration);
     }
 
-    // Consume any files shared via PWA Share Target
-    if (await consumeSharedFiles()) {
-        await initHistorySection();
-        initNotificationToggle();
-        initWakeLockToggle();
-        serverJobsPromise.then(mergeServerJobs).catch(() => {});
+    // Wire the toggles once the view (and so their visibility) is settled, before the network-bound history fetch
+    initNotificationToggle();
+    initWakeLockToggle();
+    await initHistorySection();
 
-        return;
-    }
+    // Merge the startup snapshot once more in every branch: it is the first merge whenever showInitialView did not
+    // merge it (skipped, or its sync wait timed out), and a repeat otherwise
+    serverJobsPromise.then(mergeServerJobs).catch(() => {});
+}
 
-    // Restore previous queue state (data only -- no display yet)
-    await restoreQueueState();
+/**
+ * Whether startup still has to choose a view: nothing is shown yet, or the key prompt is showing (key entry
+ * leaves it this way; showInitialView keeps a prompt that was raised after the run began).
+ * @returns {boolean}
+ */
+function isInitialViewPending() {
+    const state = getCurrentState();
 
-    // Wait for server sync before deciding which state to show
+    return state === null || state === 'no-key';
+}
+
+/**
+ * Merge the server's recent jobs (waiting at most QUEUE_SYNC_TIMEOUT), then show the queue if it holds
+ * entries, otherwise the ready view. Rebinds the animator because the list is rebuilt under any live slots.
+ * Leaves the view alone when init raised the key prompt after the calling run began.
+ * @param {Promise<Array<Object>|null>} serverJobsPromise
+ * @param {boolean} focusReady - Focus the file picker button when showing the ready view
+ * @param {number} promptGeneration - keyPromptGeneration captured when the calling startup run began
+ */
+async function showInitialView(serverJobsPromise, focusReady, promptGeneration) {
     try {
         const serverJobs = await Promise.race([
             serverJobsPromise,
@@ -473,7 +512,12 @@ async function init() {
         ]);
         mergeServerJobs(serverJobs);
     } catch {
-        // Timeout or fetch error -- proceed with local-only state; late response handled below
+        // Timeout or fetch error -- proceed with local-only state; startSession merges the late response
+    }
+
+    // init raised a newer key prompt while this run was starting (see keyPromptGeneration): leave it up
+    if (isKeyPromptSuperseded(promptGeneration)) {
+        return;
     }
 
     const queue = getQueue();
@@ -481,22 +525,35 @@ async function init() {
         const hasActive = queue.some(e => isActiveWork(e));
         showState('queue', hasActive, collapseHistoryImmediate);
         renderQueueList();
+        rebindProgressAnimator();
         refreshQueueActivity(hasActive);
     } else {
         showState('ready');
-        document.getElementById('select-file').focus();
+        if (focusReady) {
+            document.getElementById('select-file').focus();
+        }
     }
-    await initHistorySection();
-    initNotificationToggle();
-    initWakeLockToggle();
-
-    // If the sync timed out, merge the late response when it arrives
-    serverJobsPromise.then(mergeServerJobs).catch(() => {});
 }
 
 // ============================================================================
 // initNoKeyState -- paste-key flow
 // ============================================================================
+
+/** Put the key prompt's controls back in their idle state and clear its error text. */
+function resetNoKeyState() {
+    const pasteBtn = document.getElementById('paste-key-btn');
+    const textarea = document.getElementById('key-textarea');
+    const saveBtn = document.getElementById('save-key-btn');
+    pasteBtn.style.display = 'block';
+    pasteBtn.disabled = false;
+    pasteBtn.textContent = STR_PASTE_KEY;
+    document.getElementById('key-textarea-container').style.display = 'none';
+    textarea.value = '';
+    textarea.disabled = false;
+    saveBtn.disabled = false;
+    saveBtn.textContent = STR_SAVE_KEY;
+    setNoKeyError(null);
+}
 
 function initNoKeyState() {
     if (noKeyStateInitialized) {
@@ -508,8 +565,6 @@ function initNoKeyState() {
     const textareaContainer = document.getElementById('key-textarea-container');
     const textarea = document.getElementById('key-textarea');
     const saveBtn = document.getElementById('save-key-btn');
-
-    let isValidating = false;
 
     function morphToTextarea(preserveTitle = false) {
         pasteBtn.style.display = 'none';
@@ -523,41 +578,25 @@ function initNoKeyState() {
         textarea.focus();
     }
 
-    function resetNoKeyState() {
-        pasteBtn.style.display = 'block';
-        pasteBtn.disabled = false;
-        pasteBtn.textContent = STR_PASTE_KEY;
-        textareaContainer.style.display = 'none';
-        textarea.value = '';
-        textarea.disabled = false;
-        saveBtn.disabled = false;
-        saveBtn.textContent = STR_SAVE_KEY;
-        setNoKeyError(null);
-    }
-
-    async function transitionToReadyState() {
-        resetNoKeyState();
-        if (getLocalSourceConfig()) {
-            await connectLocalSource();
-            if (getQueue().length === 0) {
-                showState('ready');
+    /**
+     * Leave the key prompt once a key entered on it is saved, by running the same startup a reload would. The prompt
+     * keeps its "Validating..." state while startup runs (it is hidden as soon as startup shows a view) and is reset
+     * for a later visit after startSession completes, history fetch included, unless a newer prompt was raised
+     * meanwhile: that prompt reset its own controls and owns its error text.
+     * @param {number} promptGeneration - keyPromptGeneration of the prompt the key was entered on
+     */
+    async function transitionToReadyState(promptGeneration) {
+        try {
+            await startSession();
+        } finally {
+            if (!isKeyPromptSuperseded(promptGeneration)) {
+                resetNoKeyState();
             }
-            await initHistorySection();
-
-            return;
         }
-        if (await consumeSharedFiles()) {
-            await initHistorySection();
-
-            return;
-        }
-        showState('ready');
-        await initHistorySection();
-        document.getElementById('select-file').focus();
     }
 
     async function validateTextareaKey() {
-        if (isValidating) {
+        if (validatingPromptGeneration === keyPromptGeneration) {
             return;
         }
 
@@ -573,21 +612,26 @@ function initNoKeyState() {
             key = fpKeyMatch[0];
         }
 
-        isValidating = true;
+        const promptGeneration = keyPromptGeneration;
+        validatingPromptGeneration = promptGeneration;
         saveBtn.disabled = true;
         saveBtn.textContent = 'Validating...';
         textarea.disabled = true;
 
         try {
             const validation = await validateApiKey(key);
+            // A newer prompt was raised while this key was being validated: it owns the page, so drop this result
+            if (isKeyPromptSuperseded(promptGeneration)) {
+                return;
+            }
 
             if (validation.valid && validation.feedAccess) {
                 saveApiKey(key);
-                await transitionToReadyState();
+                await transitionToReadyState(promptGeneration);
             } else if (validation.networkError) {
                 showWarningBanner('Server unreachable \u2014 using entered key');
                 saveApiKey(key);
-                await transitionToReadyState();
+                await transitionToReadyState(promptGeneration);
             } else if (validation.valid && !validation.feedAccess) {
                 saveBtn.disabled = false;
                 saveBtn.textContent = STR_SAVE_KEY;
@@ -600,7 +644,9 @@ function initNoKeyState() {
                 showWarningBanner(validation.error || STR_INVALID_KEY);
             }
         } finally {
-            isValidating = false;
+            if (validatingPromptGeneration === promptGeneration) {
+                validatingPromptGeneration = null;
+            }
         }
     }
 
@@ -611,11 +657,16 @@ function initNoKeyState() {
             return;
         }
 
+        // A prompt raised while this paste is reading or validating owns the page; each await below drops a stale result
+        const promptGeneration = keyPromptGeneration;
         try {
             pasteBtn.disabled = true;
             pasteBtn.textContent = 'Reading...';
 
             const clipboardText = await navigator.clipboard.readText();
+            if (isKeyPromptSuperseded(promptGeneration)) {
+                return;
+            }
             const trimmed = clipboardText ? clipboardText.trim() : '';
             const fpKeyMatch = trimmed.match(API_KEY_REGEX);
 
@@ -630,14 +681,17 @@ function initNoKeyState() {
             pasteBtn.textContent = 'Validating...';
             const apiKeyToValidate = fpKeyMatch[0];
             const validation = await validateApiKey(apiKeyToValidate);
+            if (isKeyPromptSuperseded(promptGeneration)) {
+                return;
+            }
 
             if (validation.valid && validation.feedAccess) {
                 saveApiKey(apiKeyToValidate);
-                await transitionToReadyState();
+                await transitionToReadyState(promptGeneration);
             } else if (validation.networkError) {
                 showWarningBanner('Server unreachable \u2014 using pasted key');
                 saveApiKey(apiKeyToValidate);
-                await transitionToReadyState();
+                await transitionToReadyState(promptGeneration);
             } else if (validation.valid && !validation.feedAccess) {
                 pasteBtn.disabled = false;
                 pasteBtn.textContent = STR_PASTE_KEY;
@@ -650,6 +704,9 @@ function initNoKeyState() {
                 setNoKeyError('invalid');
             }
         } catch {
+            if (isKeyPromptSuperseded(promptGeneration)) {
+                return;
+            }
             pasteBtn.disabled = false;
             pasteBtn.textContent = STR_PASTE_KEY;
             morphToTextarea();

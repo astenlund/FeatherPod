@@ -449,9 +449,11 @@ export function mergeServerJobs(serverJobs) {
 
 /**
  * Connect to a local file server SSE and fetch initial files.
- * Called after API key validation succeeds when local source params are present in the URL fragment.
- * Idempotent: if already connected (localSourceEvents is set), returns immediately.
- * This matters because init() can be re-invoked via the hashchange listener.
+ * Called by push.js startSession (on load, on hashchange re-runs of init, and after key entry) whenever a local
+ * source config is set, from the URL fragment or restored from sessionStorage. An API key is set by then but not
+ * necessarily validated: init validates concurrently, and key entry proceeds on a network error.
+ * Idempotent: if already connected (localSourceEvents is set), returns immediately, which matters because
+ * startSession runs again on every hashchange and key entry.
  */
 export async function connectLocalSource() {
     if (!localSourceConfig || localSourceEvents) {

@@ -1,18 +1,20 @@
 import { FEED_ID, API_KEY_SESSION_KEY, API_KEY_LOCAL_KEY, API_KEY_COOKIE_KEY, STR_INVALID_KEY } from './config.js';
 
 let apiKey = null;
-let userRole = null;
+/** Role that /api/users/me reported for each key validated in this page, keyed by the trimmed key */
+const rolesByKey = new Map();
 
 export function getApiKey() {
     return apiKey;
 }
 
 /**
- * Returns the authenticated user's role ('Admin' or 'FeedOwner'), or null if not yet validated.
+ * Returns the role ('Admin' or 'FeedOwner') validated for the current API key, or null if that key has not been
+ * validated. Roles are recorded per key, so a late validation of a different key cannot change the current key's role.
  * @returns {string|null}
  */
 export function getUserRole() {
-    return userRole;
+    return apiKey ? rolesByKey.get(apiKey.trim()) ?? null : null;
 }
 
 export function setApiKey(key) {
@@ -57,6 +59,7 @@ export function saveApiKey(key) {
 
 export function clearApiKey() {
     apiKey = null;
+    rolesByKey.clear();
     try { sessionStorage.removeItem(API_KEY_SESSION_KEY); } catch (e) { /* ignore */ }
     try { localStorage.removeItem(API_KEY_LOCAL_KEY); } catch (e) { /* ignore */ }
     try { deleteCookie(API_KEY_COOKIE_KEY); } catch (e) { /* ignore */ }
@@ -98,7 +101,7 @@ export async function validateApiKey(key) {
         }
 
         const user = await response.json();
-        userRole = user.role || null;
+        rolesByKey.set(key.trim(), user.role || null);
         const feedAccess = user.role === 'Admin' || (user.role === 'FeedOwner' && user.ownedFeeds && user.ownedFeeds.includes(FEED_ID));
 
         return { valid: true, user, feedAccess, error: null, networkError: false };
