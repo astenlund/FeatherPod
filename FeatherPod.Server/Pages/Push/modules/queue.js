@@ -832,7 +832,11 @@ async function pollEntryNormalization(entry) {
 /**
  * Cancel a single queue entry, removing it from the queue and DOM.
  * Queued: removes immediately. Uploading: aborts XHR. Normalizing: closes SSE, finalizes the entry (which records the
- * job in dismissedJobIds, so a recent-jobs snapshot fetched before the cancel cannot re-add it), POSTs cancel.
+ * job in dismissedJobIds, so a recent-jobs snapshot fetched before the cancel cannot re-add it), POSTs cancel. When the
+ * request throws or returns a non-OK status other than 404 (the job is gone), the job may still be running, may have
+ * completed first or may already be cancelled, so the dismissal this cancel recorded is dropped again, if no other path
+ * has replaced it, and the next snapshot shows the job unless the server lists it as Cancelled. A snapshot requested
+ * before the cancel and merged after that drop can still briefly re-add a job the server did cancel.
  * @param {string} entryId
  */
 export async function cancelEntry(entryId) {
@@ -874,15 +878,22 @@ export async function cancelEntry(entryId) {
 
         checkAllComplete();
 
-        // Fire-and-forget cancel request to server
+        // A cancel that may not have taken effect drops this cancel's dismissal, so the next snapshot can show the job again
         if (jobId) {
+            const dismissedAt = getDismissedJobIds().get(jobId);
+            let cancelled = false;
             try {
-                await fetch('/api/jobs/' + jobId + '/cancel', {
+                const response = await fetch('/api/jobs/' + jobId + '/cancel', {
                     method: 'POST',
                     headers: { 'X-API-Key': getApiKey() }
                 });
+                cancelled = response.ok || response.status === 404;
             } catch {
-                // Best-effort
+                // No response: if the server did cancel the job, later snapshots list it as Cancelled and skip it
+            }
+            if (!cancelled && getDismissedJobIds().get(jobId) === dismissedAt) {
+                getDismissedJobIds().delete(jobId);
+                saveDismissedJobIds();
             }
         }
     }
