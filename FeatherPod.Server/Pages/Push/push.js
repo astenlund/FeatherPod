@@ -26,7 +26,7 @@ import { initFeedArtwork } from './modules/artwork.js';
 import { initWakeLockToggle, isWakeLockTogglePressed, acquireWakeLock } from './modules/wake-lock.js';
 import { initNotificationToggle } from './modules/notifications.js';
 import { progressAnimator } from './modules/progress.js';
-import { showState, getCurrentState, updateQueueTitle, showError, showWarningBanner, setNoKeyError, cacheLayoutDimensions } from './modules/state.js';
+import { showState, getCurrentState, refreshQueueActivity, showError, showWarningBanner, setNoKeyError, cacheLayoutDimensions } from './modules/state.js';
 import { renderQueueList } from './modules/queue-ui.js';
 import { getQueue, initQueue, restoreQueueState, addFilesToQueue, clearQueueState, clearTerminalEntries, dismissEntry, monitorEntryNormalizationInBackground, updateQueueTitleForEpisode } from './modules/queue.js';
 import { registerHistoryContextMenuCallback, initHistorySection, collapseHistoryImmediate, toggleHistorySection, changeHistoryFilter, selectHistoryUpload, updateHistoryListScrollState, getHistoryFilter, getHistoryPanelPushedState, setHistoryPanelPushedState, getHistoryData, getHistorySelectedId, refreshHistoryList } from './modules/history.js';
@@ -186,7 +186,7 @@ registerYouTubeJobCallback((jobResponse, { replacesEntryId = null } = {}) => {
     if (getCurrentState() !== 'queue') {
         showState('queue', hasActive, collapseHistoryImmediate);
     } else {
-        updateQueueTitle(hasActive);
+        refreshQueueActivity(hasActive);
     }
 
     renderQueueList(true);
@@ -279,7 +279,7 @@ function applyDevState(devState) {
             const hasActive = queue.some(e => isActiveWork(e));
             showState('queue', hasActive, collapseHistoryImmediate);
             renderQueueList();
-            updateQueueTitle(hasActive);
+            refreshQueueActivity(hasActive);
 
             return true;
         case 'error':
@@ -439,7 +439,7 @@ async function init() {
                 const hasActive = queue.some(e => isActiveWork(e));
                 showState('queue', hasActive, collapseHistoryImmediate);
                 renderQueueList();
-                updateQueueTitle(hasActive);
+                refreshQueueActivity(hasActive);
             } else {
                 showState('ready');
             }
@@ -481,7 +481,7 @@ async function init() {
         const hasActive = queue.some(e => isActiveWork(e));
         showState('queue', hasActive, collapseHistoryImmediate);
         renderQueueList();
-        updateQueueTitle(hasActive);
+        refreshQueueActivity(hasActive);
     } else {
         showState('ready');
         document.getElementById('select-file').focus();

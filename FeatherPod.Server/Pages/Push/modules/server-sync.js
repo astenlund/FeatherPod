@@ -4,7 +4,7 @@ import { getApiKey } from './auth.js';
 import { getQueue, getActiveUploadId, generateEntryId, addFilesToQueue, monitorEntryNormalizationInBackground, saveQueueState, checkAllComplete } from './queue.js';
 import { renderQueueList, updateQueueItemInDOM, removeQueueItemFromDOM, rebindProgressAnimator } from './queue-ui.js';
 import { progressAnimator } from './progress.js';
-import { showState, getCurrentState, updateQueueTitle } from './state.js';
+import { showState, getCurrentState, refreshQueueActivity } from './state.js';
 import { refreshHistoryList, initHistorySection, collapseHistoryImmediate } from './history.js';
 import { syncPushSession } from './notifications.js';
 
@@ -374,7 +374,8 @@ function addNewServerEntries(uploadQueue, serverJobs, existingJobIds) {
  * - removeStaleEntries: drops normalizing/failed entries whose jobId is gone from the server
  * - reconcileExistingEntries: applies the status ladder to entries the server still knows
  * - addNewServerEntries: appends unknown server jobs (e.g., from CLI or another tab)
- * then repaints the affected DOM, resumes SSE monitoring, and persists queue state.
+ * then repaints the affected DOM, resumes SSE monitoring, refreshes the queue title and toggles
+ * (so work discovered after the queue finished gets its toggles back), and persists queue state.
  * If serverJobs is null (fetch failed), skips reconciliation entirely.
  * @param {Array<Object>|null} serverJobs
  */
@@ -441,7 +442,7 @@ export function mergeServerJobs(serverJobs) {
         }
     }
 
-    updateQueueTitle(hasActive);
+    refreshQueueActivity(hasActive);
     saveQueueState();
     checkAllComplete();
 }

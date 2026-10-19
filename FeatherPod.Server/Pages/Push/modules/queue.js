@@ -1,11 +1,11 @@
 import { FEED_ID, JOB_TTL_MS, QUEUE_STORAGE_KEY, STAGES_WITH_PROGRESS, STR_INVALID_KEY, STR_NO_FEED_ACCESS, TRANSCRIPTION_ACTIVE_STATUSES } from './config.js';
 import { isValidMediaFile, isActiveWork, isInUploadPhase, tryParseJson } from './utils.js';
 import { getApiKey } from './auth.js';
-import { showState, getCurrentState, updateQueueTitle } from './state.js';
+import { showState, getCurrentState, refreshQueueActivity } from './state.js';
 import { progressAnimator } from './progress.js';
 import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQueueItemFromDOM, getEntryProgressBar, rebindProgressAnimator, registerQueueCallbacks, createQueueItemElement, animateQueueDropZoneMorph, prepareReadyDropZoneMorph, animateReadyDropZoneMorph, updateQueueItemName } from './queue-ui.js';
-import { resetNotificationToggle, syncPushSession, notifyQueueComplete, setNotificationToggleVisible } from './notifications.js';
-import { resetWakeLockToggle, setWakeLockToggleVisible } from './wake-lock.js';
+import { resetNotificationToggle, syncPushSession, notifyQueueComplete } from './notifications.js';
+import { resetWakeLockToggle } from './wake-lock.js';
 import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetchBrowserUploads, initHistorySection, invalidateBrowserUploadsCache } from './history.js';
 import { getDismissedJobIds, saveDismissedJobIds, notifyLocalSourceUploaded } from './server-sync.js';
 import { showYouTubeCookieDialog } from './youtube.js';
@@ -140,9 +140,7 @@ export function addFilesToQueue(files) {
     if (previousState !== 'queue') {
         showState('queue', hasActive, collapseHistoryImmediate);
     } else {
-        updateQueueTitle(hasActive);
-        setNotificationToggleVisible(hasActive);
-        setWakeLockToggleVisible(hasActive);
+        refreshQueueActivity(hasActive);
     }
 
     if (previousState === 'ready') {
@@ -289,15 +287,13 @@ export function checkAllComplete() {
     if (!hasActiveWork) {
         isUploading = false;
         activeUploadId = null;
-        updateQueueTitle(false);
+        refreshQueueActivity(false);
         saveQueueState();
         const completed = uploadQueue.filter(e => e.status === 'completed').length;
         const failed = uploadQueue.filter(e => e.status === 'failed' && !e.validationError).length;
         notifyQueueComplete({ completed, failed });
         resetNotificationToggle();
-        setNotificationToggleVisible(false);
         resetWakeLockToggle();
-        setWakeLockToggleVisible(false);
     }
 }
 
@@ -916,10 +912,7 @@ export function retryEntry(entryId) {
     }
 
     updateQueueItemInDOM(entry);
-    const hasActive = uploadQueue.some(e => isActiveWork(e));
-    updateQueueTitle(hasActive);
-    setNotificationToggleVisible(hasActive);
-    setWakeLockToggleVisible(hasActive);
+    refreshQueueActivity(uploadQueue.some(e => isActiveWork(e)));
 
     saveQueueState();
 

@@ -4,6 +4,8 @@ import { setWakeLockToggleVisible } from './wake-lock.js';
 
 // Title animation state
 let titleAnimationId = null;
+/** Pending delayed start scheduled by showState(); any later title request supersedes it. */
+let titleDelayId = null;
 let currentTitleText = 'Push';
 let isFirstStateChange = true;
 
@@ -17,12 +19,20 @@ let cachedContainerWidth = 0;
 let cachedCollapsedMargin = 0;
 export const COLLAPSED_WIDTH = 500;
 
+function cancelDelayedTitle() {
+    if (titleDelayId != null) {
+        clearTimeout(titleDelayId);
+        titleDelayId = null;
+    }
+}
+
 function animateTitle(targetWord) {
     const titleEl = document.getElementById('page-title');
     if (!titleEl) {
         return;
     }
 
+    cancelDelayedTitle();
     const suffix = ' to Feed';
 
     if (titleAnimationId != null) {
@@ -121,6 +131,8 @@ export function showState(stateName, hasActiveWork = false, collapseHistoryImmed
         }
     }
 
+    // A delayed start from an earlier state change must not land after this one
+    cancelDelayedTitle();
     if (targetWord !== currentTitleText) {
         if (isFirstStateChange && !DEBUG_TITLE_ANIMATION) {
             const titleEl = document.getElementById('page-title');
@@ -129,7 +141,7 @@ export function showState(stateName, hasActiveWork = false, collapseHistoryImmed
             }
             currentTitleText = targetWord;
         } else {
-            setTimeout(() => animateTitle(targetWord), TITLE_ANIMATION_LOAD_DELAY);
+            titleDelayId = setTimeout(() => animateTitle(targetWord), TITLE_ANIMATION_LOAD_DELAY);
         }
     }
     isFirstStateChange = false;
@@ -144,14 +156,19 @@ export function getCurrentState() {
 }
 
 /**
- * Update queue title to "Pushing" or "Pushed".
+ * Sync the queue view with whether the queue has active work: the "Pushing"/"Pushed" title and the
+ * visibility of the notification and wake-lock toggles move together. Every path that changes the
+ * queue's active work while in queue state goes through here, so new work can never be left without
+ * its toggles. No-op outside queue state, where showState() owns both.
  * @param {boolean} hasActiveWork
  */
-export function updateQueueTitle(hasActiveWork) {
+export function refreshQueueActivity(hasActiveWork) {
     if (getCurrentState() !== 'queue') {
         return;
     }
     animateTitle(hasActiveWork ? 'Pushing' : 'Pushed');
+    setNotificationToggleVisible(hasActiveWork);
+    setWakeLockToggleVisible(hasActiveWork);
 }
 
 export function showError(message) {
