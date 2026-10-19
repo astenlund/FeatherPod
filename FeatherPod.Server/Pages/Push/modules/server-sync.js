@@ -385,7 +385,8 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds) {
 
 /**
  * Build entries for server jobs not already present in the local queue. Skips cancelled
- * jobs, user-dismissed jobs, and jobs whose fileName matches a currently-uploading entry
+ * jobs, jobs in dismissedJobIds (dismissed, cleared or cancelled entries, including ones saved
+ * by other tabs), and jobs whose fileName matches a currently-uploading entry
  * (dedup for in-flight uploads where the SSE event arrives before the XHR 202 response
  * sets the jobId). Entries are returned but not yet pushed onto the queue. Each is stamped
  * with jobIdReceivedAt, so an older snapshot merged later cannot remove it as stale.
