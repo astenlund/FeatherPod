@@ -747,10 +747,12 @@ function monitorEntryNormalization(entry) {
 }
 
 /**
- * Poll normalization job status for a queue entry (fallback when SSE unavailable).
- * Retries transient errors (network failures, 5xx responses) up to maxAttempts times
- * with exponential backoff before marking as failed. This handles mobile browsers where
- * the network may not be immediately available after resuming from background.
+ * Poll normalization job status for a queue entry: the fallback monitorEntryNormalization uses when
+ * EventSource is unavailable, when the SSE connection is not established in time, and when the
+ * stream errors or closes before its done event. Retries transient errors (network failures,
+ * non-OK responses) with exponential backoff; after maxAttempts consecutive failures it stops polling
+ * without marking the entry failed, leaving its status to the next recent-jobs merge. This handles mobile
+ * browsers where the network may not be immediately available after resuming from background.
  * @param {QueueEntry} entry
  * @returns {Promise<void>}
  */
