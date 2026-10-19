@@ -1009,9 +1009,17 @@ export function clearQueueState() {
  * Filters out entries older than 1 hour. Entries without startedAt (pre-migration) are treated as expired.
  * Starts SSE monitors for normalizing entries so progress updates arrive during the sync wait.
  * Caller is responsible for showing the appropriate state after server sync completes.
+ * No-op while the queue already holds entries: startup re-runs on hashchange and key entry, and the live
+ * in-memory queue is authoritative. The saved copy can lag it (upload and SSE progress updates do not trigger
+ * a save) or come from another tab (the key is per feed and shared across tabs), and the in-flight uploads,
+ * SSE monitors and animator slots reference the live entries, so restoring over them would orphan those.
  * @returns {Promise<boolean>} True if entries were restored into uploadQueue
  */
 export async function restoreQueueState() {
+    if (uploadQueue.length > 0) {
+        return false;
+    }
+
     const saved = localStorage.getItem(QUEUE_STORAGE_KEY);
     if (!saved) {
         return false;
