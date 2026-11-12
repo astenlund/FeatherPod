@@ -1,8 +1,8 @@
-import { FEED_ID, DISMISSED_STORAGE_KEY, JOB_TTL_MS } from './config.js';
+import { FEED_ID, DISMISSED_STORAGE_KEY, JOB_TTL_MS, TERMINAL_JOB_STATUSES } from './config.js';
 import { isActiveWork, isInUploadPhase, tryParseJson } from './utils.js';
 import { getApiKey } from './auth.js';
 import { keyAttempts } from './key-attempts.js';
-import { getQueue, getActiveUploadId, generateEntryId, addFilesToQueue, monitorEntryNormalizationInBackground, saveQueueState, checkAllComplete } from './queue.js';
+import { getQueue, getActiveUploadId, generateEntryId, addFilesToQueue, monitorEntryNormalizationInBackground, saveQueueState, checkAllComplete, finalizeTerminalEntry } from './queue.js';
 import { renderQueueList, updateQueueItemInDOM, removeQueueItemFromDOM } from './queue-ui.js';
 import { progressAnimator } from './progress.js';
 import { showState, getCurrentState, refreshQueueActivity } from './state.js';
@@ -233,10 +233,6 @@ export async function fetchRecentJobs() {
     }
 }
 
-function isTerminalStatus(status) {
-    return status === 'Completed' || status === 'Failed' || status === 'Cancelled';
-}
-
 /**
  * Tear down a queue entry and remove it from the queue: closes any SSE, clears the
  * animator slot, removes the DOM node, splices the entry out of the queue, and resolves
@@ -287,6 +283,22 @@ function removeStaleEntries(uploadQueue, serverJobMap, requestedAt) {
 }
 
 /**
+ * Copy a terminal server job's result fields onto its queue entry and finalize the entry through the shared terminal
+ * handling (finalizeTerminalEntry), without awaiting its episode lookup. Used by both reconcileExistingEntries branches
+ * that finalize an entry in place.
+ * @param {Object} entry
+ * @param {Object} serverJob - Terminal job from a recent-jobs snapshot
+ */
+function finalizeFromServerJob(entry, serverJob) {
+    entry.episodeId = serverJob.episodeId || entry.episodeId;
+    entry.stage = serverJob.stage || entry.stage;
+    entry.normalizationComplete = serverJob.normalizationComplete || false;
+    entry.transcriptionStatus = serverJob.transcriptionStatus || null;
+    entry.transcriptionError = serverJob.transcriptionError || null;
+    finalizeTerminalEntry(entry, serverJob).catch(e => console.error('Failed to finalize entry:', e));
+}
+
+/**
  * Reconcile existing local entries against fresh server data, mutating each in place.
  * Applies the status ladder: server cancellation removes the entry; a server-terminal
  * status finalizes a still-normalizing entry; ongoing normalization updates stage,
@@ -307,7 +319,7 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds) {
         }
 
         const serverStatus = serverJob.status;
-        const isServerTerminal = isTerminalStatus(serverStatus);
+        const isServerTerminal = TERMINAL_JOB_STATUSES.has(serverStatus);
 
         if (existing.status === 'normalizing' && serverStatus === 'Cancelled') {
             // Server says cancelled -- remove from queue (consistent with other cancel paths)
@@ -315,29 +327,19 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds) {
             removeEntry(uploadQueue, existing);
             removed = true;
         } else if (existing.status === 'normalizing' && isServerTerminal) {
-            // Server says terminal but local still normalizing -- update to terminal
+            // Server says terminal but local still normalizing -- finalize in place through the shared terminal
+            // handling, since closing the stream means its done handler never runs
             if (existing.eventSource) {
                 existing.eventSource.close();
                 existing.eventSource = null;
             }
-            existing.status = serverStatus === 'Completed' ? 'completed' : 'failed';
-            existing.error = serverJob.error || null;
-            existing.authRequired = serverJob.authRequired || false;
-            existing.episodeId = serverJob.episodeId || existing.episodeId;
             existing.title = serverJob.title || existing.title;
-            existing.stage = serverJob.stage || existing.stage;
             existing.progress = 100;
-            existing.normalizationComplete = serverJob.normalizationComplete || false;
-            existing.transcriptionStatus = serverJob.transcriptionStatus || null;
-            existing.transcriptionError = serverJob.transcriptionError || null;
-            if (existing.status === 'completed' && existing.localSourceIndex != null) {
-                notifyLocalSourceUploaded(existing.localSourceIndex);
-            }
+            finalizeFromServerJob(existing, serverJob);
             if (existing._resolveMonitor) {
                 existing._resolveMonitor();
                 existing._resolveMonitor = null;
             }
-            progressAnimator.removeSlot(existing.id);
 
             changedEntryIds.add(existing.id);
         } else if (existing.status === 'normalizing') {
@@ -368,19 +370,10 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds) {
             changedEntryIds.add(existing.id);
             monitorEntryNormalizationInBackground(existing, { isResuming: true });
         } else if (existing.status === 'failed' && serverStatus === 'Completed') {
-            // Recover locally-failed entries that actually completed on server
-            existing.status = 'completed';
+            // Recover locally-failed entries that actually completed on server, through the shared terminal handling
+            // so the episode reaches the local history
             existing.error = null;
-            existing.episodeId = serverJob.episodeId || existing.episodeId;
-            existing.stage = serverJob.stage || existing.stage;
-            existing.progress = 100;
-            existing.normalizationComplete = serverJob.normalizationComplete || false;
-            existing.transcriptionStatus = serverJob.transcriptionStatus || null;
-            existing.transcriptionError = serverJob.transcriptionError || null;
-            if (existing.localSourceIndex != null) {
-                notifyLocalSourceUploaded(existing.localSourceIndex);
-            }
-            progressAnimator.removeSlot(existing.id);
+            finalizeFromServerJob(existing, serverJob);
 
             changedEntryIds.add(existing.id);
         } else if (existing.status === 'failed' && serverStatus === 'Cancelled') {
@@ -412,7 +405,7 @@ function addNewServerEntries(uploadQueue, serverJobs, existingJobIds) {
     for (const serverJob of serverJobs) {
         if (!existingJobIds.has(serverJob.jobId) && !uploadingFileNames.has(serverJob.fileName) && !dismissedJobIds.has(serverJob.jobId)) {
             const serverStatus = serverJob.status;
-            const isServerTerminal = isTerminalStatus(serverStatus);
+            const isServerTerminal = TERMINAL_JOB_STATUSES.has(serverStatus);
             if (serverStatus === 'Cancelled') {
                 continue;
             }

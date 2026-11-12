@@ -1,4 +1,4 @@
-import { FEED_ID, JOB_TTL_MS, QUEUE_STORAGE_KEY, STAGES_WITH_PROGRESS, STR_INVALID_KEY, STR_NO_FEED_ACCESS, TRANSCRIPTION_ACTIVE_STATUSES } from './config.js';
+import { FEED_ID, JOB_TTL_MS, QUEUE_STORAGE_KEY, STAGES_WITH_PROGRESS, STR_INVALID_KEY, STR_NO_FEED_ACCESS, TERMINAL_JOB_STATUSES, TRANSCRIPTION_ACTIVE_STATUSES } from './config.js';
 import { isValidMediaFile, isActiveWork, isInUploadPhase, tryParseJson } from './utils.js';
 import { getApiKey } from './auth.js';
 import { showState, getCurrentState, refreshQueueActivity } from './state.js';
@@ -567,29 +567,84 @@ function updateTranscriptionState(entry, job) {
 }
 
 /**
- * Apply terminal "completed" state to an entry: refresh the uploads cache, resolve
- * the episode, update history, clean up the progress animator slot, and repaint the
- * queue item. Shared by the SSE done handler and the poll fallback.
+ * Apply a job's terminal status to its queue entry: the single terminal handling shared by the SSE done handler,
+ * the poll fallback and the recent-jobs merge (which finalizes a still-normalizing entry in place, and recovers a
+ * locally failed entry whose job completed). Cancelled goes through finalizeCancelledEntry and Completed through
+ * finalizeCompletedEntry; any other status marks the entry failed with the job's error, opens the YouTube cookie
+ * dialog when the job reports authRequired, and removes the progress slot.
+ * An answer for another job than the entry's current one (a request still in flight for the job the entry ran before
+ * a retry) is ignored. A terminal job status (Completed, Failed or Cancelled) is applied once per entry and job: the
+ * first such call claims the job synchronously, and while the entry stays finalized, every later call for that job
+ * returns without effect, so a terminal answer that arrives after another path already finalized the entry neither
+ * notifies the CLI local source again nor repeats the history save or the cookie dialog. The claim lapses as soon as
+ * the entry is active work again (a recent-jobs merge that revives a failed entry for the same job), so the revived
+ * monitor's terminal answer finalizes it again. A missing or non-terminal status (an SSE done event whose last
+ * progress event was not terminal) still marks the entry failed but claims nothing, since the server has not decided
+ * the job, so a merge that later finds the job Completed can still recover the entry. A retry gives the entry a new
+ * job, whose terminal status is handled afresh. The claim is in memory only (not saved with the queue), so a restored
+ * entry starts unclaimed.
+ * The entry's status is terminal when this returns its promise; a Completed entry's episode lookup and history save
+ * finish when the promise resolves.
  * @param {QueueEntry} entry
- * @param {Object} jobStatus - Job status response (from SSE lastStatus or poll)
+ * @param {Object|null} job - Terminal job status (SSE lastStatus, poll response or recent-jobs snapshot job)
+ * @returns {Promise<void>}
+ */
+export async function finalizeTerminalEntry(entry, job) {
+    if (job?.jobId && job.jobId !== entry.jobId) {
+        return;
+    }
+    if (TERMINAL_JOB_STATUSES.has(job?.status)) {
+        if (entry.terminalJobId === entry.jobId && !isActiveWork(entry)) {
+            return;
+        }
+        entry.terminalJobId = entry.jobId;
+    }
+
+    if (job?.status === 'Cancelled') {
+        finalizeCancelledEntry(entry);
+    } else if (job?.status === 'Completed') {
+        await finalizeCompletedEntry(entry, job);
+    } else {
+        entry.status = 'failed';
+        entry.error = job?.error || 'Normalization failed';
+        if (job?.authRequired) {
+            showYouTubeCookieDialog(cookieRetryFor(entry));
+        }
+        progressAnimator.removeSlot(entry.id);
+        updateQueueItemInDOM(entry);
+    }
+}
+
+/**
+ * Apply terminal "completed" state to an entry. The status, the CLI local-source notification and the progress slot
+ * removal happen before the first await, so a caller that does not await (the recent-jobs merge) already sees the
+ * entry terminal. Then it refreshes the uploads cache, resolves the episode, saves it to local history, and repaints
+ * the queue item and saves the queue state if the entry is still in the upload queue. Called only through
+ * finalizeTerminalEntry.
+ * @param {QueueEntry} entry
+ * @param {Object} jobStatus - Job status (SSE lastStatus, poll response or recent-jobs snapshot job)
  * @returns {Promise<void>}
  */
 async function finalizeCompletedEntry(entry, jobStatus) {
-    invalidateBrowserUploadsCache();
-    const uploads = await fetchBrowserUploads();
-    const episode = uploads?.find(ep => ep.fileName === entry.fileName) || null;
     entry.status = 'completed';
-    entry.episode = episode;
     entry.progress = 100;
     if (entry.localSourceIndex != null) {
         notifyLocalSourceUploaded(entry.localSourceIndex);
     }
+    progressAnimator.removeSlot(entry.id);
+
+    invalidateBrowserUploadsCache();
+    const uploads = await fetchBrowserUploads();
+    const episode = uploads?.find(ep => ep.fileName === entry.fileName) || null;
+    entry.episode = episode;
     const historyEpisode = episode || buildFallbackEpisode(jobStatus, entry);
     if (historyEpisode) {
         saveToLocalHistory(historyEpisode);
     }
-    progressAnimator.removeSlot(entry.id);
-    updateQueueItemInDOM(entry);
+    if (uploadQueue.includes(entry)) {
+        updateQueueItemInDOM(entry);
+        saveQueueState();
+    }
     refreshHistoryList(historyEpisode?.id);
 }
 
@@ -597,8 +652,8 @@ async function finalizeCompletedEntry(entry, jobStatus) {
  * Apply terminal "cancelled" state to an entry: record its job as dismissed, clear the
  * progress animator slot, drop the DOM item, and remove it from the upload queue if it is still there
  * (a recent-jobs merge, or an earlier call from cancelEntry, can remove it while a poll status request is in flight). Shared by the
- * aborted-upload path in processEntry, cancelEntry, the SSE progress handler, the SSE done handler,
- * and the poll fallback, so a cancel made on this page and one made elsewhere (another tab or
+ * aborted-upload path in processEntry, cancelEntry and finalizeTerminalEntry (the SSE progress and done handlers
+ * and the poll fallback), so a cancel made on this page and one made elsewhere (another tab or
  * device, a direct API call) both keep a recent-jobs snapshot requested before the cancel from
  * re-adding the job. Callers are responsible for any monitor-specific teardown (e.g.,
  * finishMonitoring).
@@ -684,7 +739,7 @@ function monitorEntryNormalization(entry) {
                     clearTimeout(connectionTimeout);
                     jobFinished = true;
                     eventSource.close();
-                    finalizeCancelledEntry(entry);
+                    void finalizeTerminalEntry(entry, parsed);
                     finishMonitoring();
 
                     return;
@@ -699,20 +754,7 @@ function monitorEntryNormalization(entry) {
             jobFinished = true;
             eventSource.close();
 
-            if (lastStatus?.status === 'Cancelled') {
-                finalizeCancelledEntry(entry);
-            } else if (lastStatus?.status === 'Completed') {
-                await finalizeCompletedEntry(entry, lastStatus);
-            } else {
-                entry.status = 'failed';
-                entry.error = lastStatus?.error || 'Normalization failed';
-                if (lastStatus?.authRequired) {
-                    showYouTubeCookieDialog(cookieRetryFor(entry));
-                }
-                progressAnimator.removeSlot(entry.id);
-                updateQueueItemInDOM(entry);
-            }
-
+            await finalizeTerminalEntry(entry, lastStatus);
             finishMonitoring();
         });
 
@@ -792,23 +834,8 @@ async function pollEntryNormalization(entry) {
             consecutiveErrors = 0;
             const job = await response.json();
 
-            if (job.status === 'Completed') {
-                await finalizeCompletedEntry(entry, job);
-
-                return;
-            } else if (job.status === 'Failed') {
-                entry.status = 'failed';
-                entry.error = job.error || 'Normalization failed';
-                if (job.authRequired) {
-                    showYouTubeCookieDialog(cookieRetryFor(entry));
-                }
-                progressAnimator.removeSlot(entry.id);
-
-                updateQueueItemInDOM(entry);
-
-                return;
-            } else if (job.status === 'Cancelled') {
-                finalizeCancelledEntry(entry);
+            if (TERMINAL_JOB_STATUSES.has(job.status)) {
+                await finalizeTerminalEntry(entry, job);
 
                 return;
             }

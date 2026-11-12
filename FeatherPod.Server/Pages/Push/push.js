@@ -121,6 +121,8 @@ if (navigator.serviceWorker) {
  * @property {number|null} [jobIdReceivedAt] - performance.now() when this page received jobId, from a 202 response or
  *     from the snapshot merge that discovered the job (not persisted); a recent-jobs snapshot requested earlier can lack
  *     the job, so mergeServerJobs does not treat it as stale
+ * @property {string|null} [terminalJobId] - jobId whose terminal status finalizeTerminalEntry already applied (not
+ *     persisted); a later terminal answer for the same job is ignored while the entry is not active work again
  * @property {string|null} episodeId - Episode ID after completion
  * @property {Episode|null} episode - Full episode data after completion
  * @property {string|null} error - Error message if failed
