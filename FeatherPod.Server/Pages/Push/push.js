@@ -22,6 +22,7 @@
 import { IS_DEV, QUEUE_SYNC_TIMEOUT, STR_PASTE_KEY_BELOW, STR_PASTE_KEY, STR_SAVE_KEY, STR_INVALID_KEY, STR_NO_FEED_ACCESS } from './modules/config.js';
 import { isActiveWork, isInUploadPhase, trapFocus } from './modules/utils.js';
 import { getApiKey, setApiKey, getStoredApiKey, saveApiKey, clearApiKey, validateApiKey, validateApiKeyWithRetry } from './modules/auth.js';
+import { isKeyCheckInconclusive, unverifiedKeyMessage } from './modules/key-check.js';
 import { initFeedArtwork } from './modules/artwork.js';
 import { initWakeLockToggle, isWakeLockTogglePressed, acquireWakeLock } from './modules/wake-lock.js';
 import { initNotificationToggle } from './modules/notifications.js';
@@ -139,7 +140,8 @@ if (navigator.serviceWorker) {
  * @property {UserInfo|null} user - User object from /api/users/me if valid
  * @property {boolean} feedAccess - Whether the user has access to this feed
  * @property {string|null} error - Error message if validation failed
- * @property {boolean} networkError - Whether the failure was due to a network/server error (vs invalid key)
+ * @property {boolean} networkError - Whether the request failed to reach the server (validity unknown)
+ * @property {boolean} serverError - Whether the server answered with a failure other than 401 (validity unknown)
  */
 
 /**
@@ -338,14 +340,28 @@ async function init() {
         initNoKeyState();
     }
 
-    async function tryFallbackKey(fallbackKey, warningMessage) {
+    /**
+     * Switch to the saved key after the URL key failed its check. A saved key whose own check is inconclusive is kept
+     * unchecked rather than dropped, since dropping it would raise the prompt that erases it.
+     * @param {string|null} fallbackKey - The saved key
+     * @param {string} urlKeyProblem - Why the URL key is not used, e.g. 'Invalid URL key'
+     * @returns {Promise<boolean>} Whether the saved key is now in use
+     */
+    async function tryFallbackKey(fallbackKey, urlKeyProblem) {
         if (!fallbackKey) {
             return false;
         }
 
-        const fallbackValidation = await validateApiKey(fallbackKey);
+        const fallbackValidation = await validateApiKeyWithRetry(fallbackKey);
         if (fallbackValidation.valid && fallbackValidation.feedAccess) {
-            showWarningBanner(warningMessage);
+            showWarningBanner(urlKeyProblem + '. Using saved key.');
+            saveApiKey(fallbackKey);
+
+            return true;
+        }
+
+        if (isKeyCheckInconclusive(fallbackValidation)) {
+            showWarningBanner(urlKeyProblem + '. ' + unverifiedKeyMessage(fallbackValidation, 'saved key') + '.');
             saveApiKey(fallbackKey);
 
             return true;
@@ -413,18 +429,13 @@ async function init() {
         validateApiKeyWithRetry(primaryKey).then(async (validation) => {
             if (validation.valid && validation.feedAccess) {
                 saveApiKey(primaryKey);
-            } else if (validation.networkError) {
-                showWarningBanner(extractedKey ? 'Server unreachable \u2014 using URL key' : 'Server unreachable \u2014 using saved key');
+            } else if (isKeyCheckInconclusive(validation)) {
+                showWarningBanner(unverifiedKeyMessage(validation, extractedKey ? 'URL key' : 'saved key'));
                 saveApiKey(primaryKey);
             } else if (extractedKey) {
-                if (validation.valid && !validation.feedAccess) {
-                    if (await tryFallbackKey(storedKey, 'URL key does not have access to this feed. Using saved key.')) {
-                        return;
-                    }
-                } else {
-                    if (await tryFallbackKey(storedKey, 'Invalid URL key. Using saved key.')) {
-                        return;
-                    }
+                const urlKeyProblem = validation.valid ? 'URL key does not have access to this feed' : 'Invalid URL key';
+                if (await tryFallbackKey(storedKey, urlKeyProblem)) {
+                    return;
                 }
 
                 if (document.getElementById('ready').style.display !== 'none') {
@@ -553,6 +564,23 @@ async function showInitialView(serverJobsPromise, focusReady, promptGeneration) 
 // initNoKeyState -- paste-key flow
 // ============================================================================
 
+/**
+ * Banner text for a key the prompt did not save. A server error did not judge the key, so it asks for another try.
+ * @param {ApiKeyValidationResult} validation
+ * @returns {string}
+ */
+function rejectedKeyMessage(validation) {
+    if (validation.serverError) {
+        return validation.error + ', try again';
+    }
+
+    if (validation.valid && !validation.feedAccess) {
+        return STR_NO_FEED_ACCESS;
+    }
+
+    return validation.error || STR_INVALID_KEY;
+}
+
 /** Put the key prompt's controls back in their idle state and clear its error text. */
 function resetNoKeyState() {
     const pasteBtn = document.getElementById('paste-key-btn');
@@ -643,19 +671,14 @@ function initNoKeyState() {
                 saveApiKey(key);
                 await transitionToReadyState(promptGeneration);
             } else if (validation.networkError) {
-                showWarningBanner('Server unreachable \u2014 using entered key');
+                showWarningBanner(unverifiedKeyMessage(validation, 'entered key'));
                 saveApiKey(key);
                 await transitionToReadyState(promptGeneration);
-            } else if (validation.valid && !validation.feedAccess) {
-                saveBtn.disabled = false;
-                saveBtn.textContent = STR_SAVE_KEY;
-                textarea.disabled = false;
-                showWarningBanner(STR_NO_FEED_ACCESS);
             } else {
                 saveBtn.disabled = false;
                 saveBtn.textContent = STR_SAVE_KEY;
                 textarea.disabled = false;
-                showWarningBanner(validation.error || STR_INVALID_KEY);
+                showWarningBanner(rejectedKeyMessage(validation));
             }
         } finally {
             if (validatingPromptGeneration === promptGeneration) {
@@ -703,9 +726,14 @@ function initNoKeyState() {
                 saveApiKey(apiKeyToValidate);
                 await transitionToReadyState(promptGeneration);
             } else if (validation.networkError) {
-                showWarningBanner('Server unreachable \u2014 using pasted key');
+                showWarningBanner(unverifiedKeyMessage(validation, 'pasted key'));
                 saveApiKey(apiKeyToValidate);
                 await transitionToReadyState(promptGeneration);
+            } else if (validation.serverError) {
+                // The key was not judged: keep the Paste button so the user can try again
+                pasteBtn.disabled = false;
+                pasteBtn.textContent = STR_PASTE_KEY;
+                showWarningBanner(rejectedKeyMessage(validation));
             } else if (validation.valid && !validation.feedAccess) {
                 pasteBtn.disabled = false;
                 pasteBtn.textContent = STR_PASTE_KEY;

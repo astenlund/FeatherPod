@@ -9,6 +9,7 @@ const CACHED_ASSET_SUFFIXES = [
     '/modules/config.js',
     '/modules/events.js',
     '/modules/utils.js',
+    '/modules/key-check.js',
     '/modules/auth.js',
     '/modules/artwork.js',
     '/modules/wake-lock.js',

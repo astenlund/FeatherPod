@@ -1,4 +1,7 @@
 import { FEED_ID, API_KEY_SESSION_KEY, API_KEY_LOCAL_KEY, API_KEY_COOKIE_KEY, STR_INVALID_KEY } from './config.js';
+import { KEY_CHECK_STATUS, classifyKeyCheckStatus, retryKeyCheck } from './key-check.js';
+
+/** @typedef {import('../push.js').ApiKeyValidationResult} ApiKeyValidationResult */
 
 let apiKey = null;
 /** Role that /api/users/me reported for each key validated in this page, keyed by the trimmed key */
@@ -82,9 +85,15 @@ export function getStoredApiKey() {
     return getCookie(API_KEY_COOKIE_KEY);
 }
 
+/**
+ * Check an API key against /api/users/me. Only a 401 rejects the key; any other failure status is reported as
+ * `serverError` and a failed request as `networkError`, both of which leave the key's validity unknown.
+ * @param {string} key
+ * @returns {Promise<ApiKeyValidationResult>}
+ */
 export async function validateApiKey(key) {
     if (!key || key.trim().length === 0) {
-        return { valid: false, user: null, feedAccess: false, error: 'API key is empty', networkError: false };
+        return { valid: false, user: null, feedAccess: false, error: 'API key is empty', networkError: false, serverError: false };
     }
 
     try {
@@ -92,31 +101,31 @@ export async function validateApiKey(key) {
             headers: { 'X-API-Key': key.trim() }
         });
 
-        if (!response.ok) {
-            if (response.status === 401) {
-                return { valid: false, user: null, feedAccess: false, error: STR_INVALID_KEY, networkError: false };
-            }
+        const status = classifyKeyCheckStatus(response.status);
+        if (status === KEY_CHECK_STATUS.REJECTED) {
+            return { valid: false, user: null, feedAccess: false, error: STR_INVALID_KEY, networkError: false, serverError: false };
+        }
 
-            return { valid: false, user: null, feedAccess: false, error: 'Server error (' + response.status + ')', networkError: false };
+        if (status === KEY_CHECK_STATUS.SERVER_ERROR) {
+            return { valid: false, user: null, feedAccess: false, error: 'Server error (' + response.status + ')', networkError: false, serverError: true };
         }
 
         const user = await response.json();
         rolesByKey.set(key.trim(), user.role || null);
         const feedAccess = user.role === 'Admin' || (user.role === 'FeedOwner' && user.ownedFeeds && user.ownedFeeds.includes(FEED_ID));
 
-        return { valid: true, user, feedAccess, error: null, networkError: false };
-    } catch (err) {
-        return { valid: false, user: null, feedAccess: false, error: 'Network error', networkError: true };
+        return { valid: true, user, feedAccess, error: null, networkError: false, serverError: false };
+    } catch {
+        return { valid: false, user: null, feedAccess: false, error: 'Network error', networkError: true, serverError: false };
     }
 }
 
-export async function validateApiKeyWithRetry(key, retries = 2) {
-    const result = await validateApiKey(key);
-    if (result.networkError && retries > 0) {
-        await new Promise(r => setTimeout(r, 1000));
-
-        return validateApiKeyWithRetry(key, retries - 1);
-    }
-
-    return result;
+/**
+ * validateApiKey, repeated while the check is inconclusive (network or server error).
+ * @param {string} key
+ * @param {number} [retries=2] - Additional attempts after the first
+ * @returns {Promise<ApiKeyValidationResult>}
+ */
+export function validateApiKeyWithRetry(key, retries = 2) {
+    return retryKeyCheck(() => validateApiKey(key), { retries });
 }
