@@ -1,6 +1,7 @@
 import { FEED_ID, DISMISSED_STORAGE_KEY, JOB_TTL_MS } from './config.js';
 import { isActiveWork, isInUploadPhase, tryParseJson } from './utils.js';
 import { getApiKey } from './auth.js';
+import { keyAttempts } from './key-attempts.js';
 import { getQueue, getActiveUploadId, generateEntryId, addFilesToQueue, monitorEntryNormalizationInBackground, saveQueueState, checkAllComplete } from './queue.js';
 import { renderQueueList, updateQueueItemInDOM, removeQueueItemFromDOM } from './queue-ui.js';
 import { progressAnimator } from './progress.js';
@@ -21,6 +22,8 @@ let newestMergedSnapshotRequestedAt = -Infinity;
 let localSourceConfig = null;
 /** @type {EventSource|null} */
 let localSourceEvents = null;
+/** @type {Promise<void>|null} The open or opening local source connection, shared by concurrent connectLocalSource calls */
+let localSourceConnection = null;
 /** @type {Set<number>} */
 let localSourceSeen = new Set();
 /** @type {number|null} */
@@ -46,8 +49,16 @@ export function getLocalSourceEvents() {
     return localSourceEvents;
 }
 
+/**
+ * Replace the local source event stream; null drops the connection (push.js closes it on beforeunload), so a later
+ * connectLocalSource connects again.
+ * @param {EventSource|null} value
+ */
 export function setLocalSourceEvents(value) {
     localSourceEvents = value;
+    if (!value) {
+        localSourceConnection = null;
+    }
 }
 
 /**
@@ -525,15 +536,34 @@ export function mergeServerJobs(snapshot) {
  * Connect to a local file server SSE and fetch initial files.
  * Called by push.js startSession (on load, on hashchange re-runs of init, and after key entry) whenever a local
  * source config is set, from the URL fragment or restored from sessionStorage. An API key is set by then but not
- * necessarily validated: init validates concurrently, and key entry proceeds on a network error.
- * Idempotent: if already connected (localSourceEvents is set), returns immediately, which matters because
- * startSession runs again on every hashchange and key entry.
+ * necessarily validated: init validates concurrently. Offered files are fetched, marked seen and queued only once
+ * a key is accepted (see key-attempts.js); until then they are held, so a rejected key never consumes them, and
+ * they are queued when a later key (entered on the prompt, or installed by a hashchange) is accepted.
+ * Idempotent from the first call: a call made while a connection is open or still being set up gets that connection's
+ * promise instead of connecting again, which matters because startSession runs again on every hashchange and key
+ * entry, and two runs can overlap while the first waits for its key's verdict.
+ * @param {number} attempt - Key attempt of the calling startup run; the initial files wait for its verdict, so on
+ *     acceptance they are queued before this resolves. A call that joins an existing connection waits for the attempt
+ *     of the call that opened it.
+ * @returns {Promise<void>}
  */
-export async function connectLocalSource() {
-    if (!localSourceConfig || localSourceEvents) {
-        return;
+export function connectLocalSource(attempt) {
+    if (!localSourceConfig) {
+        return Promise.resolve();
     }
 
+    if (!localSourceConnection) {
+        localSourceConnection = openLocalSource(attempt);
+    }
+
+    return localSourceConnection;
+}
+
+/**
+ * Open the local source connection for connectLocalSource: fetch the initial files and listen for new ones.
+ * @param {number} attempt - Key attempt of the startup run that opens it
+ */
+async function openLocalSource(attempt) {
     const { host, token } = localSourceConfig;
     const baseUrl = `http://${host}`;
 
@@ -544,6 +574,36 @@ export async function connectLocalSource() {
             localSourceSeen = new Set(JSON.parse(stored));
         }
     } catch { /* ignore corrupt data */ }
+
+    /** @type {Map<number, {index: number, name: string}>} Offered files waiting for an accepted key, by index */
+    const heldFiles = new Map();
+    let drainScheduled = false;
+
+    /** @param {Array<{index: number, name: string}>} items */
+    function holdLocalFiles(items) {
+        for (const item of items) {
+            if (!localSourceSeen.has(item.index)) {
+                heldFiles.set(item.index, item);
+            }
+        }
+    }
+
+    /** Fetch and queue the held files once a key is accepted (at once while the current key is accepted). */
+    function drainWhenKeyAccepted() {
+        if (drainScheduled) {
+            return;
+        }
+        drainScheduled = true;
+
+        keyAttempts.whenAccepted().then(async () => {
+            drainScheduled = false;
+            const batch = [...heldFiles.values()];
+            heldFiles.clear();
+            if (batch.length > 0) {
+                await fetchAndEnqueueLocalFiles(batch);
+            }
+        }).catch(e => console.error('Failed to fetch local files:', e));
+    }
 
     // Fetch initial file list in parallel, skipping files already seen (fetched, cancelled, or completed).
     // Parallel fetch + single addFilesToQueue call avoids staggered additions that interleave
@@ -557,7 +617,12 @@ export async function connectLocalSource() {
         const unseen = files.map((f, i) => ({ index: i, name: f.name })).filter(f => !localSourceSeen.has(f.index));
 
         if (unseen.length > 0) {
-            await fetchAndEnqueueLocalFiles(unseen);
+            if (await keyAttempts.waitForVerdict(attempt)) {
+                await fetchAndEnqueueLocalFiles(unseen);
+            } else {
+                holdLocalFiles(unseen);
+                drainWhenKeyAccepted();
+            }
         }
     } catch (e) {
         console.error('Failed to fetch local files:', e);
@@ -595,25 +660,10 @@ export async function connectLocalSource() {
         sessionStorage.setItem('localSourceSeen', JSON.stringify([...localSourceSeen]));
     }
 
-    // Batch handler for SSE events -- collects rapid-fire events (e.g., multiple context menu
-    // files arriving within milliseconds) and processes them together in a single addFilesToQueue
-    // call, avoiding per-file DOM mutations and animation interruptions.
-    let pendingFiles = [];
+    // Batch window for SSE events -- collects rapid-fire events (e.g., multiple context menu files arriving within
+    // milliseconds) so they are queued together in a single addFilesToQueue call, avoiding per-file DOM mutations and
+    // animation interruptions.
     let batchTimeout = null;
-
-    async function processPendingLocalFiles() {
-        batchTimeout = null;
-        const batch = pendingFiles.splice(0);
-        if (batch.length === 0) {
-            return;
-        }
-
-        try {
-            await fetchAndEnqueueLocalFiles(batch);
-        } catch (e) {
-            console.error('Failed to fetch local files:', e);
-        }
-    }
 
     // Connect SSE for new files (server replays existing files on connect, so skip seen indices)
     localSourceEvents = new EventSource(`${baseUrl}/api/events?token=${token}`);
@@ -621,9 +671,12 @@ export async function connectLocalSource() {
         try {
             const data = JSON.parse(event.data);
             if (!localSourceSeen.has(data.index)) {
-                pendingFiles.push(data);
+                holdLocalFiles([data]);
                 if (!batchTimeout) {
-                    batchTimeout = setTimeout(processPendingLocalFiles, 50);
+                    batchTimeout = setTimeout(() => {
+                        batchTimeout = null;
+                        drainWhenKeyAccepted();
+                    }, 50);
                 }
             }
         } catch (e) {
@@ -637,6 +690,7 @@ export async function connectLocalSource() {
         if (localSourceEvents && localSourceEvents.readyState === EventSource.CLOSED) {
             localSourceEvents.close();
             localSourceEvents = null;
+            localSourceConnection = null;
             if (localSourceHeartbeatInterval) {
                 clearInterval(localSourceHeartbeatInterval);
                 localSourceHeartbeatInterval = null;
@@ -650,28 +704,39 @@ export async function connectLocalSource() {
 
 /**
  * Check for files shared via the PWA Share Target API.
- * The service worker stores shared files in the 'share-target' cache.
- * Consumes all pending files and adds them to the upload queue.
- * @returns {Promise<boolean>} True if shared files were found and queued
+ * The service worker stores shared files in the 'share-target' cache. Once the key of the calling startup run is
+ * accepted (see key-attempts.js), consumes all pending files and adds them to the upload queue. When that key is
+ * rejected or superseded, the files stay cached for the startup run of the key that follows (key entry or a hashchange).
+ * Startup runs can overlap (two released by one accepted verdict), so each entry is claimed by deleting it before its
+ * body is read: only the run whose delete removed it takes the file.
+ * @param {number} attempt - Key attempt of the calling startup run
+ * @returns {Promise<boolean>} True if this run claimed and queued shared files
  */
-export async function consumeSharedFiles() {
+export async function consumeSharedFiles(attempt) {
     if (!('caches' in window)) {
         return false;
     }
 
     const cache = await caches.open('share-target');
-    const keys = await cache.keys();
-    if (keys.length === 0) {
+    if ((await cache.keys()).length === 0 || !(await keyAttempts.waitForVerdict(attempt))) {
         return false;
     }
 
     const files = [];
-    for (const request of keys) {
+    for (const request of await cache.keys()) {
         const response = await cache.match(request);
+        if (!response || !(await cache.delete(request))) {
+            // Another startup run claimed this entry
+            continue;
+        }
+
         const blob = await response.blob();
         const name = new URL(request.url).pathname.split('/shared/')[1]?.replace(/^\d+-[a-z0-9]+-/, '') || 'shared-audio';
         files.push(new File([blob], name, { type: blob.type }));
-        await cache.delete(request);
+    }
+
+    if (files.length === 0) {
+        return false;
     }
 
     addFilesToQueue(files);

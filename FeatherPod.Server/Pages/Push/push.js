@@ -23,6 +23,7 @@ import { IS_DEV, QUEUE_SYNC_TIMEOUT, STR_PASTE_KEY_BELOW, STR_PASTE_KEY, STR_SAV
 import { isActiveWork, isInUploadPhase, trapFocus } from './modules/utils.js';
 import { getApiKey, setApiKey, getStoredApiKey, saveApiKey, clearApiKey, validateApiKey, validateApiKeyWithRetry } from './modules/auth.js';
 import { isKeyCheckInconclusive, unverifiedKeyMessage } from './modules/key-check.js';
+import { KEY_VERDICT, keyAttempts } from './modules/key-attempts.js';
 import { initFeedArtwork } from './modules/artwork.js';
 import { initWakeLockToggle, isWakeLockTogglePressed, acquireWakeLock } from './modules/wake-lock.js';
 import { initNotificationToggle } from './modules/notifications.js';
@@ -216,27 +217,22 @@ const API_KEY_REGEX = /fp_[a-zA-Z0-9-]+_[A-Za-z0-9_-]{22}(?=[^A-Za-z0-9_-]|$)/;
 let noKeyStateInitialized = false;
 
 /**
- * Advances each time init raises the key prompt (including from its asynchronous key validation). A startup
- * run captures it when it begins; once it has moved, the prompt is newer than the run, so the run leaves it up
- * instead of choosing a view.
- */
-let keyPromptGeneration = 0;
-
-/**
- * Whether init raised a newer key prompt since keyPromptGeneration was captured as `generation`. The newer prompt then
- * owns the page, so a continuation that captured `generation` (a startup run, a key entry) must leave it alone.
- * @param {number} generation
+ * Whether a newer key attempt (see key-attempts.js) began since `attempt` was captured: init ran again (on a
+ * hashchange) or raised the key prompt. The newer attempt then owns the page, so a continuation that captured
+ * `attempt` (init's key check, a startup run, a key entry) must leave it alone.
+ * @param {number} attempt
  * @returns {boolean}
  */
-function isKeyPromptSuperseded(generation) {
-    return keyPromptGeneration !== generation;
+function isKeyAttemptSuperseded(attempt) {
+    return keyAttempts.isSuperseded(attempt);
 }
 
 /**
- * keyPromptGeneration of the prompt whose typed key is being validated, or null. Repeat Enter/Save presses on that
- * prompt are ignored; a newer prompt is not blocked by an older validation that is still finishing.
+ * Key attempt current when the typed key now being validated was entered, or null. Repeat Enter/Save presses are ignored
+ * while the current attempt's key is being validated; a newer attempt (a newer prompt, or an init run) is not blocked by
+ * an older validation that is still finishing.
  */
-let validatingPromptGeneration = null;
+let validatingAttempt = null;
 
 // ============================================================================
 // applyDevState -- dev-only forced UI state
@@ -328,8 +324,15 @@ async function init() {
     initFeedArtwork();
     cacheLayoutDimensions();
 
+    // Every run is a new key attempt: it supersedes a key entry, key check or startup run an earlier run or prompt began
+    const attempt = keyAttempts.begin();
+
+    /**
+     * Raise the key prompt, a new key attempt that owns the page whatever view is showing.
+     * @param {string|null} [errorType] - 'invalid' or 'no-access' to clear the current key and say why; null keeps it
+     */
     function showNoKeyUI(errorType = null) {
-        keyPromptGeneration++;
+        keyAttempts.begin();
         if (errorType) {
             clearApiKey();
         }
@@ -341,11 +344,21 @@ async function init() {
     }
 
     /**
+     * Put `key` in use as this run's accepted key.
+     * @param {string} key
+     */
+    function acceptKey(key) {
+        saveApiKey(key);
+        keyAttempts.settle(attempt, KEY_VERDICT.ACCEPTED);
+    }
+
+    /**
      * Switch to the saved key after the URL key failed its check. A saved key whose own check is inconclusive is kept
      * unchecked rather than dropped, since dropping it would raise the prompt that erases it.
      * @param {string|null} fallbackKey - The saved key
      * @param {string} urlKeyProblem - Why the URL key is not used, e.g. 'Invalid URL key'
-     * @returns {Promise<boolean>} Whether the saved key is now in use
+     * @returns {Promise<boolean>} Whether the URL key's rejection is dealt with: the saved key is now in use, or during
+     *     the saved key's check a newer key attempt began or a key entry decided this one, and that owns the page
      */
     async function tryFallbackKey(fallbackKey, urlKeyProblem) {
         if (!fallbackKey) {
@@ -353,16 +366,20 @@ async function init() {
         }
 
         const fallbackValidation = await validateApiKeyWithRetry(fallbackKey);
+        if (!keyAttempts.isOpen(attempt)) {
+            return true;
+        }
+
         if (fallbackValidation.valid && fallbackValidation.feedAccess) {
             showWarningBanner(urlKeyProblem + '. Using saved key.');
-            saveApiKey(fallbackKey);
+            acceptKey(fallbackKey);
 
             return true;
         }
 
         if (isKeyCheckInconclusive(fallbackValidation)) {
             showWarningBanner(urlKeyProblem + '. ' + unverifiedKeyMessage(fallbackValidation, 'saved key') + '.');
-            saveApiKey(fallbackKey);
+            acceptKey(fallbackKey);
 
             return true;
         }
@@ -427,26 +444,28 @@ async function init() {
         setApiKey(primaryKey);
 
         validateApiKeyWithRetry(primaryKey).then(async (validation) => {
+            // While this key was being checked, a newer key attempt began, or a key entered on a prompt still showing
+            // decided this attempt: either owns the page, so drop this result
+            if (!keyAttempts.isOpen(attempt)) {
+                return;
+            }
+
             if (validation.valid && validation.feedAccess) {
-                saveApiKey(primaryKey);
+                acceptKey(primaryKey);
             } else if (isKeyCheckInconclusive(validation)) {
                 showWarningBanner(unverifiedKeyMessage(validation, extractedKey ? 'URL key' : 'saved key'));
-                saveApiKey(primaryKey);
+                acceptKey(primaryKey);
             } else if (extractedKey) {
                 const urlKeyProblem = validation.valid ? 'URL key does not have access to this feed' : 'Invalid URL key';
                 if (await tryFallbackKey(storedKey, urlKeyProblem)) {
                     return;
                 }
 
-                if (document.getElementById('ready').style.display !== 'none') {
-                    const errorType = (validation.valid && !validation.feedAccess) ? 'no-access' : (validation.valid ? null : 'invalid');
-                    showNoKeyUI(errorType);
-                }
+                keyAttempts.settle(attempt, KEY_VERDICT.REJECTED);
+                showNoKeyUI(validation.valid ? 'no-access' : 'invalid');
             } else {
-                if (document.getElementById('ready').style.display !== 'none') {
-                    const errorType = (validation.valid && !validation.feedAccess) ? 'no-access' : null;
-                    showNoKeyUI(errorType);
-                }
+                keyAttempts.settle(attempt, KEY_VERDICT.REJECTED);
+                showNoKeyUI(validation.valid ? 'no-access' : null);
             }
         }).catch(() => {});
     } else {
@@ -465,17 +484,18 @@ async function init() {
 /**
  * Run the startup that needs an API key: dismissed-job ids, the feed event stream, local-source or
  * shared-file intake, the saved queue, the initial view, both toggles and history. Shared by init()
- * and key entry (transitionToReadyState), so entering a key leaves the page as a reload with that key
+ * and key entry (acceptEnteredKey), so entering a key leaves the page as a reload with that key
  * would. Safe to re-run (hashchange re-invokes init): restoreQueueState leaves a live queue alone, and
- * the DOM deduplicates the toggle initializers' click listeners. showInitialView does not choose a view over a
- * key prompt that init raised after the run began (see keyPromptGeneration); local-source or shared-file intake
- * can still switch to the queue view on its own. The recent-jobs snapshot requested at the start is handed to
+ * the DOM deduplicates the toggle initializers' click listeners. The run belongs to the key attempt current when it
+ * begins (see key-attempts.js): intake waits for that attempt's key to be accepted, and showInitialView does not choose
+ * a view once a newer attempt began (init ran again or raised the key prompt). Local-source or shared-file intake can
+ * still switch to the queue view on its own. The recent-jobs snapshot requested at the start is handed to
  * mergeServerJobs once: by showInitialView when it gets it in time, otherwise after the history fetch. mergeServerJobs
  * ignores it when a snapshot requested later (on a job-added event, on tab reactivation or by a later startup run) has
  * already been merged, since that one has already reconciled the queue.
  */
 async function startSession() {
-    const promptGeneration = keyPromptGeneration;
+    const attempt = keyAttempts.current;
     loadDismissedJobIds();
     connectFeedEvents();
     const serverJobsPromise = fetchRecentJobs();
@@ -483,15 +503,15 @@ async function startSession() {
 
     if (getLocalSourceConfig()) {
         await restoreQueueState();
-        await connectLocalSource();
+        await connectLocalSource(attempt);
 
         // connectLocalSource shows the queue itself when the CLI offers files
         if (isInitialViewPending()) {
-            snapshotMerged = await showInitialView(serverJobsPromise, false, promptGeneration);
+            snapshotMerged = await showInitialView(serverJobsPromise, false, attempt);
         }
-    } else if (!(await consumeSharedFiles())) {
+    } else if (!(await consumeSharedFiles(attempt))) {
         await restoreQueueState();
-        snapshotMerged = await showInitialView(serverJobsPromise, true, promptGeneration);
+        snapshotMerged = await showInitialView(serverJobsPromise, true, attempt);
     }
 
     // Wire the toggles once the view (and so their visibility) is settled, before the network-bound history fetch
@@ -519,14 +539,14 @@ function isInitialViewPending() {
 
 /**
  * Merge the server's recent jobs (waiting at most QUEUE_SYNC_TIMEOUT), then show the queue if it holds
- * entries, otherwise the ready view. Leaves the view alone when init raised the key prompt after the calling run began.
+ * entries, otherwise the ready view. Leaves the view alone when a newer key attempt began after the calling run did.
  * @param {Promise<import('./modules/server-sync.js').RecentJobsSnapshot|null>} serverJobsPromise
  * @param {boolean} focusReady - Focus the file picker button when showing the ready view
- * @param {number} promptGeneration - keyPromptGeneration captured when the calling startup run began
+ * @param {number} attempt - Key attempt current when the calling startup run began
  * @returns {Promise<boolean>} Whether the snapshot arrived within the sync wait and was handed to mergeServerJobs here
  *     (which ignores a null snapshot, and one requested before a snapshot it has already merged)
  */
-async function showInitialView(serverJobsPromise, focusReady, promptGeneration) {
+async function showInitialView(serverJobsPromise, focusReady, attempt) {
     let merged = false;
     try {
         const snapshot = await Promise.race([
@@ -539,8 +559,8 @@ async function showInitialView(serverJobsPromise, focusReady, promptGeneration) 
         // Sync wait timed out -- proceed with local-only state; startSession merges the late response
     }
 
-    // init raised a newer key prompt while this run was starting (see keyPromptGeneration): leave it up
-    if (isKeyPromptSuperseded(promptGeneration)) {
+    // A newer key attempt began while this run was starting (a later init run, or the key prompt): it owns the view
+    if (isKeyAttemptSuperseded(attempt)) {
         return merged;
     }
 
@@ -621,24 +641,28 @@ function initNoKeyState() {
     }
 
     /**
-     * Leave the key prompt once a key entered on it is saved, by running the same startup a reload would. The prompt
-     * keeps its "Validating..." state while startup runs (it is hidden as soon as startup shows a view) and is reset
-     * for a later visit after startSession completes, history fetch included, unless a newer prompt was raised
-     * meanwhile: that prompt reset its own controls and owns its error text.
-     * @param {number} promptGeneration - keyPromptGeneration of the prompt the key was entered on
+     * Save a key entered on the prompt as the accepted key of `attempt`, then leave the prompt by running the same
+     * startup a reload would. The prompt keeps its "Validating..." state while startup runs (it is hidden as soon as
+     * startup shows a view) and is reset for a later visit after startSession completes, history fetch included, unless a
+     * newer key attempt began meanwhile: if that is a prompt, it reset its own controls and owns its error text.
+     * @param {string} key - The entered key
+     * @param {number} attempt - Key attempt current when the key was entered: usually the prompt's own, but an init run's
+     *     when a hashchange began one while the prompt still showed, in which case the entered key decides that attempt
      */
-    async function transitionToReadyState(promptGeneration) {
+    async function acceptEnteredKey(key, attempt) {
+        saveApiKey(key);
+        keyAttempts.settle(attempt, KEY_VERDICT.ACCEPTED);
         try {
             await startSession();
         } finally {
-            if (!isKeyPromptSuperseded(promptGeneration)) {
+            if (!isKeyAttemptSuperseded(attempt)) {
                 resetNoKeyState();
             }
         }
     }
 
     async function validateTextareaKey() {
-        if (validatingPromptGeneration === keyPromptGeneration) {
+        if (validatingAttempt === keyAttempts.current) {
             return;
         }
 
@@ -654,26 +678,25 @@ function initNoKeyState() {
             key = fpKeyMatch[0];
         }
 
-        const promptGeneration = keyPromptGeneration;
-        validatingPromptGeneration = promptGeneration;
+        const attempt = keyAttempts.current;
+        validatingAttempt = attempt;
         saveBtn.disabled = true;
         saveBtn.textContent = 'Validating...';
         textarea.disabled = true;
 
         try {
             const validation = await validateApiKey(key);
-            // A newer prompt was raised while this key was being validated: it owns the page, so drop this result
-            if (isKeyPromptSuperseded(promptGeneration)) {
+            // A newer key attempt began while this key was being validated (a hashchange, or a newer prompt): it owns
+            // the page, so drop this result
+            if (isKeyAttemptSuperseded(attempt)) {
                 return;
             }
 
             if (validation.valid && validation.feedAccess) {
-                saveApiKey(key);
-                await transitionToReadyState(promptGeneration);
+                await acceptEnteredKey(key, attempt);
             } else if (validation.networkError) {
                 showWarningBanner(unverifiedKeyMessage(validation, 'entered key'));
-                saveApiKey(key);
-                await transitionToReadyState(promptGeneration);
+                await acceptEnteredKey(key, attempt);
             } else {
                 saveBtn.disabled = false;
                 saveBtn.textContent = STR_SAVE_KEY;
@@ -681,8 +704,8 @@ function initNoKeyState() {
                 showWarningBanner(rejectedKeyMessage(validation));
             }
         } finally {
-            if (validatingPromptGeneration === promptGeneration) {
-                validatingPromptGeneration = null;
+            if (validatingAttempt === attempt) {
+                validatingAttempt = null;
             }
         }
     }
@@ -694,14 +717,15 @@ function initNoKeyState() {
             return;
         }
 
-        // A prompt raised while this paste is reading or validating owns the page; each await below drops a stale result
-        const promptGeneration = keyPromptGeneration;
+        // A key attempt begun while this paste is reading or validating (a hashchange, or a newer prompt) owns the page;
+        // each await below drops a stale result
+        const attempt = keyAttempts.current;
         try {
             pasteBtn.disabled = true;
             pasteBtn.textContent = 'Reading...';
 
             const clipboardText = await navigator.clipboard.readText();
-            if (isKeyPromptSuperseded(promptGeneration)) {
+            if (isKeyAttemptSuperseded(attempt)) {
                 return;
             }
             const trimmed = clipboardText ? clipboardText.trim() : '';
@@ -718,17 +742,15 @@ function initNoKeyState() {
             pasteBtn.textContent = 'Validating...';
             const apiKeyToValidate = fpKeyMatch[0];
             const validation = await validateApiKey(apiKeyToValidate);
-            if (isKeyPromptSuperseded(promptGeneration)) {
+            if (isKeyAttemptSuperseded(attempt)) {
                 return;
             }
 
             if (validation.valid && validation.feedAccess) {
-                saveApiKey(apiKeyToValidate);
-                await transitionToReadyState(promptGeneration);
+                await acceptEnteredKey(apiKeyToValidate, attempt);
             } else if (validation.networkError) {
                 showWarningBanner(unverifiedKeyMessage(validation, 'pasted key'));
-                saveApiKey(apiKeyToValidate);
-                await transitionToReadyState(promptGeneration);
+                await acceptEnteredKey(apiKeyToValidate, attempt);
             } else if (validation.serverError) {
                 // The key was not judged: keep the Paste button so the user can try again
                 pasteBtn.disabled = false;
@@ -746,7 +768,7 @@ function initNoKeyState() {
                 setNoKeyError('invalid');
             }
         } catch {
-            if (isKeyPromptSuperseded(promptGeneration)) {
+            if (isKeyAttemptSuperseded(attempt)) {
                 return;
             }
             pasteBtn.disabled = false;
