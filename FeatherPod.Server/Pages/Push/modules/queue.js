@@ -36,7 +36,7 @@ function cookieRetryFor(entry) {
 /**
  * Build a minimal episode object from job status data for local history,
  * used as a fallback when the server cache hasn't refreshed yet.
- * @param {Object} jobStatus - Job status response (from SSE or poll)
+ * @param {Object} jobStatus - Terminal job status passed to finalizeCompletedEntry
  * @param {Object} entry - Queue entry
  * @returns {Object|null}
  */
@@ -567,9 +567,9 @@ function updateTranscriptionState(entry, job) {
 }
 
 /**
- * Apply a job's terminal status to its queue entry: the single terminal handling shared by the SSE done handler,
- * the poll fallback and the recent-jobs merge (which finalizes a still-normalizing entry in place, and recovers a
- * locally failed entry whose job completed). Cancelled goes through finalizeCancelledEntry and Completed through
+ * Apply a job's terminal status to its queue entry: the single terminal handling shared by the SSE progress
+ * (Cancelled) and done handlers, the poll fallback and the recent-jobs merge (which finalizes a still-normalizing entry
+ * in place, and recovers a locally failed entry whose job completed). Cancelled goes through finalizeCancelledEntry and Completed through
  * finalizeCompletedEntry; any other status marks the entry failed with the job's error, opens the YouTube cookie
  * dialog when the job reports authRequired, and removes the progress slot.
  * An answer for another job than the entry's current one (a request still in flight for the job the entry ran before
@@ -581,8 +581,9 @@ function updateTranscriptionState(entry, job) {
  * monitor's terminal answer finalizes it again. A missing or non-terminal status (an SSE done event whose last
  * progress event was not terminal) still marks the entry failed but claims nothing, since the server has not decided
  * the job, so a merge that later finds the job Completed can still recover the entry. A retry gives the entry a new
- * job, whose terminal status is handled afresh. The claim is in memory only (not saved with the queue), so a restored
- * entry starts unclaimed.
+ * job, whose terminal status is handled afresh. A Cancelled answer for a job already claimed as Failed (the server
+ * cancels a failed job when it is dismissed) is likewise ignored here; the merge's failed-and-Cancelled branch removes
+ * such an entry. The claim is in memory only (not saved with the queue), so a restored entry starts unclaimed.
  * The entry's status is terminal when this returns its promise; a Completed entry's episode lookup and history save
  * finish when the promise resolves.
  * @param {QueueEntry} entry
@@ -694,11 +695,19 @@ function monitorEntryNormalization(entry) {
 
         const sseUrl = '/api/jobs/' + entry.jobId + '/progress';
 
-        if (typeof EventSource === 'undefined') {
+        // Resolve this monitor once polling ends. The entry may already belong to a newer monitor by then (a retry, or
+        // a merge that revived it), so only this monitor's own resolver is cleared.
+        function pollUntilDone() {
             pollEntryNormalization(entry).then(() => {
-                entry._resolveMonitor = null;
+                if (entry._resolveMonitor === resolve) {
+                    entry._resolveMonitor = null;
+                }
                 resolve();
             });
+        }
+
+        if (typeof EventSource === 'undefined') {
+            pollUntilDone();
 
             return;
         }
@@ -719,10 +728,7 @@ function monitorEntryNormalization(entry) {
             if (!connectionEstablished) {
                 eventSource.close();
                 entry.eventSource = null;
-                pollEntryNormalization(entry).then(() => {
-                    entry._resolveMonitor = null;
-                    resolve();
-                });
+                pollUntilDone();
             }
         }, 5000);
 
@@ -783,10 +789,7 @@ function monitorEntryNormalization(entry) {
             clearTimeout(connectionTimeout);
             eventSource.close();
             entry.eventSource = null;
-            pollEntryNormalization(entry).then(() => {
-                entry._resolveMonitor = null;
-                resolve();
-            });
+            pollUntilDone();
         };
     });
 }
@@ -798,6 +801,13 @@ function monitorEntryNormalization(entry) {
  * non-OK responses) with exponential backoff; after maxAttempts consecutive failures it stops polling
  * without marking the entry failed, leaving its status to the next recent-jobs merge. This handles mobile
  * browsers where the network may not be immediately available after resuming from background.
+ * The loop polls the job the entry had when it started, and only while the entry is still its own: still
+ * 'normalizing', still in the upload queue and still on that job. It stops as soon as another path has finished
+ * the entry (a cancel, or a recent-jobs merge that cancelled, removed or finalized it) or a retry has given it
+ * another job. It checks at the top of each round and again once each answer arrives, before applying it, so an
+ * answer already in flight when that happens is dropped instead of re-creating a progress slot or overwriting the
+ * retried entry. A loop that stops this way leaves the progress slot alone, since the path that finished or
+ * restarted the entry owns it now; only a loop that gives up on failures removes it.
  * @param {QueueEntry} entry
  * @returns {Promise<void>}
  */
@@ -805,51 +815,33 @@ async function pollEntryNormalization(entry) {
     const pollInterval = 2000;
     const maxAttempts = 5;
     const baseRetryDelay = 2000;
+    const delay = ms => new Promise(r => setTimeout(r, ms));
+    const jobId = entry.jobId;
+    const isStillPolled = () => entry.status === 'normalizing' && entry.jobId === jobId && uploadQueue.includes(entry);
     let consecutiveErrors = 0;
 
-    while (true) {
-        // Check if entry was cancelled externally
-        if (entry.status === 'cancelled') {
+    while (isStillPolled()) {
+        let job = null;
+        try {
+            const response = await fetch('/api/jobs/' + jobId, {
+                headers: { 'X-API-Key': getApiKey() }
+            });
+            if (response.ok) {
+                job = await response.json();
+            }
+        } catch {
+            // Network error: retried with backoff below (handles mobile resume, where the network is not
+            // immediately available after returning from the background)
+        }
+
+        if (!isStillPolled()) {
             return;
         }
 
-        try {
-            const response = await fetch('/api/jobs/' + entry.jobId, {
-                headers: { 'X-API-Key': getApiKey() }
-            });
-
-            if (!response.ok) {
-                consecutiveErrors++;
-                if (consecutiveErrors < maxAttempts) {
-                    await new Promise(r => setTimeout(r, baseRetryDelay * Math.pow(2, consecutiveErrors - 1)));
-                    continue;
-                }
-                // Stop polling but don't mark as failed - mergeServerJobs on
-                // visibility change will resolve the actual status from the server
-                progressAnimator.removeSlot(entry.id);
-
-                return;
-            }
-
-            consecutiveErrors = 0;
-            const job = await response.json();
-
-            if (TERMINAL_JOB_STATUSES.has(job.status)) {
-                await finalizeTerminalEntry(entry, job);
-
-                return;
-            }
-
-            updateEntryFromJobStatus(entry, job);
-            updateQueueItemProgress(entry);
-
-            await new Promise(r => setTimeout(r, pollInterval));
-        } catch (err) {
-            // Network errors - retry with backoff (handles mobile resume where
-            // network isn't immediately available after returning from background)
+        if (!job) {
             consecutiveErrors++;
             if (consecutiveErrors < maxAttempts) {
-                await new Promise(r => setTimeout(r, baseRetryDelay * Math.pow(2, consecutiveErrors - 1)));
+                await delay(baseRetryDelay * Math.pow(2, consecutiveErrors - 1));
                 continue;
             }
             // Stop polling but don't mark as failed - mergeServerJobs on
@@ -858,6 +850,18 @@ async function pollEntryNormalization(entry) {
 
             return;
         }
+
+        consecutiveErrors = 0;
+        if (TERMINAL_JOB_STATUSES.has(job.status)) {
+            await finalizeTerminalEntry(entry, job);
+
+            return;
+        }
+
+        updateEntryFromJobStatus(entry, job);
+        updateQueueItemProgress(entry);
+
+        await delay(pollInterval);
     }
 }
 

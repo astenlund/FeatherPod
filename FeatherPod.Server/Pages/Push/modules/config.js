@@ -49,7 +49,7 @@ export const QUEUE_SYNC_TIMEOUT = 3000;
 export const JOB_TTL_MS = 60 * 60 * 1000;
 export const STAGES_WITH_PROGRESS = ['Analyzing', 'Normalizing', 'Downloading'];
 export const TRANSCRIPTION_ACTIVE_STATUSES = new Set(['Queued', 'Running']);
-/** Server job statuses after which a job never changes again. */
+/** Server job statuses that end a job's processing (the server has decided its outcome); a Failed job can still be cancelled when it is dismissed. */
 export const TERMINAL_JOB_STATUSES = new Set(['Completed', 'Failed', 'Cancelled']);
 // Client-side QueueEntry statuses (lowercase; distinct from server job statuses).
 // UPLOAD_PHASES: XHR in flight or server persisting the upload. ACTIVE_STATUSES: any non-terminal status.
