@@ -84,6 +84,26 @@ public sealed class InMemoryJobService : IJobService
 
     public Task<List<JobStatusEntity>> GetActiveJobsByFeedAsync(string feedId, CancellationToken cancellationToken = default) => Task.FromResult<List<JobStatusEntity>>([]);
 
+    /// <summary>
+    /// When set, <see cref="GetActiveJobsByTranscriptionStatusAsync"/> throws it (simulates an unavailable table).
+    /// </summary>
+    public Exception? TranscriptionStatusQueryThrows { get; set; }
+
+    public Task<List<JobStatusEntity>> GetActiveJobsByTranscriptionStatusAsync(IReadOnlyCollection<string> transcriptionStatuses, CancellationToken cancellationToken = default)
+    {
+        if (TranscriptionStatusQueryThrows is not null)
+        {
+            throw TranscriptionStatusQueryThrows;
+        }
+
+        lock (_lock)
+        {
+            List<JobStatusEntity> matches = [.. _entities.Values.Where(e => e.TranscriptionStatus is not null && transcriptionStatuses.Contains(e.TranscriptionStatus) && !e.GetJobStatus().IsTerminal())];
+
+            return Task.FromResult(matches);
+        }
+    }
+
     public Task<List<JobStatusEntity>> GetRecentJobsByFeedAsync(string feedId, TimeSpan since, CancellationToken cancellationToken = default) => Task.FromResult<List<JobStatusEntity>>([]);
 
     public Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default) => Task.FromResult<JobStatusEntity?>(null);

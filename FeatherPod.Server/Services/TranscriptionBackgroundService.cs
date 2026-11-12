@@ -11,7 +11,8 @@ namespace FeatherPod.Server.Services;
 /// or when Fast returns <see cref="FastTranscriptionUnavailableException"/>).
 /// M4A/M4B/MP4 are converted to 16 kHz mono WAV in both paths because the Speech APIs
 /// don't accept the MP4 container despite "AAC" appearing in their format list.
-/// Bounded concurrency via SemaphoreSlim.
+/// Bounded concurrency via SemaphoreSlim. On startup, jobs a previous process left Queued or Running
+/// are resubmitted (see <see cref="RecoverInterruptedTranscriptionsAsync"/>).
 /// </summary>
 public class TranscriptionBackgroundService : BackgroundService
 {
@@ -20,6 +21,11 @@ public class TranscriptionBackgroundService : BackgroundService
     /// The APIs don't support the MP4/M4A container despite listing "AAC" as supported.
     /// </summary>
     private static readonly HashSet<string> ConvertExtensions = new(StringComparer.OrdinalIgnoreCase) { ".m4a", ".m4b", ".mp4" };
+
+    /// <summary>
+    /// Transcription statuses a restart can leave behind with no request in the in-memory channel.
+    /// </summary>
+    private static readonly string[] InterruptedTranscriptionStatuses = [TranscriptionStatuses.Queued, TranscriptionStatuses.Running];
 
     private readonly ITranscriptionChannel _channel;
     private readonly ISpeechTranscriptionService _speechService;
@@ -33,6 +39,12 @@ public class TranscriptionBackgroundService : BackgroundService
     private readonly SemaphoreSlim _concurrency;
     private readonly bool _useFastTranscription;
     private readonly TimeSpan _fastMaxDuration;
+
+    /// <summary>
+    /// When this instance was created. Hosted services are constructed before the server accepts requests, so any job
+    /// queued earlier was submitted by a previous process; later ones were submitted to this instance's channel.
+    /// </summary>
+    private readonly DateTimeOffset _createdAt = DateTimeOffset.UtcNow;
 
     public TranscriptionBackgroundService(
         ITranscriptionChannel channel,
@@ -79,10 +91,62 @@ public class TranscriptionBackgroundService : BackgroundService
             _useFastTranscription,
             _fastMaxDuration.TotalMinutes);
 
+        await RecoverInterruptedTranscriptionsAsync(stoppingToken);
+
         await foreach (var request in _channel.ReadAllAsync(stoppingToken))
         {
             await _concurrency.WaitAsync(stoppingToken);
             _ = ProcessAndReleaseAsync(request, stoppingToken);
+        }
+    }
+
+    /// <summary>
+    /// Resubmit transcriptions a previous process left Queued or Running: its in-memory channel and in-flight work were
+    /// lost on restart, and the join that creates the episode waits for a terminal transcription status. Only jobs queued
+    /// before this instance was created are resubmitted, so a job this instance accepted is never submitted twice.
+    /// A failed scan is logged and leaves normal channel processing running.
+    /// </summary>
+    internal async Task RecoverInterruptedTranscriptionsAsync(CancellationToken ct)
+    {
+        List<JobStatusEntity> jobs;
+        try
+        {
+            jobs = await _jobService.GetActiveJobsByTranscriptionStatusAsync(InterruptedTranscriptionStatuses, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Transcription startup recovery failed to scan for interrupted jobs");
+
+            return;
+        }
+
+        var resubmitted = 0;
+        foreach (var job in jobs.Where(j => j.QueuedAt is null || j.QueuedAt < _createdAt))
+        {
+            if (job.FeedId is null || job.FileName is null || job.EpisodeId is null)
+            {
+                _logger.LogWarning("Cannot recover transcription for job {JobId}: feed, file name or episode id missing", job.RowKey);
+
+                continue;
+            }
+
+            await _channel.SubmitAsync(new TranscriptionRequest
+            {
+                JobId = job.RowKey,
+                FeedId = job.FeedId,
+                FileName = job.FileName,
+                EpisodeId = job.EpisodeId,
+            }, ct);
+            resubmitted++;
+        }
+
+        if (resubmitted > 0)
+        {
+            _logger.LogInformation("Transcription startup recovery resubmitted {Count} interrupted job(s)", resubmitted);
         }
     }
 

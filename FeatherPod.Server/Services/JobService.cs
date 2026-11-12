@@ -103,6 +103,28 @@ public class JobService : IJobService
         return results;
     }
 
+    public async Task<List<JobStatusEntity>> GetActiveJobsByTranscriptionStatusAsync(IReadOnlyCollection<string> transcriptionStatuses, CancellationToken cancellationToken = default)
+    {
+        if (transcriptionStatuses.Count == 0)
+        {
+            return [];
+        }
+
+        var statusFilter = string.Join(" or ", transcriptionStatuses.Select(status => TableClient.CreateQueryFilter($"TranscriptionStatus eq {status}")));
+        var filter = $"{TableClient.CreateQueryFilter($"PartitionKey eq {JobStorageNames.JobsPartitionKey}")} and ({statusFilter})";
+        var results = new List<JobStatusEntity>();
+
+        await foreach (var entity in _tableClient.QueryAsync<JobStatusEntity>(filter, cancellationToken: cancellationToken))
+        {
+            if (!entity.GetJobStatus().IsTerminal())
+            {
+                results.Add(entity);
+            }
+        }
+
+        return results;
+    }
+
     public async Task<List<JobStatusEntity>> GetRecentJobsByFeedAsync(string feedId, TimeSpan since, CancellationToken cancellationToken = default)
     {
         var cutoff = DateTimeOffset.UtcNow - since;

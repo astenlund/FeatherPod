@@ -33,6 +33,11 @@ public interface IJobService
     Task<List<JobStatusEntity>> GetActiveJobsByFeedAsync(string feedId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Get all active (non-terminal) jobs, across feeds, whose transcription status is one of <paramref name="transcriptionStatuses"/>.
+    /// </summary>
+    Task<List<JobStatusEntity>> GetActiveJobsByTranscriptionStatusAsync(IReadOnlyCollection<string> transcriptionStatuses, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Get all jobs (including terminal) for a feed within a time window.
     /// </summary>
     Task<List<JobStatusEntity>> GetRecentJobsByFeedAsync(string feedId, TimeSpan since, CancellationToken cancellationToken = default);

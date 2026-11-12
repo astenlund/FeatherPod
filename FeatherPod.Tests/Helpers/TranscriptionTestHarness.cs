@@ -71,6 +71,32 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
         await Jobs.WaitForProcessingCompleteAsync(JobId, TimeSpan.FromSeconds(5));
     }
 
+    /// <summary>
+    /// Wait until the started service's ExecuteAsync has returned. StartAsync does not run ExecuteAsync inline, so a test
+    /// asserting on what ExecuteAsync did (or did not do) must wait for it first.
+    /// </summary>
+    public Task WaitForExecuteCompletionAsync() => _service.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(5));
+
+    /// <summary>
+    /// Run the service's startup recovery scan directly, without starting the service.
+    /// </summary>
+    public Task RecoverAsync() => _service.RecoverInterruptedTranscriptionsAsync(CancellationToken.None);
+
+    /// <summary>
+    /// Take every request waiting in the channel. Only meaningful while the service is not started (nothing else reads it).
+    /// </summary>
+    public async Task<List<TranscriptionRequest>> DrainSubmittedAsync()
+    {
+        _channel.Complete();
+        List<TranscriptionRequest> requests = [];
+        await foreach (var request in _channel.ReadAllAsync(CancellationToken.None))
+        {
+            requests.Add(request);
+        }
+
+        return requests;
+    }
+
     private TranscriptionBackgroundService BuildService(bool useFast)
     {
         var episodeService = new EpisodeService(Blob, NullLogger<EpisodeService>.Instance);
