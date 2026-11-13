@@ -532,13 +532,24 @@ function removeHandedBackEntries(entries) {
 }
 
 /**
- * Update a queue entry from a job status event. Tracks transcription state,
- * applies title changes to the model and its label, then updates the progress bar
- * (including the indeterminate "Transcribing" state when normalization is complete).
+ * Record that a status answer for the entry's job (an SSE event, a poll answer or a terminal finalization) has just
+ * been applied, so the non-terminal state of a recent-jobs snapshot requested before it cannot undo it (see
+ * QueueEntry.lastLiveUpdateAt).
+ * @param {QueueEntry} entry
+ */
+function markLiveUpdate(entry) {
+    entry.lastLiveUpdateAt = performance.now();
+}
+
+/**
+ * Update a queue entry from a live job status event (SSE progress or a poll answer). Marks the live update, tracks
+ * transcription state, applies title changes to the model and its label, then updates the progress bar (including the
+ * indeterminate "Transcribing" state when normalization is complete).
  * @param {QueueEntry} entry
  * @param {Object} job - JobStatusResponse from server
  */
 export function updateEntryFromJobStatus(entry, job) {
+    markLiveUpdate(entry);
     if (job.title && job.title !== entry.title) {
         entry.title = job.title;
         updateQueueItemName(entry);
@@ -670,7 +681,10 @@ function updateTranscriptionState(entry, job) {
  * Failed (the server cancels a failed job when it is dismissed) is likewise ignored here; the merge's
  * failed-and-Cancelled branch removes such an entry. The claim is in memory only (not saved with the queue), so a
  * restored entry starts unclaimed. The entry's status is terminal when this returns its promise; a Completed entry's
- * episode lookup and history save finish when the promise resolves.
+ * episode lookup and history save finish when the promise resolves. Every call for the entry's job stamps
+ * QueueEntry.lastLiveUpdateAt, since the poll fallback's terminal answers reach only this function; a merge that
+ * finalizes the entry stamps it too, which is harmless because the stamp gates only a snapshot's non-terminal
+ * statuses and a terminal job never returns to one.
  * @param {QueueEntry} entry
  * @param {Object|null} job - Terminal job status (SSE lastStatus, poll response or recent-jobs snapshot job)
  * @returns {Promise<void>}
@@ -679,6 +693,7 @@ export async function finalizeTerminalEntry(entry, job) {
     if (job?.jobId && job.jobId !== entry.jobId) {
         return;
     }
+    markLiveUpdate(entry);
     if (TERMINAL_JOB_STATUSES.has(job?.status)) {
         if (entry.terminalJobId === entry.jobId && !isActiveWork(entry)) {
             return;
@@ -860,6 +875,7 @@ function monitorEntryNormalization(entry) {
             jobFinished = true;
             eventSource.close();
             const data = tryParseJson(e.data);
+            markLiveUpdate(entry);
             entry.status = 'failed';
             entry.error = data?.error || 'An error occurred';
             progressAnimator.removeSlot(entry.id);
@@ -1041,6 +1057,7 @@ export function retryEntry(entryId) {
     entry.stage = null;
     entry.jobId = null;
     entry.jobIdReceivedAt = null;
+    entry.lastLiveUpdateAt = null;
     entry.episodeId = null;
     entry.episode = null;
     entry.error = null;

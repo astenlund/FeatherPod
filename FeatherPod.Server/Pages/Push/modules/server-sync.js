@@ -290,8 +290,9 @@ export function connectFeedEvents() {
  * @typedef {Object} RecentJobsSnapshot
  * @property {Array<Object>} jobs - The server's recent jobs, terminal ones included
  * @property {number} requestedAt - performance.now() when the request was sent; jobs whose ids the page received later
- *     (see QueueEntry.jobIdReceivedAt) can be missing from the snapshot without being stale, and mergeServerJobs ignores
- *     a snapshot requested before the newest one it has merged
+ *     (see QueueEntry.jobIdReceivedAt) can be missing from the snapshot without being stale, mergeServerJobs ignores
+ *     a snapshot requested before the newest one it has merged, and reconcileExistingEntries leaves an entry's ongoing
+ *     state alone, and does not revive it from failed, when its QueueEntry.lastLiveUpdateAt is later
  */
 
 /**
@@ -385,15 +386,21 @@ function finalizeFromServerJob(entry, serverJob) {
  * Reconcile existing local entries against fresh server data, mutating each in place.
  * Applies the status ladder: server cancellation removes the entry; a server-terminal
  * status finalizes a still-normalizing entry; ongoing normalization updates stage,
- * progress, and transcription; and the locally-failed branches recover entries the
- * server reports as active, completed, or cancelled. Ids of entries that changed (but
+ * progress, title and transcription; and the locally-failed branches recover entries the
+ * server reports as active, completed, or cancelled. The ongoing-normalization and
+ * active-recovery branches skip an entry whose QueueEntry.lastLiveUpdateAt is later than the
+ * snapshot's request, since the snapshot's non-terminal state can be older than the status
+ * answer applied then; terminal server statuses still apply, because a terminal job never
+ * returns to a non-terminal status (a later terminal change, such as Failed to Cancelled on
+ * dismissal, is still news). Ids of entries that changed (but
  * were not removed) are added to changedEntryIds for a targeted DOM update.
  * @param {Array<Object>} uploadQueue
  * @param {Array<Object>} serverJobs
  * @param {Set<number>} changedEntryIds - Mutated in place with ids of changed entries
+ * @param {number} requestedAt - When the snapshot behind serverJobs was requested (performance.now())
  * @returns {boolean} True if any entry was removed
  */
-function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds) {
+function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds, requestedAt) {
     let removed = false;
     for (const serverJob of serverJobs) {
         const existing = uploadQueue.find(e => e.jobId === serverJob.jobId);
@@ -403,6 +410,9 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds) {
 
         const serverStatus = serverJob.status;
         const isServerTerminal = TERMINAL_JOB_STATUSES.has(serverStatus);
+        // Entries with no status answer applied on this page load (restored from storage, or discovered by a merge)
+        // have no lastLiveUpdateAt
+        const updatedLiveSinceRequest = (existing.lastLiveUpdateAt ?? -Infinity) > requestedAt;
 
         if (existing.status === 'normalizing' && serverStatus === 'Cancelled') {
             // Server says cancelled -- remove from queue (consistent with other cancel paths)
@@ -425,7 +435,7 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds) {
             }
 
             changedEntryIds.add(existing.id);
-        } else if (existing.status === 'normalizing') {
+        } else if (existing.status === 'normalizing' && !updatedLiveSinceRequest) {
             existing.title = serverJob.title || existing.title;
             const newStage = serverJob.stage || existing.stage;
             const newProgress = serverJob.progressPercent ?? existing.progress;
@@ -444,7 +454,7 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds) {
                 existing.transcriptionError = serverJob.transcriptionError || null;
                 changedEntryIds.add(existing.id);
             }
-        } else if (existing.status === 'failed' && !isServerTerminal) {
+        } else if (existing.status === 'failed' && !isServerTerminal && !updatedLiveSinceRequest) {
             // Recover failed entries that the server says are still active
             existing.status = 'normalizing';
             existing.stage = serverJob.stage || 'Queued';
@@ -533,7 +543,8 @@ function addNewServerEntries(uploadQueue, serverJobs, existingJobIds) {
  * (so work discovered after the queue finished gets its toggles back), and persists queue state.
  * If the snapshot is null (fetch failed), skips reconciliation entirely. A snapshot requested before
  * the newest one already merged is outdated (responses can arrive out of order) and is ignored, so it
- * cannot roll a job's stage and progress back.
+ * cannot roll a job's stage and progress back; a snapshot requested before an entry's QueueEntry.lastLiveUpdateAt
+ * leaves that entry's ongoing state alone (see reconcileExistingEntries).
  * @param {RecentJobsSnapshot|null} snapshot
  */
 export function mergeServerJobs(snapshot) {
@@ -552,7 +563,7 @@ export function mergeServerJobs(snapshot) {
     const changedEntryIds = new Set();
 
     const removedStale = removeStaleEntries(uploadQueue, serverJobMap, snapshot.requestedAt);
-    const removedReconciled = reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds);
+    const removedReconciled = reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds, snapshot.requestedAt);
     const removedEntries = removedStale || removedReconciled;
     const newEntries = addNewServerEntries(uploadQueue, serverJobs, existingJobIds);
 

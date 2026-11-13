@@ -121,6 +121,11 @@ if (navigator.serviceWorker) {
  * @property {number|null} [jobIdReceivedAt] - performance.now() when this page received jobId, from a 202 response or
  *     from the snapshot merge that discovered the job (not persisted); a recent-jobs snapshot requested earlier can lack
  *     the job, so mergeServerJobs does not treat it as stale
+ * @property {number|null} [lastLiveUpdateAt] - performance.now() when this page last applied a status answer for the
+ *     entry's job: an SSE event or a poll answer, or a terminal finalization, a recent-jobs merge's included (not
+ *     persisted, cleared on retry); a snapshot requested before it that still lists the job as active leaves the entry's
+ *     stage, progress, title and transcription alone and does not revive it from failed, while a terminal status in such
+ *     a snapshot still applies
  * @property {string|null} [terminalJobId] - jobId whose terminal status finalizeTerminalEntry already applied (not
  *     persisted); a later terminal answer for the same job is ignored while the entry is not active work again
  * @property {string|null} episodeId - Episode ID after completion
@@ -535,8 +540,8 @@ async function startSession() {
     initWakeLockToggle();
     await initHistorySection();
 
-    // Merge the startup snapshot when showInitialView did not (skipped, or its sync wait timed out). Merging it a
-    // second time would roll back stage and progress that SSE advanced since.
+    // Merge the startup snapshot when showInitialView did not (skipped, or its sync wait timed out); a second merge of
+    // the same snapshot would only repeat that work.
     if (!snapshotMerged) {
         serverJobsPromise.then(mergeServerJobs).catch(() => {});
     }
