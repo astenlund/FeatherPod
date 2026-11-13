@@ -702,16 +702,19 @@ export async function finalizeTerminalEntry(entry, job) {
 }
 
 /**
- * Apply terminal "completed" state to an entry. The status, the CLI local-source notification and the progress slot
- * removal happen before the first await, so a caller that does not await (the recent-jobs merge) already sees the
- * entry terminal. Then it refreshes the uploads cache, resolves the episode, saves it to local history, and repaints
- * the queue item and saves the queue state if the entry is still in the upload queue. Called only through
- * finalizeTerminalEntry.
+ * Apply terminal "completed" state to an entry. It first applies the job's transcription state, since a job can
+ * complete with a failed transcription (transcription finishing last) and the poll fallback may see only that Completed
+ * answer; this also restores the final transcription status over an older recent-jobs snapshot merged before the
+ * stream's done event. The status, the CLI local-source notification and the progress slot removal happen before the
+ * first await, so a caller that does not await (the recent-jobs merge) already sees the entry terminal. Then it
+ * refreshes the uploads cache, resolves the episode, saves it to local history, and repaints the queue item and saves
+ * the queue state if the entry is still in the upload queue. Called only through finalizeTerminalEntry.
  * @param {QueueEntry} entry
  * @param {Object} jobStatus - Job status (SSE lastStatus, poll response or recent-jobs snapshot job)
  * @returns {Promise<void>}
  */
 async function finalizeCompletedEntry(entry, jobStatus) {
+    updateTranscriptionState(entry, jobStatus);
     entry.status = 'completed';
     entry.progress = 100;
     if (entry.localSourceIndex != null) {
