@@ -1,4 +1,4 @@
-import { FEED_ID, DISMISSED_STORAGE_KEY, JOB_TTL_MS, TERMINAL_JOB_STATUSES } from './config.js';
+import { FEED_ID, DISMISSED_STORAGE_KEY, JOB_TTL_MS, LOCAL_SOURCE_KEY, LOCAL_SOURCE_SEEN_KEY, SHARE_TARGET_CACHE, TERMINAL_JOB_STATUSES } from './config.js';
 import { isActiveWork, isInUploadPhase, tryParseJson } from './utils.js';
 import { getApiKey } from './auth.js';
 import { keyAttempts } from './key-attempts.js';
@@ -26,6 +26,18 @@ let localSourceEvents = null;
 let localSourceConnection = null;
 /** @type {Set<number>} */
 let localSourceSeen = new Set();
+/**
+ * @typedef {Object} LocalSourceItem
+ * @property {number} index - File index on the local file server
+ * @property {string} name - File name
+ * @property {File} [file] - The File the page already holds (a file handed back after a rejected upload); when present,
+ *     intake queues it without fetching it from the local file server again
+ */
+/**
+ * @type {((items: Array<LocalSourceItem>) => void)|null} Holds files of the open local source connection for the next
+ *     accepted key (set by openLocalSource, cleared when the connection closes)
+ */
+let reofferLocalFiles = null;
 /** @type {number|null} */
 let localSourceHeartbeatInterval = null;
 
@@ -58,6 +70,7 @@ export function setLocalSourceEvents(value) {
     localSourceEvents = value;
     if (!value) {
         localSourceConnection = null;
+        reofferLocalFiles = null;
     }
 }
 
@@ -73,6 +86,76 @@ export function notifyLocalSourceUploaded(localSourceIndex) {
     }
     const { host, token } = localSourceConfig;
     fetch(`http://${host}/api/files/${localSourceIndex}/uploaded?token=${token}`, { method: 'POST' }).catch(() => {});
+}
+
+/**
+ * Save the indices of the local source's files this tab has taken in, so a reload does not offer them again. Fails
+ * silently when sessionStorage is unavailable (a reload may then offer them again).
+ */
+function persistLocalSourceSeen() {
+    try {
+        sessionStorage.setItem(LOCAL_SOURCE_SEEN_KEY, JSON.stringify([...localSourceSeen]));
+    } catch { /* Storage unavailable */ }
+}
+
+/**
+ * Hand CLI files back to intake after their upload was rejected for the key (see queue.js rejectQueueForKey): they are
+ * no longer marked seen, in memory and in sessionStorage, so a reload offers them again while the CLI's file server is
+ * up (init keeps the local source connected behind a keyless prompt), and the open connection holds them, together
+ * with the File each entry already has, until a key is accepted and then queues that File without fetching it again,
+ * so this tab gets them back even if the file server has stopped meanwhile. When the rejected key was the page's
+ * accepted key, the caller raises the key prompt first, which begins the new key attempt they wait for; otherwise the
+ * page's own key handling decides (they are queued at once under an already accepted newer key, or wait for the
+ * verdict of the key being checked). Once the connection has closed nothing in this tab holds them, so nothing is
+ * changed and the caller keeps them.
+ * @param {Array<LocalSourceItem>} items - The files handed back, each with the File its entry holds
+ * @returns {boolean} Whether intake took the files back
+ */
+export function returnLocalFiles(items) {
+    if (items.length === 0 || !reofferLocalFiles) {
+        return false;
+    }
+
+    for (const { index } of items) {
+        localSourceSeen.delete(index);
+    }
+    persistLocalSourceSeen();
+    reofferLocalFiles(items);
+
+    return true;
+}
+
+/**
+ * Hand shared files back to intake after their upload was rejected for the key (see queue.js rejectQueueForKey), or
+ * after intake claimed them under a key attempt that was superseded before they were queued: each is put back in the
+ * share-target cache under the entry it was claimed from, and consumeSharedFiles offers them again once a key is
+ * accepted, in this tab (the startup run of a key entry claims them too; each file is claimed once) or after a reload.
+ * @param {Array<{url: string, file: File}>} files - The cache entry's URL and the file read from it
+ * @returns {Promise<Array<string>>} URLs of the files put back; a file whose put failed (or every file, when the cache
+ *     is unavailable) is not among them, and the caller keeps it
+ */
+export async function returnSharedFiles(files) {
+    if (files.length === 0 || !('caches' in window)) {
+        return [];
+    }
+
+    let returned;
+    try {
+        const cache = await caches.open(SHARE_TARGET_CACHE);
+        const results = await Promise.all(files.map(({ url, file }) =>
+            cache.put(url, new Response(file, { headers: { 'Content-Type': file.type } })).then(() => url, () => null)));
+        returned = results.filter(url => url !== null);
+    } catch {
+        return [];
+    }
+
+    if (returned.length > 0) {
+        keyAttempts.whenAccepted()
+            .then(() => consumeSharedFiles(keyAttempts.current))
+            .catch(e => console.error('Failed to offer shared files again:', e));
+    }
+
+    return returned;
 }
 
 /**
@@ -529,7 +612,9 @@ export function mergeServerJobs(snapshot) {
  * Connect to a local file server SSE and fetch initial files.
  * Called by push.js startSession (on load, on hashchange re-runs of init, and after key entry) whenever a local
  * source config is set, from the URL fragment or restored from sessionStorage. An API key is set by then but not
- * necessarily validated: init validates concurrently. Offered files are fetched, marked seen and queued only once
+ * necessarily validated: init validates concurrently. init also calls it with no key at all when it raises the key
+ * prompt on a load without one (as after a rejected upload cleared the key), so the connection's heartbeat keeps the
+ * CLI's file server alive while the prompt waits. Offered files are fetched, marked seen and queued only once
  * a key is accepted (see key-attempts.js); until then they are held, so a rejected key never consumes them, and
  * they are queued when a later key (entered on the prompt, or installed by a hashchange) is accepted.
  * Idempotent from the first call: a call made while a connection is open or still being set up gets that connection's
@@ -562,20 +647,27 @@ async function openLocalSource(attempt) {
 
     // Restore seen indices from sessionStorage (survives reloads)
     try {
-        const stored = sessionStorage.getItem('localSourceSeen');
+        const stored = sessionStorage.getItem(LOCAL_SOURCE_SEEN_KEY);
         if (stored) {
             localSourceSeen = new Set(JSON.parse(stored));
         }
     } catch { /* ignore corrupt data */ }
 
-    /** @type {Map<number, {index: number, name: string}>} Offered files waiting for an accepted key, by index */
+    /**
+     * @type {Map<number, LocalSourceItem>} Offered files waiting for an accepted key, by
+     *     index; a file handed back after a rejected upload carries the File the page already holds
+     */
     const heldFiles = new Map();
     let drainScheduled = false;
 
-    /** @param {Array<{index: number, name: string}>} items */
+    /**
+     * Hold unseen files for the next accepted key. A held item that carries its File is not replaced by a plain offer
+     * of the same index (an event-stream replay), so the page keeps the bytes it already has.
+     * @param {Array<LocalSourceItem>} items
+     */
     function holdLocalFiles(items) {
         for (const item of items) {
-            if (!localSourceSeen.has(item.index)) {
+            if (!localSourceSeen.has(item.index) && !heldFiles.get(item.index)?.file) {
                 heldFiles.set(item.index, item);
             }
         }
@@ -597,6 +689,20 @@ async function openLocalSource(attempt) {
             }
         }).catch(e => console.error('Failed to fetch local files:', e));
     }
+
+    reofferLocalFiles = items => {
+        holdLocalFiles(items);
+        drainWhenKeyAccepted();
+    };
+
+    // Heartbeat on connecting and every 30 s after, to keep the local file server alive during uploads and while the
+    // initial files wait for a key (behind the key prompt the wait can outlast the server's idle timeout, and after a
+    // reload the server's idle budget is already partly spent, so the first heartbeat cannot wait a full interval)
+    const sendHeartbeat = () => {
+        fetch(`${baseUrl}/api/heartbeat?token=${token}`, { method: 'POST' }).catch(() => {});
+    };
+    sendHeartbeat();
+    localSourceHeartbeatInterval = setInterval(sendHeartbeat, 30_000);
 
     // Fetch initial file list in parallel, skipping files already seen (fetched, cancelled, or completed).
     // Parallel fetch + single addFilesToQueue call avoids staggered additions that interleave
@@ -621,24 +727,22 @@ async function openLocalSource(attempt) {
         console.error('Failed to fetch local files:', e);
     }
 
-    // Start heartbeat to keep the local file server alive during uploads
-    localSourceHeartbeatInterval = setInterval(() => {
-        fetch(`${baseUrl}/api/heartbeat?token=${token}`, { method: 'POST' }).catch(() => {});
-    }, 30_000);
-
     /**
-     * Fetch files from the local server by index, convert to File objects, and enqueue.
-     * @param {Array<{index: number, name: string}>} items
+     * Fetch files from the local server by index, convert to File objects, and enqueue; an item that already carries
+     * its File (handed back after a rejected upload) is queued as is, without a fetch. Called once a key is accepted;
+     * when a newer key attempt began while the files were being fetched (a rejected upload raised the key prompt), they
+     * are held for the next accepted key instead of being queued, and are marked seen only when queued.
+     * @param {Array<LocalSourceItem>} items
      */
     async function fetchAndEnqueueLocalFiles(items) {
-        const fetched = await Promise.all(items.map(({ index, name }) =>
+        const attempt = keyAttempts.current;
+        const fetched = await Promise.all(items.map(({ index, name, file: held }) => held ? held :
             fetch(`${baseUrl}/api/files/${index}?token=${token}`)
                 .then(r => r.ok ? r.blob() : null)
                 .then(blob => {
                     if (!blob) {
                         return null;
                     }
-                    localSourceSeen.add(index);
                     const file = new File([blob], name, { type: blob.type });
                     file.localSourceIndex = index;
 
@@ -646,11 +750,21 @@ async function openLocalSource(attempt) {
                 })
                 .catch(() => null)
         ));
+        if (keyAttempts.isSuperseded(attempt)) {
+            holdLocalFiles(items.map((item, i) => (fetched[i] ? { ...item, file: fetched[i] } : item)));
+            drainWhenKeyAccepted();
+
+            return;
+        }
+
         const validFiles = fetched.filter(f => f !== null);
+        for (const file of validFiles) {
+            localSourceSeen.add(file.localSourceIndex);
+        }
         if (validFiles.length > 0) {
             addFilesToQueue(validFiles);
         }
-        sessionStorage.setItem('localSourceSeen', JSON.stringify([...localSourceSeen]));
+        persistLocalSourceSeen();
     }
 
     // Batch window for SSE events -- collects rapid-fire events (e.g., multiple context menu files arriving within
@@ -684,12 +798,13 @@ async function openLocalSource(attempt) {
             localSourceEvents.close();
             localSourceEvents = null;
             localSourceConnection = null;
+            reofferLocalFiles = null;
             if (localSourceHeartbeatInterval) {
                 clearInterval(localSourceHeartbeatInterval);
                 localSourceHeartbeatInterval = null;
             }
-            sessionStorage.removeItem('localSource');
-            sessionStorage.removeItem('localSourceSeen');
+            sessionStorage.removeItem(LOCAL_SOURCE_KEY);
+            sessionStorage.removeItem(LOCAL_SOURCE_SEEN_KEY);
             localSourceSeen.clear();
         }
     };
@@ -699,10 +814,12 @@ async function openLocalSource(attempt) {
  * Check for files shared via the PWA Share Target API.
  * The service worker stores shared files in the 'share-target' cache. Once the key of the calling startup run is
  * accepted (see key-attempts.js), consumes all pending files and adds them to the upload queue. When that key is
- * rejected or superseded, the files stay cached for the startup run of the key that follows (key entry or a hashchange).
+ * rejected or superseded, the files stay cached for the startup run of the key that follows (key entry or a hashchange);
+ * when it is superseded after the files were claimed but before they are queued, they are put back (returnSharedFiles).
+ * Also called by returnSharedFiles once a key is accepted, to offer handed-back files again in this tab.
  * Startup runs can overlap (two released by one accepted verdict), so each entry is claimed by deleting it before its
  * body is read: only the run whose delete removed it takes the file.
- * @param {number} attempt - Key attempt of the calling startup run
+ * @param {number} attempt - Key attempt of the calling startup run (or the accepted attempt returnSharedFiles waited for)
  * @returns {Promise<boolean>} True if this run claimed and queued shared files
  */
 export async function consumeSharedFiles(attempt) {
@@ -710,7 +827,7 @@ export async function consumeSharedFiles(attempt) {
         return false;
     }
 
-    const cache = await caches.open('share-target');
+    const cache = await caches.open(SHARE_TARGET_CACHE);
     if ((await cache.keys()).length === 0 || !(await keyAttempts.waitForVerdict(attempt))) {
         return false;
     }
@@ -725,10 +842,26 @@ export async function consumeSharedFiles(attempt) {
 
         const blob = await response.blob();
         const name = new URL(request.url).pathname.split('/shared/')[1]?.replace(/^\d+-[a-z0-9]+-/, '') || 'shared-audio';
-        files.push(new File([blob], name, { type: blob.type }));
+        const file = new File([blob], name, { type: blob.type });
+        // Where returnSharedFiles puts it back if its upload is rejected for the key
+        file.shareCacheUrl = request.url;
+        files.push(file);
     }
 
     if (files.length === 0) {
+        return false;
+    }
+
+    // A newer key attempt began while the files were being claimed (a rejected upload raised the key prompt): put them
+    // back for the next accepted key instead of queuing them under it. A file the cache refuses is held in memory and
+    // queued once a key is accepted, so it survives in this tab (not across a reload).
+    if (keyAttempts.isSuperseded(attempt)) {
+        const returned = await returnSharedFiles(files.map(file => ({ url: file.shareCacheUrl, file })));
+        const kept = files.filter(file => !returned.includes(file.shareCacheUrl));
+        if (kept.length > 0) {
+            keyAttempts.whenAccepted().then(() => addFilesToQueue(kept)).catch(e => console.error('Failed to queue shared files:', e));
+        }
+
         return false;
     }
 

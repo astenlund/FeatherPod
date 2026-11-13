@@ -1,13 +1,14 @@
 import { FEED_ID, JOB_TTL_MS, QUEUE_STORAGE_KEY, STAGES_WITH_PROGRESS, STR_INVALID_KEY, STR_NO_FEED_ACCESS, TERMINAL_JOB_STATUSES, TRANSCRIPTION_ACTIVE_STATUSES } from './config.js';
 import { isValidMediaFile, isActiveWork, isInUploadPhase, tryParseJson } from './utils.js';
 import { getApiKey } from './auth.js';
+import { KEY_VERDICT, keyAttempts } from './key-attempts.js';
 import { showState, getCurrentState, refreshQueueActivity } from './state.js';
 import { progressAnimator } from './progress.js';
 import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQueueItemFromDOM, getEntryProgressBar, registerQueueCallbacks, createQueueItemElement, animateQueueDropZoneMorph, prepareReadyDropZoneMorph, animateReadyDropZoneMorph, updateQueueItemName } from './queue-ui.js';
 import { resetNotificationToggle, syncPushSession, notifyQueueComplete } from './notifications.js';
 import { resetWakeLockToggle } from './wake-lock.js';
 import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetchBrowserUploads, initHistorySection, invalidateBrowserUploadsCache } from './history.js';
-import { recordDismissedJobs, dropDismissedJob, notifyLocalSourceUploaded } from './server-sync.js';
+import { recordDismissedJobs, dropDismissedJob, notifyLocalSourceUploaded, returnLocalFiles, returnSharedFiles } from './server-sync.js';
 import { showYouTubeCookieDialog } from './youtube.js';
 import { parseYouTubeFileName } from './youtube-url.js';
 
@@ -19,6 +20,18 @@ let activeUploadId = null;
 let isUploading = false;
 /** @type {number} */
 let nextEntryId = 0;
+/** @type {((errorType: 'invalid'|'no-access') => void)|null} Raises the key prompt; registered by push.js */
+let onUploadKeyRejected = null;
+
+/**
+ * Register the handler that raises the key prompt (push.js showNoKeyUI). rejectQueueForKey calls it when an upload
+ * answered 401 or 403 rejects the page's accepted key; that call must begin a new key attempt, since the CLI files
+ * handed back to intake then wait for the next accepted one.
+ * @param {(errorType: 'invalid'|'no-access') => void} callback
+ */
+export function registerUploadKeyRejectedCallback(callback) {
+    onUploadKeyRejected = callback;
+}
 
 /**
  * Build the descriptor youtube.js needs to re-submit an import after a cookie upload.
@@ -116,6 +129,7 @@ export function addFilesToQueue(files) {
             fileName: file.name,
             title: null,
             localSourceIndex: file.localSourceIndex ?? null,
+            shareCacheUrl: file.shareCacheUrl ?? null,
             validationError: !valid,
             startedAt: Date.now(),
             _resolveMonitor: null
@@ -265,16 +279,21 @@ function advanceQueue() {
  * When queue is empty, transitions back to ready state.
  * Either way both toggles end unpressed: a hidden bell must not keep its push subscription for work
  * discovered later, and a hidden wake-lock toggle must not re-acquire the lock on tab reactivation.
+ * An emptied queue leaves the key prompt showing when it is up: the prompt owns the page whatever view is current.
  */
 export function checkAllComplete() {
     if (uploadQueue.length === 0) {
+        clearQueueState();
+        resetNotificationToggle();
+        resetWakeLockToggle();
+        if (getCurrentState() === 'no-key') {
+            return;
+        }
+
         const queueDZHeight = document.getElementById('queue-drop-zone')?.getBoundingClientRect().height || 0;
         if (queueDZHeight > 0) {
             prepareReadyDropZoneMorph(queueDZHeight);
         }
-        clearQueueState();
-        resetNotificationToggle();
-        resetWakeLockToggle();
         showState('ready', false, collapseHistoryImmediate);
         if (queueDZHeight > 0) {
             animateReadyDropZoneMorph();
@@ -337,6 +356,7 @@ async function processEntry(entry) {
 
     const formData = new FormData();
     formData.append('file', entry.file);
+    const sentKey = getApiKey();
 
     try {
         const response = await new Promise((resolve, reject) => {
@@ -385,7 +405,7 @@ async function processEntry(entry) {
 
             const uploadUrl = '/api/feeds/' + FEED_ID + '/episodes?normalize=true&source=Browser';
             xhr.open('POST', uploadUrl);
-            xhr.setRequestHeader('X-API-Key', getApiKey());
+            xhr.setRequestHeader('X-API-Key', sentKey);
             xhr.send(formData);
         });
 
@@ -415,14 +435,9 @@ async function processEntry(entry) {
 
             return;
         } else if (response.status === 401 || response.status === 403) {
-            entry.status = 'failed';
-            entry.error = response.status === 401 ? STR_INVALID_KEY : STR_NO_FEED_ACCESS;
-            // Auth failure: remove all remaining queued entries (they'd fail too)
-            const queued = uploadQueue.filter(e => e.status === 'queued');
-            for (const q of queued) {
-                removeQueueItemFromDOM(q.id);
-            }
-            uploadQueue = uploadQueue.filter(e => e.status !== 'queued');
+            rejectQueueForKey(entry, response.status === 401 ? 'invalid' : 'no-access', sentKey);
+
+            return;
         } else {
             const error = tryParseJson(response.body);
             entry.status = 'failed';
@@ -444,6 +459,76 @@ async function processEntry(entry) {
 
     saveQueueState();
     advanceQueue();
+}
+
+/**
+ * Handle an upload answered 401 (invalid key) or 403 (no access to this feed). Nothing more is uploaded with that key:
+ * the rejected entry and every entry still queued behind it fail with the reason and a Retry button, and those whose
+ * files came from the CLI local source or the share target are then handed back to intake (returnLocalFiles,
+ * returnSharedFiles) and leave the queue once intake has taken them back, so they are offered again once a key is
+ * accepted, in this tab or after a reload. Files that cannot go back (added by hand, a local source connection that
+ * has closed, a share-target cache that is unavailable) stay in the queue as failed with Retry.
+ * The key prompt is raised with the reason only when the rejected key is still the page's key under an accepted key
+ * attempt: the server has then rejected the key the page is using. It is raised before the CLI files are handed back,
+ * because it begins the new key attempt they wait for. Otherwise the page's own key handling owns the decision (a
+ * newer key is already accepted, or init is still checking the key the upload carried and may fall back to the saved
+ * key), so the answer neither clears a key nor begins an attempt.
+ * @param {QueueEntry} rejected - The entry whose upload was rejected
+ * @param {'invalid'|'no-access'} errorType
+ * @param {string|null} sentKey - The key the rejected upload carried
+ */
+function rejectQueueForKey(rejected, errorType, sentKey) {
+    const raisePrompt = sentKey === getApiKey() && keyAttempts.verdict === KEY_VERDICT.ACCEPTED;
+    const error = errorType === 'invalid' ? STR_INVALID_KEY : STR_NO_FEED_ACCESS;
+    const affected = [rejected, ...uploadQueue.filter(e => e.status === 'queued')];
+    for (const e of affected) {
+        e.status = 'failed';
+        e.error = error;
+        updateQueueItemInDOM(e);
+    }
+    activeUploadId = null;
+    isUploading = false;
+    if (raisePrompt) {
+        onUploadKeyRejected?.(errorType);
+    }
+
+    const fromLocalSource = affected.filter(e => e.localSourceIndex != null);
+    if (returnLocalFiles(fromLocalSource.map(e => ({ index: e.localSourceIndex, name: e.fileName, file: e.file })))) {
+        removeHandedBackEntries(fromLocalSource);
+    }
+
+    // After the prompt, so an emptied queue leaves it showing (whoever raised it) instead of switching to the ready view;
+    // once, when the shared files' hand-back has settled, so the queue-complete notice is not sent twice
+    const settle = () => {
+        saveQueueState();
+        checkAllComplete();
+    };
+    const fromShare = affected.filter(e => e.shareCacheUrl);
+    if (fromShare.length === 0) {
+        settle();
+
+        return;
+    }
+
+    returnSharedFiles(fromShare.map(e => ({ url: e.shareCacheUrl, file: e.file })))
+        .then(returned => removeHandedBackEntries(fromShare.filter(e => returned.includes(e.shareCacheUrl))))
+        .catch(e => console.error('Failed to hand shared files back:', e))
+        .finally(settle);
+}
+
+/**
+ * Remove queue entries whose files intake took back (see rejectQueueForKey), skipping any no longer in the queue or
+ * already retried (no longer failed), since intake now holds their files.
+ * @param {Array<QueueEntry>} entries
+ */
+function removeHandedBackEntries(entries) {
+    for (const e of entries) {
+        const index = uploadQueue.indexOf(e);
+        if (index !== -1 && e.status === 'failed') {
+            uploadQueue.splice(index, 1);
+            removeQueueItemFromDOM(e.id);
+        }
+    }
 }
 
 /**
@@ -567,25 +652,25 @@ function updateTranscriptionState(entry, job) {
 }
 
 /**
- * Apply a job's terminal status to its queue entry: the single terminal handling shared by the SSE progress
- * (Cancelled) and done handlers, the poll fallback and the recent-jobs merge (which finalizes a still-normalizing entry
- * in place, and recovers a locally failed entry whose job completed). Cancelled goes through finalizeCancelledEntry and Completed through
- * finalizeCompletedEntry; any other status marks the entry failed with the job's error, opens the YouTube cookie
- * dialog when the job reports authRequired, and removes the progress slot.
- * An answer for another job than the entry's current one (a request still in flight for the job the entry ran before
- * a retry) is ignored. A terminal job status (Completed, Failed or Cancelled) is applied once per entry and job: the
- * first such call claims the job synchronously, and while the entry stays finalized, every later call for that job
- * returns without effect, so a terminal answer that arrives after another path already finalized the entry neither
- * notifies the CLI local source again nor repeats the history save or the cookie dialog. The claim lapses as soon as
- * the entry is active work again (a recent-jobs merge that revives a failed entry for the same job), so the revived
- * monitor's terminal answer finalizes it again. A missing or non-terminal status (an SSE done event whose last
- * progress event was not terminal) still marks the entry failed but claims nothing, since the server has not decided
- * the job, so a merge that later finds the job Completed can still recover the entry. A retry gives the entry a new
- * job, whose terminal status is handled afresh. A Cancelled answer for a job already claimed as Failed (the server
- * cancels a failed job when it is dismissed) is likewise ignored here; the merge's failed-and-Cancelled branch removes
- * such an entry. The claim is in memory only (not saved with the queue), so a restored entry starts unclaimed.
- * The entry's status is terminal when this returns its promise; a Completed entry's episode lookup and history save
- * finish when the promise resolves.
+ * Apply a job's terminal status to its queue entry: the single terminal handling shared by the SSE progress (Cancelled)
+ * and done handlers, the poll fallback and the recent-jobs merge (which finalizes a still-normalizing entry in place,
+ * and recovers a locally failed entry whose job completed). Cancelled goes through finalizeCancelledEntry and Completed
+ * through finalizeCompletedEntry; any other status marks the entry failed with the job's error, opens the YouTube
+ * cookie dialog when the job reports authRequired, and removes the progress slot. An answer for another job than the
+ * entry's current one is ignored, as a defensive check: the poll fallback already drops answers for a job its entry no
+ * longer runs, and a retry only follows a closed stream. A terminal job status (Completed, Failed or Cancelled) is
+ * applied once per entry and job: the first such call claims the job synchronously, and while the entry stays
+ * finalized, every later call for that job returns without effect, so a terminal answer that arrives after another path
+ * already finalized the entry neither notifies the CLI local source again nor repeats the history save or the cookie
+ * dialog. The claim lapses as soon as the entry is active work again (a recent-jobs merge that revives a failed entry
+ * for the same job), so the revived monitor's terminal answer finalizes it again. A missing or non-terminal status (an
+ * SSE done event whose last progress event was not terminal) still marks the entry failed but claims nothing, since the
+ * server has not decided the job, so a merge that later finds the job Completed can still recover the entry. A retry
+ * gives the entry a new job, whose terminal status is handled afresh. A Cancelled answer for a job already claimed as
+ * Failed (the server cancels a failed job when it is dismissed) is likewise ignored here; the merge's
+ * failed-and-Cancelled branch removes such an entry. The claim is in memory only (not saved with the queue), so a
+ * restored entry starts unclaimed. The entry's status is terminal when this returns its promise; a Completed entry's
+ * episode lookup and history save finish when the promise resolves.
  * @param {QueueEntry} entry
  * @param {Object|null} job - Terminal job status (SSE lastStatus, poll response or recent-jobs snapshot job)
  * @returns {Promise<void>}
@@ -650,14 +735,13 @@ async function finalizeCompletedEntry(entry, jobStatus) {
 }
 
 /**
- * Apply terminal "cancelled" state to an entry: record its job as dismissed, clear the
- * progress animator slot, drop the DOM item, and remove it from the upload queue if it is still there
- * (a recent-jobs merge, or an earlier call from cancelEntry, can remove it while a poll status request is in flight). Shared by the
- * aborted-upload path in processEntry, cancelEntry and finalizeTerminalEntry (the SSE progress and done handlers
- * and the poll fallback), so a cancel made on this page and one made elsewhere (another tab or
- * device, a direct API call) both keep a recent-jobs snapshot requested before the cancel from
- * re-adding the job. Callers are responsible for any monitor-specific teardown (e.g.,
- * finishMonitoring).
+ * Apply terminal "cancelled" state to an entry: record its job as dismissed, clear the progress animator slot, drop the
+ * DOM item, and remove it from the upload queue if it is still there (a defensive check: callers reach it only for an
+ * entry still in the queue, since the poll fallback stops once its entry has left the queue). Shared by the
+ * aborted-upload path in processEntry, cancelEntry and finalizeTerminalEntry (the SSE progress and done handlers and
+ * the poll fallback), so a cancel made on this page and one made elsewhere (another tab or device, a direct API call)
+ * both keep a recent-jobs snapshot requested before the cancel from re-adding the job. Callers are responsible for any
+ * monitor-specific teardown (e.g., finishMonitoring).
  * @param {QueueEntry} entry
  * @returns {number|undefined} The time the job's dismissal was recorded, or undefined for an entry without a job
  */

@@ -40,6 +40,12 @@ export const THEME_CACHE_KEY = 'featherpod_theme_' + FEED_ID;
 export const NOTIF_ENABLED_KEY = 'featherpod_notif_' + FEED_ID;
 export const NOTIF_HINT_SHOWN_KEY = 'featherpod_notif_hint_shown';
 export const WAKE_LOCK_KEY = 'featherpod_wake_' + FEED_ID;
+/** sessionStorage: the CLI local source's {host, token} for this tab */
+export const LOCAL_SOURCE_KEY = 'localSource';
+/** sessionStorage: indices of the CLI local source's files this tab has taken in */
+export const LOCAL_SOURCE_SEEN_KEY = 'localSourceSeen';
+/** Cache holding files shared to the PWA until intake claims them (push-sw.js, a classic script, keeps its own copy) */
+export const SHARE_TARGET_CACHE = 'share-target';
 
 // Constants
 /** Fallback drop-zone height in pixels when no artwork or measured height is available. */

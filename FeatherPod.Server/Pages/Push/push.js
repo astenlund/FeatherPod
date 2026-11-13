@@ -19,7 +19,7 @@
  * ?ytcookies                       - Triggers the YouTube cookie upload dialog on load.
  */
 
-import { IS_DEV, QUEUE_SYNC_TIMEOUT, STR_PASTE_KEY_BELOW, STR_PASTE_KEY, STR_SAVE_KEY, STR_INVALID_KEY, STR_NO_FEED_ACCESS } from './modules/config.js';
+import { IS_DEV, LOCAL_SOURCE_KEY, QUEUE_SYNC_TIMEOUT, STR_PASTE_KEY_BELOW, STR_PASTE_KEY, STR_SAVE_KEY, STR_INVALID_KEY, STR_NO_FEED_ACCESS } from './modules/config.js';
 import { isActiveWork, isInUploadPhase, trapFocus } from './modules/utils.js';
 import { getApiKey, setApiKey, getStoredApiKey, saveApiKey, clearApiKey, validateApiKey, validateApiKeyWithRetry } from './modules/auth.js';
 import { isKeyCheckInconclusive, unverifiedKeyMessage } from './modules/key-check.js';
@@ -30,7 +30,7 @@ import { initNotificationToggle } from './modules/notifications.js';
 import { progressAnimator } from './modules/progress.js';
 import { showState, getCurrentState, refreshQueueActivity, showError, showWarningBanner, setNoKeyError, cacheLayoutDimensions } from './modules/state.js';
 import { renderQueueList } from './modules/queue-ui.js';
-import { getQueue, initQueue, restoreQueueState, addFilesToQueue, clearQueueState, clearTerminalEntries, dismissEntry, monitorEntryNormalizationInBackground, updateQueueTitleForEpisode } from './modules/queue.js';
+import { getQueue, initQueue, registerUploadKeyRejectedCallback, restoreQueueState, addFilesToQueue, clearQueueState, clearTerminalEntries, dismissEntry, monitorEntryNormalizationInBackground, updateQueueTitleForEpisode } from './modules/queue.js';
 import { registerHistoryContextMenuCallback, initHistorySection, collapseHistoryImmediate, toggleHistorySection, changeHistoryFilter, selectHistoryUpload, updateHistoryListScrollState, getHistoryFilter, getHistoryPanelPushedState, setHistoryPanelPushedState, getHistoryData, getHistorySelectedId, refreshHistoryList } from './modules/history.js';
 import { showContextMenu, getContextMenuTargetId, hideContextMenu, showRenameModal, hideRenameModal, showDeleteConfirm, hideDeleteConfirm, deleteEpisode, saveEpisodeChanges, updateRenameSaveState, toggleNotePanel, closeNotePanel, commitNoteAndRefreshSuggestion, handleNoteInput, isNotePanelOpen, registerEpisodeRenamedCallback } from './modules/editing.js';
 import { loadDismissedJobIds, connectFeedEvents, fetchRecentJobs, mergeServerJobs, connectLocalSource, consumeSharedFiles, getLocalSourceConfig, setLocalSourceConfig, getFeedEventsSource, getLocalSourceEvents, setLocalSourceEvents } from './modules/server-sync.js';
@@ -132,6 +132,8 @@ if (navigator.serviceWorker) {
  * @property {string} fileName - Original file name
  * @property {string|null} title - Episode title (from server 202 response or progress updates)
  * @property {number|null} localSourceIndex - File index on LocalFileServer (null for browser-selected files)
+ * @property {string|null} [shareCacheUrl] - share-target cache entry the file was claimed from (null for other files;
+ *     not persisted); a 401/403 upload puts the file back there
  * @property {boolean} validationError - Whether failure is due to validation (no retry)
  * @property {number} startedAt - Epoch ms when entry was created (for 1-hour localStorage filtering)
  * @property {Function|null} _resolveMonitor - Internal: resolve function for normalization promise
@@ -156,6 +158,10 @@ if (navigator.serviceWorker) {
 
 // Wire up queue-ui callbacks
 initQueue();
+
+// The queue raises the key prompt with the reason when an upload's 401/403 rejects the page's accepted key (see
+// queue.js rejectQueueForKey, which also hands CLI and shared files back to intake)
+registerUploadKeyRejectedCallback(showNoKeyUI);
 
 /** Wire history actions before initialization, including first-visit key entry. */
 registerHistoryContextMenuCallback(showContextMenu);
@@ -322,28 +328,30 @@ function applyDevState(devState) {
 // init -- main initialization
 // ============================================================================
 
+/**
+ * Raise the key prompt, a new key attempt that owns the page whatever view is showing. Used by init when a key is
+ * rejected or missing, and by the queue when an upload answered 401 or 403 rejects the page's accepted key
+ * (registerUploadKeyRejectedCallback).
+ * @param {string|null} [errorType] - 'invalid' or 'no-access' to clear the current key and say why; null keeps it
+ */
+function showNoKeyUI(errorType = null) {
+    keyAttempts.begin();
+    if (errorType) {
+        clearApiKey();
+    }
+    // A prompt raised while an earlier key entry is still starting up must not inherit its disabled controls
+    resetNoKeyState();
+    setNoKeyError(errorType);
+    showState('no-key');
+    initNoKeyState();
+}
+
 async function init() {
     initFeedArtwork();
     cacheLayoutDimensions();
 
     // Every run is a new key attempt: it supersedes a key entry, key check or startup run an earlier run or prompt began
     const attempt = keyAttempts.begin();
-
-    /**
-     * Raise the key prompt, a new key attempt that owns the page whatever view is showing.
-     * @param {string|null} [errorType] - 'invalid' or 'no-access' to clear the current key and say why; null keeps it
-     */
-    function showNoKeyUI(errorType = null) {
-        keyAttempts.begin();
-        if (errorType) {
-            clearApiKey();
-        }
-        // A prompt raised while an earlier key entry is still starting up must not inherit its disabled controls
-        resetNoKeyState();
-        setNoKeyError(errorType);
-        showState('no-key');
-        initNoKeyState();
-    }
 
     /**
      * Put `key` in use as this run's accepted key.
@@ -421,14 +429,14 @@ async function init() {
             const token = params.get('token');
             if (source && token) {
                 setLocalSourceConfig({ host: source, token });
-                sessionStorage.setItem('localSource', JSON.stringify({ host: source, token }));
+                sessionStorage.setItem(LOCAL_SOURCE_KEY, JSON.stringify({ host: source, token }));
             }
         }
     }
 
     if (!getLocalSourceConfig()) {
         try {
-            const stored = sessionStorage.getItem('localSource');
+            const stored = sessionStorage.getItem(LOCAL_SOURCE_KEY);
             if (stored) {
                 setLocalSourceConfig(JSON.parse(stored));
             }
@@ -472,6 +480,12 @@ async function init() {
         }).catch(() => {});
     } else {
         showNoKeyUI(null);
+        // Keep the CLI local source connected behind the prompt (as after a reload once a rejected upload cleared the
+        // key): it holds the offered files until a key is accepted, and its heartbeat keeps the CLI's file server from
+        // shutting down while the user finds a key. The startup run of the key entry joins this connection.
+        if (getLocalSourceConfig()) {
+            void connectLocalSource(keyAttempts.current);
+        }
 
         return;
     }

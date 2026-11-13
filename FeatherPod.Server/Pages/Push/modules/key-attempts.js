@@ -7,7 +7,10 @@
  * attempt ends with at most one verdict: accepted (the key is in use: it validated, or its check was inconclusive and
  * the page kept it) or rejected. File intake waits for an accepted key, so offered files are not uploaded with a key the
  * page's key check rejected. The verdict is the page's check, not the server's answer to an upload: a key kept after an
- * inconclusive check is accepted unjudged, and a key revoked mid-session keeps its accepted verdict.
+ * inconclusive check is accepted unjudged, and a key revoked mid-session keeps its accepted verdict. An upload answered
+ * 401/403 still changes no verdict, but when the key it carried is the page's accepted key the queue raises the key
+ * prompt (queue.js rejectQueueForKey), which begins a new pending attempt, so from then on intake waits for the next
+ * accepted key.
  *
  * Kept separate so it can be unit-tested under Node (tests/push/key-attempts.test.js, run via `npm test`).
  */
