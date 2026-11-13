@@ -125,5 +125,8 @@ export function createKeyAttempts() {
  * @property {() => Promise<void>} whenAccepted - Resolves once the current attempt, whichever it is by then, is accepted
  */
 
-/** The page's key attempts, shared by push.js (key handling) and server-sync.js (file intake) */
+/**
+ * The page's key attempts, shared by push.js (key handling), server-sync.js (file intake) and queue.js
+ * (rejectQueueForKey reads the verdict to decide whether a 401/403 raises the key prompt)
+ */
 export const keyAttempts = createKeyAttempts();

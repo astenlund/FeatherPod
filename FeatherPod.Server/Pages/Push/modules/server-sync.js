@@ -631,9 +631,9 @@ export function mergeServerJobs(snapshot) {
  * Idempotent from the first call: a call made while a connection is open or still being set up gets that connection's
  * promise instead of connecting again, which matters because startSession runs again on every hashchange and key
  * entry, and two runs can overlap while the first waits for its key's verdict.
- * @param {number} attempt - Key attempt of the calling startup run; the initial files wait for its verdict, so on
- *     acceptance they are queued before this resolves. A call that joins an existing connection waits for the attempt
- *     of the call that opened it.
+ * @param {number} attempt - The key attempt whose verdict the initial files wait for (a startup run's attempt, or the
+ *     key prompt's on a load without a key), so on acceptance they are queued before this resolves. A call that joins
+ *     an existing connection waits for the attempt of the call that opened it.
  * @returns {Promise<void>}
  */
 export function connectLocalSource(attempt) {
@@ -650,7 +650,7 @@ export function connectLocalSource(attempt) {
 
 /**
  * Open the local source connection for connectLocalSource: fetch the initial files and listen for new ones.
- * @param {number} attempt - Key attempt of the startup run that opens it
+ * @param {number} attempt - The key attempt whose verdict the initial files wait for (see connectLocalSource)
  */
 async function openLocalSource(attempt) {
     const { host, token } = localSourceConfig;
