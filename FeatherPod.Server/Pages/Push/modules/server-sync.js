@@ -1,5 +1,6 @@
 import { FEED_ID, DISMISSED_STORAGE_KEY, JOB_TTL_MS, LOCAL_SOURCE_KEY, LOCAL_SOURCE_SEEN_KEY, SHARE_TARGET_CACHE, TERMINAL_JOB_STATUSES, UPLOAD_INTERRUPTED_ERROR } from './config.js';
-import { isActiveWork, isInUploadPhase, tryParseJson } from './utils.js';
+import { isActiveWork, isInUploadPhase } from './utils.js';
+import { createDismissalStore } from './dismissal-store.js';
 import { isAddableServerJob, pairInterruptedUploads } from './interrupted-uploads.js';
 import { getApiKey } from './auth.js';
 import { keyAttempts } from './key-attempts.js';
@@ -13,10 +14,10 @@ import { syncPushSession } from './notifications.js';
 /** @type {EventSource|null} */
 let feedEventsSource = null;
 /**
- * @type {Map<string, number>} dismissedAt by jobId, for jobs recent-jobs merges must not add; changed only through
- * loadDismissedJobIds, recordDismissedJobs and dropDismissedJob
+ * Jobs recent-jobs merges must not add (dismissed, cleared or cancelled entries, including ones saved by another tab);
+ * changed only through loadDismissedJobIds, recordDismissedJobs and dropDismissedJob
  */
-let dismissedJobIds = new Map();
+const dismissedJobs = createDismissalStore({ getStorage: () => localStorage, key: DISMISSED_STORAGE_KEY, ttlMs: JOB_TTL_MS });
 /** @type {number} requestedAt of the newest recent-jobs snapshot merged so far (performance.now()) */
 let newestMergedSnapshotRequestedAt = -Infinity;
 /** @type {{host: string, token: string}|null} */
@@ -160,89 +161,30 @@ export async function returnSharedFiles(files) {
 }
 
 /**
- * Read the dismissals saved in localStorage, without the ones older than JOB_TTL_MS.
- * @returns {Map<string, number>} dismissedAt by jobId
- */
-function readSavedDismissals() {
-    const saved = new Map();
-    const entries = tryParseJson(localStorage.getItem(DISMISSED_STORAGE_KEY));
-    if (!Array.isArray(entries)) {
-        return saved;
-    }
-    const oneHourAgo = Date.now() - JOB_TTL_MS;
-    for (const entry of entries) {
-        if (entry?.jobId && entry.dismissedAt && entry.dismissedAt >= oneHourAgo) {
-            saved.set(entry.jobId, entry.dismissedAt);
-        }
-    }
-
-    return saved;
-}
-
-/**
- * Apply a change to the dismissals saved in localStorage, dropping expired ones on the way. The saved list is read
- * back and changed job by job rather than replaced with this tab's map, so dismissals that other tabs of this browser
- * saved after this tab loaded survive.
- * @param {(saved: Map<string, number>) => void} change - Mutates the saved dismissals (dismissedAt by jobId)
- */
-function updateSavedDismissals(change) {
-    try {
-        const saved = readSavedDismissals();
-        change(saved);
-        localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify(Array.from(saved, ([jobId, dismissedAt]) => ({ jobId, dismissedAt }))));
-    } catch {
-        // Storage unavailable or full: the saved list keeps its previous contents
-    }
-}
-
-/**
- * Load the dismissals saved in localStorage into dismissedJobIds, dropping expired ones from storage.
+ * Load the dismissals saved in localStorage into this tab's dismissed jobs, dropping expired ones from storage.
  */
 export function loadDismissedJobIds() {
-    updateSavedDismissals(saved => {
-        for (const [jobId, dismissedAt] of saved) {
-            dismissedJobIds.set(jobId, dismissedAt);
-        }
-    });
+    dismissedJobs.load();
 }
 
 /**
- * Record jobs as dismissed in dismissedJobIds and in localStorage, so recent-jobs merges skip them for JOB_TTL_MS,
- * reloads included.
+ * Record jobs as dismissed in this tab and in localStorage, so recent-jobs merges skip them for JOB_TTL_MS, reloads
+ * included.
  * @param {string[]} jobIds
  * @returns {number} The time recorded as their dismissal, which dropDismissedJob takes to drop one again
  */
 export function recordDismissedJobs(jobIds) {
-    const dismissedAt = Date.now();
-    if (jobIds.length > 0) {
-        for (const jobId of jobIds) {
-            dismissedJobIds.set(jobId, dismissedAt);
-        }
-        updateSavedDismissals(saved => {
-            for (const jobId of jobIds) {
-                saved.set(jobId, dismissedAt);
-            }
-        });
-    }
-
-    return dismissedAt;
+    return dismissedJobs.record(jobIds);
 }
 
 /**
- * Drop a job's dismissal from dismissedJobIds and from localStorage, from each only while it still holds dismissedAt,
- * so a dismissal that another path or tab recorded since is kept.
+ * Drop a job's dismissal from this tab and from localStorage, from each only while it still holds dismissedAt, so a
+ * dismissal that another path or tab recorded since is kept.
  * @param {string} jobId
  * @param {number} dismissedAt - The timestamp of the dismissal to drop
  */
 export function dropDismissedJob(jobId, dismissedAt) {
-    if (dismissedJobIds.get(jobId) === dismissedAt) {
-        dismissedJobIds.delete(jobId);
-    }
-    updateSavedDismissals(saved => {
-        if (saved.get(jobId) === dismissedAt) {
-            saved.delete(jobId);
-        }
-    });
+    dismissedJobs.drop(jobId, dismissedAt);
 }
 
 /**
@@ -483,7 +425,7 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds, requ
 
 /**
  * Build entries for server jobs not already present in the local queue. Skips, through isAddableServerJob, cancelled
- * jobs and jobs in dismissedJobIds (dismissed, cleared or cancelled entries, including ones saved
+ * jobs and jobs in dismissedJobs (dismissed, cleared or cancelled entries, including ones saved
  * by other tabs), and also jobs whose fileName matches a currently-uploading entry
  * (dedup for in-flight uploads where the SSE event arrives before the XHR 202 response
  * sets the jobId). Entries are returned but not yet pushed onto the queue. Each is stamped
@@ -497,7 +439,7 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds, requ
  */
 function addNewServerEntries(uploadQueue, serverJobs, existingJobIds) {
     const uploadingFileNames = new Set(uploadQueue.filter(isInUploadPhase).map(e => e.fileName));
-    const excludedJobIds = { has: jobId => existingJobIds.has(jobId) || dismissedJobIds.has(jobId) };
+    const excludedJobIds = { has: jobId => existingJobIds.has(jobId) || dismissedJobs.has(jobId) };
     const newEntries = [];
     for (const serverJob of serverJobs) {
         if (isAddableServerJob(serverJob, excludedJobIds) && !uploadingFileNames.has(serverJob.fileName)) {

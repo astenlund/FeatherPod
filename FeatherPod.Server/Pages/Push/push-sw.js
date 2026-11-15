@@ -22,6 +22,7 @@ const CACHED_ASSET_SUFFIXES = [
     '/modules/history.js',
     '/modules/editing.js',
     '/modules/interrupted-uploads.js',
+    '/modules/dismissal-store.js',
     '/modules/server-sync.js',
     '/modules/youtube-url.js',
     '/modules/youtube.js',
