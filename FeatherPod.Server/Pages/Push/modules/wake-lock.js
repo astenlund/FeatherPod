@@ -18,6 +18,14 @@ function setToggleState(enabled) {
     }
 }
 
+/**
+ * Show the toggle unpressed without touching WAKE_LOCK_KEY, so the saved preference still presses it again on the next
+ * active work.
+ */
+function unpressToggleKeepingPreference() {
+    document.getElementById('wake-lock-toggle').setAttribute('aria-pressed', 'false');
+}
+
 export function isWakeLockTogglePressed() {
     const toggle = document.getElementById('wake-lock-toggle');
 
@@ -45,7 +53,7 @@ export function initWakeLockToggle() {
  * @returns {Promise<boolean>} false only when this request was the latest one and it failed;
  *   a request superseded by a newer acquire or release leaves the outcome to that newer call
  */
-export async function acquireWakeLock() {
+async function acquireWakeLock() {
     if (wakeLockSentinel) {
         return true;
     }
@@ -68,6 +76,23 @@ export async function acquireWakeLock() {
     } catch {
         // Denied (for example while the document is hidden); the caller decides whether to roll back
         return gen !== wakeLockGeneration;
+    }
+}
+
+/**
+ * Acquire the lock for the pressed toggle without a click: when the saved preference shows the toggle (see
+ * setWakeLockToggleVisible) and when the tab becomes visible again (the visibilitychange handler in push.js).
+ * A rejection while the document is hidden (the browser refuses wake locks for hidden pages) keeps the toggle pressed,
+ * so the re-acquire on tab reactivation still runs. A rejection while it is visible is a real denial: the toggle is
+ * unpressed, since no lock is held, but WAKE_LOCK_KEY stays set, so the next active work tries again. A request
+ * superseded by a newer acquire or release leaves the toggle to that newer call.
+ */
+export async function acquireWakeLockForPressedToggle() {
+    if (await acquireWakeLock()) {
+        return;
+    }
+    if (document.visibilityState !== 'hidden') {
+        unpressToggleKeepingPreference();
     }
 }
 
@@ -96,6 +121,11 @@ async function handleWakeLockToggle() {
     }
 }
 
+/**
+ * Show or hide the toggle. Showing it with the saved preference set presses it and acquires the lock (see
+ * acquireWakeLockForPressedToggle for a rejected request); hiding it releases the lock.
+ * @param {boolean} visible
+ */
 export function setWakeLockToggleVisible(visible) {
     if (!wakeLockAvailable) {
         return;
@@ -104,7 +134,7 @@ export function setWakeLockToggleVisible(visible) {
 
     if (visible && localStorage.getItem(WAKE_LOCK_KEY) === 'true') {
         setToggleState(true);
-        acquireWakeLock();
+        acquireWakeLockForPressedToggle();
     } else if (!visible) {
         releaseWakeLock();
     }
@@ -120,6 +150,6 @@ export function resetWakeLockToggle() {
     if (!wakeLockAvailable) {
         return;
     }
-    document.getElementById('wake-lock-toggle').setAttribute('aria-pressed', 'false');
+    unpressToggleKeepingPreference();
     releaseWakeLock();
 }

@@ -25,7 +25,7 @@ import { getApiKey, setApiKey, getStoredApiKey, saveApiKey, clearApiKey, validat
 import { isKeyCheckInconclusive, unverifiedKeyMessage } from './modules/key-check.js';
 import { KEY_VERDICT, keyAttempts } from './modules/key-attempts.js';
 import { initFeedArtwork } from './modules/artwork.js';
-import { initWakeLockToggle, isWakeLockTogglePressed, acquireWakeLock } from './modules/wake-lock.js';
+import { initWakeLockToggle, isWakeLockTogglePressed, acquireWakeLockForPressedToggle } from './modules/wake-lock.js';
 import { initNotificationToggle } from './modules/notifications.js';
 import { progressAnimator } from './modules/progress.js';
 import { showState, getCurrentState, refreshQueueActivity, showError, showWarningBanner, setNoKeyError, cacheLayoutDimensions } from './modules/state.js';
@@ -855,7 +855,7 @@ document.addEventListener('visibilitychange', () => {
             progressAnimator.setRestoring();
         }
         if (isWakeLockTogglePressed()) {
-            acquireWakeLock();
+            acquireWakeLockForPressedToggle();
         }
         if (getApiKey() && !getFeedEventsSource()) {
             connectFeedEvents();
