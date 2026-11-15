@@ -43,6 +43,7 @@ const browserGlobals = {
     CSS: 'readonly',
     Notification: 'readonly',
     AbortController: 'readonly',
+    AbortSignal: 'readonly',
     queueMicrotask: 'readonly',
     structuredClone: 'readonly',
     atob: 'readonly',

@@ -15,7 +15,7 @@ import { syncPushSession } from './notifications.js';
 let feedEventsSource = null;
 /**
  * Jobs recent-jobs merges must not add (dismissed, cleared or cancelled entries, including ones saved by another tab);
- * changed only through loadDismissedJobIds, recordDismissedJobs and dropDismissedJob
+ * changed only through loadDismissedJobIds, recordDismissedJobs, confirmDismissedJob and dropDismissedJob
  */
 const dismissedJobs = createDismissalStore({ getStorage: () => localStorage, key: DISMISSED_STORAGE_KEY, ttlMs: JOB_TTL_MS });
 /** @type {number} requestedAt of the newest recent-jobs snapshot merged so far (performance.now()) */
@@ -161,7 +161,8 @@ export async function returnSharedFiles(files) {
 }
 
 /**
- * Load the dismissals saved in localStorage into this tab's dismissed jobs, dropping expired ones from storage.
+ * Load the dismissals saved in localStorage into this tab's dismissed jobs, dropping expired ones from storage. Pending
+ * dismissals (a cancel whose request had not settled) are skipped and kept in storage.
  */
 export function loadDismissedJobIds() {
     dismissedJobs.load();
@@ -169,12 +170,25 @@ export function loadDismissedJobIds() {
 
 /**
  * Record jobs as dismissed in this tab and in localStorage, so recent-jobs merges skip them for JOB_TTL_MS, reloads
- * included.
+ * included. A pending dismissal (options.pending, for a cancel whose request has not settled) is honored at once by
+ * this tab, but later loads skip it until confirmDismissedJob saves it as an ordinary one.
  * @param {string[]} jobIds
- * @returns {number} The time recorded as their dismissal, which dropDismissedJob takes to drop one again
+ * @param {{pending?: boolean}} [options]
+ * @returns {number} The time recorded as their dismissal, which confirmDismissedJob and dropDismissedJob take to
+ *     identify it
  */
-export function recordDismissedJobs(jobIds) {
-    return dismissedJobs.record(jobIds);
+export function recordDismissedJobs(jobIds, options) {
+    return dismissedJobs.record(jobIds, options);
+}
+
+/**
+ * Save a job's pending dismissal in localStorage as an ordinary one, so later loads honor it too; only while the saved
+ * entry still holds dismissedAt, so a dismissal another path or tab recorded since is left as it is.
+ * @param {string} jobId
+ * @param {number} dismissedAt - The timestamp of the pending dismissal to confirm
+ */
+export function confirmDismissedJob(jobId, dismissedAt) {
+    dismissedJobs.confirm(jobId, dismissedAt);
 }
 
 /**

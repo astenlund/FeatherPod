@@ -8,7 +8,7 @@ import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQ
 import { resetNotificationToggle, syncPushSession, notifyQueueComplete } from './notifications.js';
 import { resetWakeLockToggle } from './wake-lock.js';
 import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetchBrowserUploads, initHistorySection, invalidateBrowserUploadsCache } from './history.js';
-import { recordDismissedJobs, dropDismissedJob, notifyLocalSourceUploaded, returnLocalFiles, returnSharedFiles } from './server-sync.js';
+import { recordDismissedJobs, confirmDismissedJob, dropDismissedJob, notifyLocalSourceUploaded, returnLocalFiles, returnSharedFiles } from './server-sync.js';
 import { showYouTubeCookieDialog } from './youtube.js';
 import { parseYouTubeFileName } from './youtube-url.js';
 
@@ -22,6 +22,9 @@ let isUploading = false;
 let nextEntryId = 0;
 /** @type {((errorType: 'invalid'|'no-access') => void)|null} Raises the key prompt; registered by push.js */
 let onUploadKeyRejected = null;
+
+/** How long cancelEntry waits for the cancel request before treating the cancel as not taken effect */
+const CANCEL_REQUEST_TIMEOUT_MS = 30000;
 
 /**
  * Register the handler that raises the key prompt (push.js showNoKeyUI). rejectQueueForKey calls it when an upload
@@ -762,14 +765,17 @@ async function finalizeCompletedEntry(entry, jobStatus) {
  * entry still in the queue, since the poll fallback stops once its entry has left the queue). Shared by the
  * aborted-upload path in processEntry, cancelEntry and finalizeTerminalEntry (the SSE progress and done handlers and
  * the poll fallback), so a cancel made on this page and one made elsewhere (another tab or device, a direct API call)
- * both keep a recent-jobs snapshot requested before the cancel from re-adding the job. Callers are responsible for any
- * monitor-specific teardown (e.g., finishMonitoring).
+ * both keep a recent-jobs snapshot requested before the cancel from re-adding the job. cancelEntry records the
+ * dismissal as pending, since its cancel request has not settled yet; the other callers apply a cancel the server
+ * already reported and record an ordinary one. Callers are responsible for any monitor-specific teardown (e.g.,
+ * finishMonitoring).
  * @param {QueueEntry} entry
+ * @param {{pending?: boolean}} [options] - pending: record the dismissal as pending (see recordDismissedJobs)
  * @returns {number|undefined} The time the job's dismissal was recorded, or undefined for an entry without a job
  */
-function finalizeCancelledEntry(entry) {
+function finalizeCancelledEntry(entry, options) {
     entry.status = 'cancelled';
-    const dismissedAt = entry.jobId ? recordDismissedJobs([entry.jobId]) : undefined;
+    const dismissedAt = entry.jobId ? recordDismissedJobs([entry.jobId], options) : undefined;
     progressAnimator.removeSlot(entry.id);
     removeQueueItemFromDOM(entry.id);
     const index = uploadQueue.indexOf(entry);
@@ -975,11 +981,14 @@ async function pollEntryNormalization(entry) {
 /**
  * Cancel a single queue entry, removing it from the queue and DOM.
  * Queued: removes immediately. Uploading: aborts XHR. Normalizing: closes SSE, finalizes the entry (which records the
- * job as dismissed, so a recent-jobs snapshot fetched before the cancel cannot re-add it), POSTs cancel. When the
- * request throws or returns a non-OK status other than 404 (the job is gone), the job may still be running, may have
- * completed first or may already be cancelled, so the dismissal this cancel recorded is dropped again wherever no other
- * path or tab has replaced it, and the next snapshot shows the job unless the server lists it as Cancelled. A snapshot requested
- * before the cancel and merged after that drop can still briefly re-add a job the server did cancel.
+ * job's dismissal as pending, so a recent-jobs snapshot fetched before the cancel cannot re-add it in this tab, while a
+ * later load skips it), POSTs cancel. When the request succeeds or returns 404 (the job is gone), the dismissal is
+ * confirmed, so later loads honor it too. When it throws, times out after CANCEL_REQUEST_TIMEOUT_MS or returns another
+ * non-OK status, the job may still be running, may have completed first or may already be cancelled, so the dismissal
+ * this cancel recorded is dropped again wherever no other path or tab has replaced it, and the next snapshot shows the
+ * job unless the server lists it as Cancelled. A snapshot requested before the cancel and merged after that drop can
+ * still briefly re-add a job the server did cancel. When the page closes or reloads before the request settles, the
+ * pending dismissal stays in storage unconfirmed, and the next load shows the job unless the server lists it as Cancelled.
  * @param {string} entryId
  */
 export async function cancelEntry(entryId) {
@@ -1011,7 +1020,7 @@ export async function cancelEntry(entryId) {
         }
 
         progressAnimator.reset(entry.id);
-        const dismissedAt = finalizeCancelledEntry(entry);
+        const dismissedAt = finalizeCancelledEntry(entry, { pending: true });
 
         // Force-resolve the monitoring promise so the promise chain completes
         if (entry._resolveMonitor) {
@@ -1027,13 +1036,16 @@ export async function cancelEntry(entryId) {
             try {
                 const response = await fetch('/api/jobs/' + jobId + '/cancel', {
                     method: 'POST',
-                    headers: { 'X-API-Key': getApiKey() }
+                    headers: { 'X-API-Key': getApiKey() },
+                    signal: AbortSignal.timeout(CANCEL_REQUEST_TIMEOUT_MS)
                 });
                 cancelled = response.ok || response.status === 404;
             } catch {
-                // No response: if the server did cancel the job, later snapshots list it as Cancelled and skip it
+                // No response in time: if the server did cancel the job, later snapshots list it as Cancelled and skip it
             }
-            if (!cancelled) {
+            if (cancelled) {
+                confirmDismissedJob(jobId, dismissedAt);
+            } else {
                 dropDismissedJob(jobId, dismissedAt);
             }
         }
