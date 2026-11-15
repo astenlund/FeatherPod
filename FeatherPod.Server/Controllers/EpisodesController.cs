@@ -428,8 +428,9 @@ public class EpisodesController : ControllerBase
     }
 
     /// <summary>
-    /// Store an upload for async normalization: upload it to the pending location, create its job entity, queue the
-    /// normalization message and submit transcription, then answer 202 with the job.
+    /// Store an upload for async normalization: upload it to the pending location, create its job entity, start the AI
+    /// title of an untitled upload, queue the normalization message and submit transcription, then answer 202 with the job.
+    /// An untitled upload's job carries the title parsed from its file name until the AI title replaces it.
     /// An abort observed by the end of the pending-blob upload stops the work and deletes the pending blob, since nothing
     /// refers to it. From the entity insert on, the steps run to their end without the request's token, so an abort
     /// cannot leave a half-created job (an entity whose queue message was never sent and that never finishes); an abort
@@ -462,8 +463,8 @@ public class EpisodesController : ControllerBase
             throw;
         }
 
-        // AI title runs in background, doesn't block 202
-        var effectiveTitle = ResolveDeferredTitle(fields.Title, jobId, fileName);
+        var deferAiTitle = string.IsNullOrWhiteSpace(fields.Title) && _aiService.IsAvailable;
+        var effectiveTitle = string.IsNullOrWhiteSpace(fields.Title) ? EpisodeService.ParseTitleFromFilename(fileName) : fields.Title;
 
         var job = new NormalizationJob
         {
@@ -507,6 +508,13 @@ public class EpisodesController : ControllerBase
         if (await CancelJobIfUploadAbortedAsync(jobId))
         {
             return StatusCode(StatusCodes.Status499ClientClosedRequest);
+        }
+
+        // The AI title replaces the placeholder in the background without blocking the 202; it starts only now, because
+        // the update needs the job entity to exist and a job cancelled with its aborted upload needs no title
+        if (deferAiTitle)
+        {
+            _ = UpdateJobTitleFromAiAsync(jobId, fileName);
         }
 
         await _jobService.QueueNormalizationJobAsync(job, CancellationToken.None);
@@ -606,34 +614,23 @@ public class EpisodesController : ControllerBase
     }
 
     /// <summary>
-    /// Returns an initial placeholder title and, when AI is available, fires off a background
-    /// task that replaces it with the AI-generated (or heuristic fallback) title.
+    /// Replaces an untitled job's placeholder title with the AI-generated (or heuristic fallback) title. Runs in the
+    /// background and must start only after the job entity exists, since an update of a missing entity is lost.
     /// </summary>
-    private string ResolveDeferredTitle(string? userTitle, string jobId, string fileName)
-    {
-        if (!string.IsNullOrWhiteSpace(userTitle))
-        {
-            return userTitle;
-        }
-
-        if (_aiService.IsAvailable)
-        {
-            _ = UpdateJobTitleFromAiAsync(jobId, fileName);
-
-            return fileName;
-        }
-
-        return EpisodeService.ParseTitleFromFilename(fileName);
-    }
-
     private async Task UpdateJobTitleFromAiAsync(string jobId, string fileName)
     {
         try
         {
             var title = await EpisodeService.GenerateTitleAsync(fileName, _aiService);
 
-            await _jobService.UpdateJobStatusAsync(jobId, entity => entity.Title = title);
-            _logger.LogInformation("Updated job {JobId} title: {Title}", jobId, title);
+            if (await _jobService.UpdateJobStatusAsync(jobId, entity => entity.Title = title) == null)
+            {
+                _logger.LogWarning("AI title for job {JobId} was lost: the job could not be updated", jobId);
+            }
+            else
+            {
+                _logger.LogInformation("Updated job {JobId} title: {Title}", jobId, title);
+            }
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {

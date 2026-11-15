@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using FeatherPod.Server.Services;
 using FeatherPod.Shared.Models;
+using FeatherPod.Shared.Services;
 using FeatherPod.Tests.Helpers;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -53,6 +54,29 @@ public sealed class UploadAbortTests : IDisposable
         var created = Assert.Single(jobService.Created);
         Assert.Equal(created.JobId, cancelledJobId);
         Assert.Equal("0d6f1e3a-5a52-4f4b-9a3e-2f6a1c9b7e10", created.ClientUploadId);
+        Assert.Empty(jobService.Queued);
+    }
+
+    [AzuriteFact]
+    public async Task UploadEpisode_DoesNotRequestAiTitle_WhenUntitledUploadIsAbortedAfterJobEntityIsCreated()
+    {
+        // Arrange
+        var jobService = new RecordingJobService { AbortOnCreate = true };
+        var aiService = new CountingAiService();
+        var uploads = new UploadRequestTracker();
+        using var factory = CreateFactory(jobService, uploads, aiService);
+        using var client = factory.CreateClient();
+        await CreateTestFeedAsync(client);
+        using var request = CreateUploadRequest("aborted-untitled.mp3", clientUploadId: null, title: null);
+
+        // Act
+        var send = client.SendAsync(request, jobService.ClientAbort.Token);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => send);
+        await jobService.Cancelled.WaitAsync(SignalTimeout);
+        await uploads.Finished.WaitAsync(SignalTimeout);
+
+        // Assert
+        Assert.Equal(0, aiService.Calls);
         Assert.Empty(jobService.Queued);
     }
 
@@ -161,7 +185,7 @@ public sealed class UploadAbortTests : IDisposable
         Assert.Empty(jobService.Created);
     }
 
-    private WebApplicationFactory<FeatherPod.Server.ServerAssemblyMarker> CreateFactory(RecordingJobService jobService, UploadRequestTracker? uploads = null)
+    private WebApplicationFactory<FeatherPod.Server.ServerAssemblyMarker> CreateFactory(RecordingJobService jobService, UploadRequestTracker? uploads = null, IAiService? aiService = null)
     {
         var factory = _baseFactory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
@@ -171,6 +195,12 @@ public sealed class UploadAbortTests : IDisposable
             if (uploads != null)
             {
                 services.AddSingleton<IStartupFilter>(uploads);
+            }
+
+            if (aiService != null)
+            {
+                services.RemoveAll<IAiService>();
+                services.AddSingleton(aiService);
             }
         }));
         jobService.HttpContextAccessor = factory.Services.GetRequiredService<IHttpContextAccessor>();
@@ -188,13 +218,17 @@ public sealed class UploadAbortTests : IDisposable
         response.EnsureSuccessStatusCode();
     }
 
-    private static HttpRequestMessage CreateUploadRequest(string fileName, string? clientUploadId)
+    private static HttpRequestMessage CreateUploadRequest(string fileName, string? clientUploadId, string? title = "Abort Test Episode")
     {
         var content = new MultipartFormDataContent();
         var fileContent = new ByteArrayContent("fake audio data"u8.ToArray());
         fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
         content.Add(fileContent, "file", fileName);
-        content.Add(new StringContent("Abort Test Episode"), "title");
+        if (title != null)
+        {
+            content.Add(new StringContent(title), "title");
+        }
+
         if (clientUploadId != null)
         {
             content.Add(new StringContent(clientUploadId), "clientUploadId");
@@ -236,6 +270,25 @@ public sealed class UploadAbortTests : IDisposable
                 });
                 next(app);
             };
+        }
+    }
+
+    /// <summary>
+    /// AI service that counts title requests and answers each with a fixed title.
+    /// </summary>
+    private sealed class CountingAiService : IAiService
+    {
+        private int _calls;
+
+        public int Calls => Volatile.Read(ref _calls);
+
+        public bool IsAvailable => true;
+
+        public Task<string?> SuggestTitleAsync(string filename, string? note = null, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref _calls);
+
+            return Task.FromResult<string?>("AI Title");
         }
     }
 

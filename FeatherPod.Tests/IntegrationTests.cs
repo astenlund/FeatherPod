@@ -1,11 +1,16 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json;
 using System.Xml.Linq;
 using FeatherPod.Server.Services;
 using FeatherPod.Shared.Models;
+using FeatherPod.Shared.Services;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -35,7 +40,9 @@ public sealed class IntegrationTests : IDisposable
         _factory.Dispose();
     }
 
-    private async Task CreateTestFeedAsync(string feedId = TestFeedId)
+    private Task CreateTestFeedAsync(string feedId = TestFeedId) => CreateTestFeedAsync(_client, feedId);
+
+    private static async Task CreateTestFeedAsync(HttpClient client, string feedId = TestFeedId)
     {
         var feedJson = $$"""
         {
@@ -53,8 +60,87 @@ public sealed class IntegrationTests : IDisposable
         request.Content = new StringContent(feedJson, System.Text.Encoding.UTF8, "application/json");
         request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
 
-        var response = await _client.SendAsync(request);
+        var response = await client.SendAsync(request);
         response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task<string> UploadUntitledForNormalizationAsync(HttpClient client, string fileName)
+    {
+        using var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", fileName);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes?normalize=true") { Content = content };
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        return body.RootElement.GetProperty("jobId").GetString()!;
+    }
+
+    /// <summary>
+    /// Polls the job until its title is the expected one or a timeout passes, and returns the last title read, so a title
+    /// update that never lands fails the caller's assertion rather than hanging the test.
+    /// </summary>
+    private static async Task<string?> WaitForJobTitleAsync(HttpClient client, string jobId, string expectedTitle)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        string? title;
+        do
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/jobs/{jobId}");
+            request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+            var response = await client.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            title = body.RootElement.GetProperty("title").GetString();
+            if (title == expectedTitle)
+            {
+                break;
+            }
+
+            await Task.Delay(100);
+        }
+        while (DateTime.UtcNow < deadline);
+
+        return title;
+    }
+
+    /// <summary>
+    /// Signals a successful normalization the way the Function does, which with transcription disabled completes the job's
+    /// fork-join and publishes its episode before the response returns.
+    /// </summary>
+    private static async Task CompleteNormalizationAsync(HttpClient client, string jobId)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/internal/jobs/{jobId}/normalization-complete")
+        {
+            Content = JsonContent.Create(new NormalizationCompleteRequest { Success = true, NormalizedFileSize = 5, AudioDurationMs = 1000 })
+        };
+        request.Headers.Add("X-Internal-Key", FeatherPodWebApplicationFactory.InternalKey);
+
+        var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task<string?> GetSingleEpisodeTitleAsync(HttpClient client)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/feeds/{TestFeedId}/episodes");
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        return Assert.Single(body.RootElement.EnumerateArray()).GetProperty("title").GetString();
+    }
+
+    private sealed class StubAiService(Func<string, Task<string?>> suggestTitle) : IAiService
+    {
+        public bool IsAvailable => true;
+
+        public Task<string?> SuggestTitleAsync(string filename, string? note = null, CancellationToken cancellationToken = default) => suggestTitle(filename);
     }
 
     [AzuriteFact]
@@ -1063,27 +1149,47 @@ public sealed class IntegrationTests : IDisposable
     }
 
     [AzuriteFact]
-    public async Task PostEpisode_WithNormalize_WithoutTitle_ShouldUseAiTitle()
+    public async Task PostEpisode_WithNormalize_WithoutTitle_ShouldPublishEpisodeUnderAiTitle()
     {
-        // Arrange
-        await CreateTestFeedAsync();
-
-        var content = new MultipartFormDataContent();
-        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes("audio"));
-        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
-        content.Add(fileContent, "file", "auto_title_test.mp3");
-
-        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{TestFeedId}/episodes?normalize=true");
-        request.Content = content;
-        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        // Arrange - an AI service that answers synchronously, as the Development FakeAiService does, with a title the
+        // file name parser cannot produce, so the published title shows whether the AI update reached the job
+        using var factory = _factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IAiService>();
+            services.AddSingleton<IAiService>(new StubAiService(_ => Task.FromResult<string?>("AI Suggested Title")));
+        }));
+        using var client = factory.CreateClient();
+        await CreateTestFeedAsync(client);
 
         // Act
-        var response = await _client.SendAsync(request);
+        var jobId = await UploadUntitledForNormalizationAsync(client, "auto_title_test.mp3");
+        var jobTitle = await WaitForJobTitleAsync(client, jobId, "AI Suggested Title");
+        await CompleteNormalizationAsync(client, jobId);
 
-        // Assert - job should be queued with AI-generated title (FakeAiService uses ParseTitleFromFilename)
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-        var responseContent = await response.Content.ReadAsStringAsync();
-        Assert.Contains("jobId", responseContent);
+        // Assert
+        Assert.Equal("AI Suggested Title", jobTitle);
+        Assert.Equal("AI Suggested Title", await GetSingleEpisodeTitleAsync(client));
+    }
+
+    [AzuriteFact]
+    public async Task PostEpisode_WithNormalize_WithoutTitle_ShouldPublishParsedTitle_WhenAiTitleHasNotArrived()
+    {
+        // Arrange - an AI service that never answers, so the job completes with its placeholder title
+        var neverAnswers = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var factory = _factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IAiService>();
+            services.AddSingleton<IAiService>(new StubAiService(_ => neverAnswers.Task));
+        }));
+        using var client = factory.CreateClient();
+        await CreateTestFeedAsync(client);
+
+        // Act
+        var jobId = await UploadUntitledForNormalizationAsync(client, "auto_title_test.mp3");
+        await CompleteNormalizationAsync(client, jobId);
+
+        // Assert
+        Assert.Equal("auto title test", await GetSingleEpisodeTitleAsync(client));
     }
 
     [AzuriteFact]
