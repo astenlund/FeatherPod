@@ -7,14 +7,10 @@ namespace FeatherPod.Server.Validation;
 /// </summary>
 public static partial class InputValidation
 {
-    // Feed IDs should be alphanumeric with hyphens only, 1-64 characters
-    [GeneratedRegex(@"^[a-zA-Z0-9-]{1,64}$")]
-    private static partial Regex FeedIdPattern();
-
-    // User IDs should be alphanumeric with hyphens only (no underscores or dots), 1-64 characters
+    // Feed IDs, user IDs and client upload IDs: alphanumeric with hyphens only (no underscores or dots), 1-64 characters.
     // Underscores are reserved as delimiters in the API key format: fp_{userId}_{secret}
     [GeneratedRegex(@"^[a-zA-Z0-9-]{1,64}$")]
-    private static partial Regex UserIdPattern();
+    private static partial Regex AlphanumericHyphenIdPattern();
 
     // Filenames should not contain path separators or null bytes
     [GeneratedRegex(@"^[^/\\:\*\?""<>\|\x00]+$")]
@@ -35,7 +31,7 @@ public static partial class InputValidation
     /// <returns>True if valid, false otherwise</returns>
     public static bool IsValidFeedId(string? feedId)
     {
-        return !string.IsNullOrWhiteSpace(feedId) && FeedIdPattern().IsMatch(feedId);
+        return !string.IsNullOrWhiteSpace(feedId) && AlphanumericHyphenIdPattern().IsMatch(feedId);
     }
 
     /// <summary>
@@ -46,7 +42,24 @@ public static partial class InputValidation
     /// <returns>True if valid, false otherwise</returns>
     public static bool IsValidUserId(string? userId)
     {
-        return !string.IsNullOrWhiteSpace(userId) && UserIdPattern().IsMatch(userId);
+        return !string.IsNullOrWhiteSpace(userId) && AlphanumericHyphenIdPattern().IsMatch(userId);
+    }
+
+    /// <summary>
+    /// Validates a client upload ID: the value a client generates for one upload so that it can recognize the job
+    /// created for it (the push page sends 32 random hex characters). Alphanumeric with hyphens only, 1-64 characters.
+    /// </summary>
+    public static bool IsValidClientUploadId(string? clientUploadId)
+    {
+        return !string.IsNullOrWhiteSpace(clientUploadId) && AlphanumericHyphenIdPattern().IsMatch(clientUploadId);
+    }
+
+    /// <summary>
+    /// Gets the validation error message for an invalid client upload ID.
+    /// </summary>
+    public static string GetClientUploadIdValidationError()
+    {
+        return "Client upload ID must be 1-64 characters, alphanumeric with hyphens only";
     }
 
     /// <summary>
@@ -57,11 +70,15 @@ public static partial class InputValidation
     public static bool IsValidFilename(string? filename)
     {
         if (string.IsNullOrWhiteSpace(filename))
+        {
             return false;
+        }
 
         // Check for path traversal attempts
         if (filename.Contains("..") || filename.StartsWith('/') || filename.StartsWith('\\'))
+        {
             return false;
+        }
 
         return SafeFilenamePattern().IsMatch(filename);
     }

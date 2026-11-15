@@ -8,7 +8,8 @@ import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQ
 import { resetNotificationToggle, syncPushSession, notifyQueueComplete } from './notifications.js';
 import { resetWakeLockToggle } from './wake-lock.js';
 import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetchBrowserUploads, initHistorySection, invalidateBrowserUploadsCache } from './history.js';
-import { recordDismissedJobs, confirmDismissedJob, dropDismissedJob, notifyLocalSourceUploaded, returnLocalFiles, returnSharedFiles } from './server-sync.js';
+import { recordCancelledUpload, recordDismissedJobs, confirmDismissedJob, dropDismissedJob, requestJobCancel, notifyLocalSourceUploaded, returnLocalFiles, returnSharedFiles } from './server-sync.js';
+import { generateClientUploadId } from './cancelled-uploads.js';
 import { showYouTubeCookieDialog } from './youtube.js';
 import { parseYouTubeFileName } from './youtube-url.js';
 
@@ -22,9 +23,6 @@ let isUploading = false;
 let nextEntryId = 0;
 /** @type {((errorType: 'invalid'|'no-access') => void)|null} Raises the key prompt; registered by push.js */
 let onUploadKeyRejected = null;
-
-/** How long cancelEntry waits for the cancel request before treating the cancel as not taken effect */
-const CANCEL_REQUEST_TIMEOUT_MS = 30000;
 
 /**
  * Register the handler that raises the key prompt (push.js showNoKeyUI). rejectQueueForKey calls it when an upload
@@ -237,16 +235,9 @@ export async function dismissEntry(entryId) {
     saveQueueState();
     checkAllComplete();
 
-    // Mark as cancelled server-side so mergeServerJobs won't re-add it
+    // Mark as cancelled server-side so mergeServerJobs won't re-add it (best-effort)
     if (jobId && entry.status !== 'completed') {
-        try {
-            await fetch('/api/jobs/' + jobId + '/cancel', {
-                method: 'POST',
-                headers: { 'X-API-Key': getApiKey() }
-            });
-        } catch {
-            // Best-effort
-        }
+        await requestJobCancel(jobId);
     }
 }
 
@@ -345,11 +336,15 @@ export function monitorEntryNormalizationInBackground(entry, { isResuming = fals
 
 /**
  * Process a single queue entry -- upload file, handle sync/async response.
+ * Each upload sends a fresh clientUploadId, which the server stores on the job it creates, so a job whose response
+ * never arrives (an upload cancelled during 'saving') can still be recognized; a retry sends a new one, so it is never
+ * taken for the cancelled upload it repeats.
  * @param {QueueEntry} entry
  */
 async function processEntry(entry) {
     entry.status = 'uploading';
     entry.progress = 0;
+    entry.clientUploadId = generateClientUploadId();
     updateQueueItemInDOM(entry);
 
     saveQueueState();
@@ -359,6 +354,7 @@ async function processEntry(entry) {
 
     const formData = new FormData();
     formData.append('file', entry.file);
+    formData.append('clientUploadId', entry.clientUploadId);
     const sentKey = getApiKey();
 
     try {
@@ -980,11 +976,14 @@ async function pollEntryNormalization(entry) {
 
 /**
  * Cancel a single queue entry, removing it from the queue and DOM.
- * Queued: removes immediately. Uploading: aborts XHR. Normalizing: closes SSE, finalizes the entry (which records the
+ * Queued: removes immediately. Uploading or saving: aborts XHR, after remembering the upload's clientUploadId as
+ * cancelled (recordCancelledUpload), since the server may still create the job of an upload whose body it has received
+ * and the page never learns that job's id: recent-jobs merges then withhold that job and cancel it on the server, and
+ * show it as completed if it already finished. Normalizing: closes SSE, finalizes the entry (which records the
  * job's dismissal as pending, so a recent-jobs snapshot fetched before the cancel cannot re-add it in this tab, while a
- * later load skips it), POSTs cancel. When the request succeeds or returns 404 (the job is gone), the dismissal is
- * confirmed, so later loads honor it too. When it throws, times out after CANCEL_REQUEST_TIMEOUT_MS or returns another
- * non-OK status, the job may still be running, may have completed first or may already be cancelled, so the dismissal
+ * later load skips it), POSTs cancel (requestJobCancel). When the request succeeds or returns 404 (the job is gone), the
+ * dismissal is confirmed, so later loads honor it too. When it throws, times out after CANCEL_REQUEST_TIMEOUT_MS or
+ * returns another non-OK status, the job may still be running, may have completed first or may already be cancelled, so the dismissal
  * this cancel recorded is dropped again wherever no other path or tab has replaced it, and the next snapshot shows the
  * job unless the server lists it as Cancelled. A snapshot requested before the cancel and merged after that drop can
  * still briefly re-add a job the server did cancel. When the page closes or reloads before the request settles, the
@@ -1005,6 +1004,7 @@ export async function cancelEntry(entryId) {
 
     if (isInUploadPhase(entry)) {
         if (entry.xhr) {
+            recordCancelledUpload(entry.clientUploadId);
             entry.xhr.abort();
         }
 
@@ -1030,20 +1030,10 @@ export async function cancelEntry(entryId) {
 
         checkAllComplete();
 
-        // A cancel that may not have taken effect drops this cancel's dismissal, so the next snapshot can show the job again
+        // A cancel that may not have taken effect drops this cancel's dismissal, so the next snapshot can show the job again;
+        // if the server did cancel it after all, later snapshots list it as Cancelled and skip it
         if (jobId) {
-            let cancelled = false;
-            try {
-                const response = await fetch('/api/jobs/' + jobId + '/cancel', {
-                    method: 'POST',
-                    headers: { 'X-API-Key': getApiKey() },
-                    signal: AbortSignal.timeout(CANCEL_REQUEST_TIMEOUT_MS)
-                });
-                cancelled = response.ok || response.status === 404;
-            } catch {
-                // No response in time: if the server did cancel the job, later snapshots list it as Cancelled and skip it
-            }
-            if (cancelled) {
+            if (await requestJobCancel(jobId)) {
                 confirmDismissedJob(jobId, dismissedAt);
             } else {
                 dropDismissedJob(jobId, dismissedAt);
@@ -1074,6 +1064,7 @@ export function retryEntry(entryId) {
     entry.jobId = null;
     entry.jobIdReceivedAt = null;
     entry.lastLiveUpdateAt = null;
+    entry.clientUploadId = null;
     entry.episodeId = null;
     entry.episode = null;
     entry.error = null;
@@ -1149,6 +1140,7 @@ export function saveQueueState() {
             progress: e.progress,
             stage: e.stage,
             jobId: e.jobId,
+            clientUploadId: e.clientUploadId,
             episodeId: e.episodeId,
             episode: e.episode,
             error: e.error,

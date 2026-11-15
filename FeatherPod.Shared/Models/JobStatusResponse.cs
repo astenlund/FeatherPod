@@ -120,6 +120,11 @@ public record JobStatusResponse
     public long? TickMs { get; init; }
 
     /// <summary>
+    /// The ID the uploading client generated for this upload (null when the client sent none).
+    /// </summary>
+    public string? ClientUploadId { get; init; }
+
+    /// <summary>
     /// Time taken to process the job, or elapsed time if still processing.
     /// </summary>
     public TimeSpan? Duration => QueuedAt.HasValue
@@ -159,7 +164,8 @@ public record JobStatusResponse
             TranscriptionStatus = entity.TranscriptionStatus,
             TranscriptionError = entity.TranscriptionError,
             AuthRequired = string.Equals(entity.Error, YtDlpService.BotDetectionErrorMessage, StringComparison.Ordinal),
-            TickMs = entity.QueuedAt.HasValue ? (long)(DateTimeOffset.UtcNow - entity.QueuedAt.Value).TotalMilliseconds : null
+            TickMs = entity.QueuedAt.HasValue ? (long)(DateTimeOffset.UtcNow - entity.QueuedAt.Value).TotalMilliseconds : null,
+            ClientUploadId = entity.ClientUploadId
         };
     }
 }

@@ -36,6 +36,8 @@ export const API_KEY_SESSION_KEY = 'featherpod_api_key_' + FEED_ID;
 export const API_KEY_LOCAL_KEY = 'featherpod_api_key_local_' + FEED_ID;
 export const API_KEY_COOKIE_KEY = 'featherpod_key_' + FEED_ID;
 export const DISMISSED_STORAGE_KEY = 'featherpod_dismissed_' + FEED_ID;
+/** Client upload ids of uploads cancelled before their response arrived (see cancelled-uploads.js) */
+export const CANCELLED_UPLOADS_STORAGE_KEY = 'featherpod_cancelled_uploads_' + FEED_ID;
 export const THEME_CACHE_KEY = 'featherpod_theme_' + FEED_ID;
 export const NOTIF_ENABLED_KEY = 'featherpod_notif_' + FEED_ID;
 export const NOTIF_HINT_SHOWN_KEY = 'featherpod_notif_hint_shown';
@@ -53,6 +55,8 @@ export const COLLAPSED_HEIGHT_DEFAULT = 280;
 export const MAX_LOCAL_HISTORY = 50;
 export const QUEUE_SYNC_TIMEOUT = 3000;
 export const JOB_TTL_MS = 60 * 60 * 1000;
+/** How long a job cancel request (POST /api/jobs/{id}/cancel) may take before the cancel is treated as not taken effect */
+export const CANCEL_REQUEST_TIMEOUT_MS = 30000;
 export const STAGES_WITH_PROGRESS = ['Analyzing', 'Normalizing', 'Downloading'];
 export const TRANSCRIPTION_ACTIVE_STATUSES = new Set(['Queued', 'Running']);
 /** Server job statuses that end a job's processing (the server has decided its outcome); a Failed job can still be cancelled when it is dismissed. */

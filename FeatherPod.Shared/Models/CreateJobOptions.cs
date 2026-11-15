@@ -70,4 +70,9 @@ public record CreateJobOptions
     /// Transcription track status: null (disabled), Queued, Running, Completed, Failed.
     /// </summary>
     public string? TranscriptionStatus { get; init; }
+
+    /// <summary>
+    /// The ID the uploading client generated for this upload (null when the client sent none).
+    /// </summary>
+    public string? ClientUploadId { get; init; }
 }

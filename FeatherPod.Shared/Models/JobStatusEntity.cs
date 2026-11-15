@@ -158,6 +158,12 @@ public class JobStatusEntity : ITableEntity
     public int? ProgressIntervalMs { get; set; }
 
     /// <summary>
+    /// The ID the uploading client generated for this upload, so that it can recognize the job when the upload's
+    /// response never reached it (null when the client sent none, as the CLI does).
+    /// </summary>
+    public string? ClientUploadId { get; set; }
+
+    /// <summary>
     /// Azure Table Storage timestamp (managed by the service).
     /// </summary>
     public DateTimeOffset? Timestamp { get; set; }
@@ -208,7 +214,8 @@ public class JobStatusEntity : ITableEntity
             PublishedDate = options.PublishedDate,
             Source = options.Source,
             OriginalFileSize = options.OriginalFileSize,
-            TranscriptionStatus = options.TranscriptionStatus
+            TranscriptionStatus = options.TranscriptionStatus,
+            ClientUploadId = options.ClientUploadId
         };
     }
 }

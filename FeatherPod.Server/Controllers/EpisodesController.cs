@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Azure;
 using FeatherPod.Server.Models;
 using FeatherPod.Server.Services;
 using FeatherPod.Server.Validation;
@@ -21,12 +22,14 @@ public class EpisodesController : ControllerBase
     private readonly IAiService _aiService;
     private readonly ITranscriptionChannel _transcriptionChannel;
     private readonly ISpeechTranscriptionService _speechService;
+    private readonly IJobProgressChannel _progressChannel;
+    private readonly PushNotificationService _pushNotificationService;
     private readonly ILogger<EpisodesController> _logger;
     private readonly string _baseUrl;
     private readonly string? _progressMode;
     private readonly int _progressIntervalMs;
 
-    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IAiService aiService, ITranscriptionChannel transcriptionChannel, ISpeechTranscriptionService speechService, ILogger<EpisodesController> logger, IConfiguration configuration)
+    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IAiService aiService, ITranscriptionChannel transcriptionChannel, ISpeechTranscriptionService speechService, IJobProgressChannel progressChannel, PushNotificationService pushNotificationService, ILogger<EpisodesController> logger, IConfiguration configuration)
     {
         _episodeService = episodeService;
         _blobStorageService = blobStorageService;
@@ -36,6 +39,8 @@ public class EpisodesController : ControllerBase
         _aiService = aiService;
         _transcriptionChannel = transcriptionChannel;
         _speechService = speechService;
+        _progressChannel = progressChannel;
+        _pushNotificationService = pushNotificationService;
         _logger = logger;
         _baseUrl = configuration.GetSection("Podcast")["BaseUrl"]
             ?? throw new InvalidOperationException("Podcast.BaseUrl must be configured in appsettings.json");
@@ -117,6 +122,7 @@ public class EpisodesController : ControllerBase
         [FromForm] string? summary,
         [FromForm] DateTime? publishedDate,
         [FromForm] string? episodeId,
+        [FromForm] string? clientUploadId,
         [FromQuery] bool normalize = false,
         [FromQuery] UploadSource source = UploadSource.CLI)
     {
@@ -141,99 +147,27 @@ public class EpisodesController : ControllerBase
             return BadRequest(new { error = InputValidation.GetFilenameValidationError(file.FileName) });
         }
 
+        if (clientUploadId != null && !InputValidation.IsValidClientUploadId(clientUploadId))
+        {
+            return BadRequest(new { error = InputValidation.GetClientUploadIdValidationError() });
+        }
+
         // Save uploaded file to temp location with original filename
         var tempDir = Path.Combine(Path.GetTempPath(), "FeatherPod", Guid.NewGuid().ToString());
         Directory.CreateDirectory(tempDir);
         var tempPath = Path.Combine(tempDir, file.FileName);
 
-        await using (var stream = System.IO.File.Create(tempPath))
-        {
-            await file.CopyToAsync(stream);
-        }
-
         try
         {
+            await using (var stream = System.IO.File.Create(tempPath))
+            {
+                await file.CopyToAsync(stream, HttpContext.RequestAborted);
+            }
+
             // Async normalization flow - queue job and return 202
             if (normalize)
             {
-                var jobId = Guid.NewGuid().ToString("N");
-                var fileSize = new FileInfo(tempPath).Length;
-                var effectiveEpisodeId = episodeId ?? Episode.GenerateId(feedId, file.FileName, fileSize);
-                var effectivePublishedDate = publishedDate ?? (feed.UseFileMetadataForPublishDate && EpisodeService.TryGetPublishedDateFromFile(tempPath, out var extractedDate)
-                    ? extractedDate.Value
-                    : DateTime.UtcNow);
-
-                // Upload to pending location (AI title runs in background, doesn't block 202)
-                await _blobStorageService.UploadPendingAudioAsync(feedId, jobId, file.FileName, tempPath);
-
-                var effectiveTitle = ResolveDeferredTitle(title, jobId, file.FileName);
-
-                var job = new NormalizationJob
-                {
-                    JobId = jobId,
-                    FeedId = feedId,
-                    FileName = file.FileName,
-                    OriginalFileSize = fileSize,
-                    EpisodeId = effectiveEpisodeId,
-                    Title = effectiveTitle,
-                    Description = description,
-                    Summary = summary,
-                    PublishedDate = effectivePublishedDate,
-                    QueuedAt = DateTime.UtcNow,
-                    Source = source,
-                    ProgressMode = _progressMode,
-                    ProgressIntervalMs = _progressIntervalMs
-                };
-
-                // Create entity BEFORE queue send (entity must exist when Function processes the message)
-                var transcriptionStatus = _speechService.IsAvailable ? TranscriptionStatuses.Queued : null;
-                await _jobService.CreateJobStatusAsync(
-                    new CreateJobOptions
-                    {
-                        JobId = jobId,
-                        FeedId = feedId,
-                        FileName = file.FileName,
-                        Title = effectiveTitle,
-                        ProgressMode = _progressMode,
-                        ProgressIntervalMs = _progressIntervalMs,
-                        Description = description,
-                        Summary = summary,
-                        PublishedDate = effectivePublishedDate,
-                        Source = source.ToString(),
-                        OriginalFileSize = fileSize,
-                        EpisodeId = effectiveEpisodeId,
-                        TranscriptionStatus = transcriptionStatus
-                    },
-                    HttpContext.RequestAborted);
-
-                await _jobService.QueueNormalizationJobAsync(job, HttpContext.RequestAborted);
-
-                // Submit transcription request if Speech is available
-                if (_speechService.IsAvailable)
-                {
-                    await _transcriptionChannel.SubmitAsync(new TranscriptionRequest
-                    {
-                        JobId = jobId,
-                        FeedId = feedId,
-                        FileName = file.FileName,
-                        EpisodeId = effectiveEpisodeId
-                    }, HttpContext.RequestAborted);
-                }
-
-                var response = new JobStatusResponse
-                {
-                    JobId = jobId,
-                    FeedId = feedId,
-                    Status = nameof(JobStatus.Queued),
-                    EpisodeId = effectiveEpisodeId,
-                    FileName = file.FileName,
-                    Title = effectiveTitle,
-                    QueuedAt = job.QueuedAt
-                };
-
-                _feedEventChannel.Publish(feedId, "job-added");
-
-                return Accepted($"/api/jobs/{jobId}", response);
+                return await QueueNormalizationJobAsync(feed, file.FileName, tempPath, new UploadFields(title, description, summary, publishedDate, episodeId, clientUploadId, source));
             }
 
             if (string.IsNullOrWhiteSpace(title))
@@ -494,6 +428,184 @@ public class EpisodesController : ControllerBase
     }
 
     /// <summary>
+    /// Store an upload for async normalization: upload it to the pending location, create its job entity, queue the
+    /// normalization message and submit transcription, then answer 202 with the job.
+    /// An abort observed by the end of the pending-blob upload stops the work and deletes the pending blob, since nothing
+    /// refers to it. From the entity insert on, the steps run to their end without the request's token, so an abort
+    /// cannot leave a half-created job (an entity whose queue message was never sent and that never finishes); an abort
+    /// observed after the insert or between the later steps cancels the job instead, since the client never learns its id
+    /// from a response that cannot be delivered, and when that cancel does not take effect the remaining steps still run.
+    /// A job cancelled this way keeps its pending blob for the scheduled cleanup, as after a user cancel.
+    /// An abort the server never observes (the client gone while the request still looks alive) leaves the job running;
+    /// a client that sent a clientUploadId recognizes such a job by it in recent-jobs listings.
+    /// </summary>
+    private async Task<IActionResult> QueueNormalizationJobAsync(FeedConfig feed, string fileName, string tempPath, UploadFields fields)
+    {
+        var requestAborted = HttpContext.RequestAborted;
+        var feedId = feed.Id;
+        var jobId = Guid.NewGuid().ToString("N");
+        var fileSize = new FileInfo(tempPath).Length;
+        var effectiveEpisodeId = fields.EpisodeId ?? Episode.GenerateId(feedId, fileName, fileSize);
+        var effectivePublishedDate = fields.PublishedDate ?? (feed.UseFileMetadataForPublishDate && EpisodeService.TryGetPublishedDateFromFile(tempPath, out var extractedDate)
+            ? extractedDate.Value
+            : DateTime.UtcNow);
+
+        try
+        {
+            await _blobStorageService.UploadPendingAudioAsync(feedId, jobId, fileName, tempPath, requestAborted);
+            requestAborted.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException) when (requestAborted.IsCancellationRequested)
+        {
+            await DeletePendingBlobsAfterAbortAsync(feedId, jobId);
+
+            throw;
+        }
+
+        // AI title runs in background, doesn't block 202
+        var effectiveTitle = ResolveDeferredTitle(fields.Title, jobId, fileName);
+
+        var job = new NormalizationJob
+        {
+            JobId = jobId,
+            FeedId = feedId,
+            FileName = fileName,
+            OriginalFileSize = fileSize,
+            EpisodeId = effectiveEpisodeId,
+            Title = effectiveTitle,
+            Description = fields.Description,
+            Summary = fields.Summary,
+            PublishedDate = effectivePublishedDate,
+            QueuedAt = DateTime.UtcNow,
+            Source = fields.Source,
+            ProgressMode = _progressMode,
+            ProgressIntervalMs = _progressIntervalMs
+        };
+
+        // Create entity BEFORE queue send (entity must exist when Function processes the message)
+        var transcriptionStatus = _speechService.IsAvailable ? TranscriptionStatuses.Queued : null;
+        await _jobService.CreateJobStatusAsync(
+            new CreateJobOptions
+            {
+                JobId = jobId,
+                FeedId = feedId,
+                FileName = fileName,
+                Title = effectiveTitle,
+                ProgressMode = _progressMode,
+                ProgressIntervalMs = _progressIntervalMs,
+                Description = fields.Description,
+                Summary = fields.Summary,
+                PublishedDate = effectivePublishedDate,
+                Source = fields.Source.ToString(),
+                OriginalFileSize = fileSize,
+                EpisodeId = effectiveEpisodeId,
+                TranscriptionStatus = transcriptionStatus,
+                ClientUploadId = fields.ClientUploadId
+            },
+            CancellationToken.None);
+
+        if (await CancelJobIfUploadAbortedAsync(jobId))
+        {
+            return StatusCode(StatusCodes.Status499ClientClosedRequest);
+        }
+
+        await _jobService.QueueNormalizationJobAsync(job, CancellationToken.None);
+
+        if (await CancelJobIfUploadAbortedAsync(jobId))
+        {
+            return StatusCode(StatusCodes.Status499ClientClosedRequest);
+        }
+
+        // Submit transcription request if Speech is available
+        if (_speechService.IsAvailable)
+        {
+            await _transcriptionChannel.SubmitAsync(new TranscriptionRequest
+            {
+                JobId = jobId,
+                FeedId = feedId,
+                FileName = fileName,
+                EpisodeId = effectiveEpisodeId
+            }, CancellationToken.None);
+
+            if (await CancelJobIfUploadAbortedAsync(jobId))
+            {
+                return StatusCode(StatusCodes.Status499ClientClosedRequest);
+            }
+        }
+
+        var response = new JobStatusResponse
+        {
+            JobId = jobId,
+            FeedId = feedId,
+            Status = nameof(JobStatus.Queued),
+            EpisodeId = effectiveEpisodeId,
+            FileName = fileName,
+            Title = effectiveTitle,
+            QueuedAt = job.QueuedAt,
+            ClientUploadId = fields.ClientUploadId
+        };
+
+        _feedEventChannel.Publish(feedId, "job-added");
+
+        return Accepted($"/api/jobs/{jobId}", response);
+    }
+
+    /// <summary>
+    /// Cancel a job whose upload request has been aborted, so that a job the client cannot learn about does not run to a
+    /// published episode. Like the user-initiated cancel (JobsController.CancelJob), a cancellation publishes the
+    /// cancelled status for progress streams and goes through the terminal push-notification entry point.
+    /// Returns true only when the job was cancelled. While the request is still alive it does nothing, and when the cancel
+    /// does not take effect it returns false too, so the caller completes the job's remaining steps rather than leave it
+    /// half-created; such a job then runs like one whose abort the server never observed.
+    /// </summary>
+    private async Task<bool> CancelJobIfUploadAbortedAsync(string jobId)
+    {
+        if (!HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        JobStatusEntity? cancelled;
+        try
+        {
+            cancelled = await _jobService.CancelJobAsync(jobId, CancellationToken.None);
+        }
+        catch (RequestFailedException ex)
+        {
+            _logger.LogWarning(ex, "Failed to cancel job {JobId} after its upload request was aborted; completing its remaining steps", jobId);
+
+            return false;
+        }
+
+        if (cancelled == null)
+        {
+            _logger.LogWarning("Job {JobId} was not cancelled after its upload request was aborted; completing its remaining steps", jobId);
+
+            return false;
+        }
+
+        _logger.LogInformation("Cancelled job {JobId}: its upload request was aborted before the response was sent", jobId);
+        var cancelledResponse = JobStatusResponse.FromEntity(cancelled);
+        _progressChannel.Publish(jobId, cancelledResponse);
+        _pushNotificationService.TryNotifyJobTerminal(cancelledResponse);
+
+        return true;
+    }
+
+    private async Task DeletePendingBlobsAfterAbortAsync(string feedId, string jobId)
+    {
+        try
+        {
+            await _blobStorageService.DeletePendingJobBlobsAsync(feedId, jobId);
+        }
+        catch (RequestFailedException ex)
+        {
+            // Orphaned pending blobs are deleted later by the Functions app's scheduled cleanup
+            _logger.LogWarning(ex, "Failed to delete pending blobs of aborted upload {JobId}", jobId);
+        }
+    }
+
+    /// <summary>
     /// Returns an initial placeholder title and, when AI is available, fires off a background
     /// task that replaces it with the AI-generated (or heuristic fallback) title.
     /// </summary>
@@ -538,4 +650,9 @@ public class EpisodesController : ControllerBase
 
         return await _userService.ValidatePermissionAsync(user, targetFeedId);
     }
+
+    /// <summary>
+    /// The optional form fields of an upload that carry into its job.
+    /// </summary>
+    private sealed record UploadFields(string? Title, string? Description, string? Summary, DateTime? PublishedDate, string? EpisodeId, string? ClientUploadId, UploadSource Source);
 }

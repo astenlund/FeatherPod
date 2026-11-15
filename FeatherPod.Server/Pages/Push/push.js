@@ -33,7 +33,7 @@ import { renderQueueList } from './modules/queue-ui.js';
 import { getQueue, initQueue, registerUploadKeyRejectedCallback, restoreQueueState, addFilesToQueue, clearQueueState, clearTerminalEntries, dismissEntry, monitorEntryNormalizationInBackground, updateQueueTitleForEpisode } from './modules/queue.js';
 import { registerHistoryContextMenuCallback, initHistorySection, collapseHistoryImmediate, toggleHistorySection, changeHistoryFilter, selectHistoryUpload, updateHistoryListScrollState, getHistoryFilter, getHistoryPanelPushedState, setHistoryPanelPushedState, getHistoryData, getHistorySelectedId, refreshHistoryList } from './modules/history.js';
 import { showContextMenu, getContextMenuTargetId, hideContextMenu, showRenameModal, hideRenameModal, showDeleteConfirm, hideDeleteConfirm, deleteEpisode, saveEpisodeChanges, updateRenameSaveState, toggleNotePanel, closeNotePanel, commitNoteAndRefreshSuggestion, handleNoteInput, isNotePanelOpen, registerEpisodeRenamedCallback } from './modules/editing.js';
-import { loadDismissedJobIds, connectFeedEvents, fetchRecentJobs, mergeServerJobs, connectLocalSource, consumeSharedFiles, getLocalSourceConfig, setLocalSourceConfig, getFeedEventsSource, getLocalSourceEvents, setLocalSourceEvents } from './modules/server-sync.js';
+import { loadDismissedJobIds, loadCancelledUploads, connectFeedEvents, fetchRecentJobs, mergeServerJobs, connectLocalSource, consumeSharedFiles, getLocalSourceConfig, setLocalSourceConfig, getFeedEventsSource, getLocalSourceEvents, setLocalSourceEvents } from './modules/server-sync.js';
 import { handlePaste as handleYouTubePaste, handleDrop as handleYouTubeDrop, handleLongPressClipboard, consumeLongPressFlag, initYouTubeImport, registerYouTubeJobCallback, showYouTubeCookieDialog } from './modules/youtube.js';
 
 // CSS hot-swap: service worker notifies when app.css has changed via background revalidation
@@ -118,6 +118,9 @@ if (navigator.serviceWorker) {
  * @property {number} progress - Progress percentage (0-100)
  * @property {string|null} stage - Normalization stage (Queued, Analyzing, Normalizing, Finishing, Completed)
  * @property {string|null} jobId - Server normalization job ID
+ * @property {string|null} [clientUploadId] - Id this entry's latest upload sent, which the server stores on the job it
+ *     creates (set when the upload starts, cleared on retry, persisted); a cancel before the response arrived remembers
+ *     it so recent-jobs merges withhold and cancel that job (see cancelled-uploads.js)
  * @property {number|null} [jobIdReceivedAt] - performance.now() when this page received jobId, from a 202 response or
  *     from the snapshot merge that discovered the job (not persisted); a recent-jobs snapshot requested earlier can lack
  *     the job, so mergeServerJobs does not treat it as stale
@@ -503,7 +506,7 @@ async function init() {
 // ============================================================================
 
 /**
- * Run the startup that needs an API key: dismissed-job ids, the feed event stream, local-source or
+ * Run the startup that needs an API key: dismissed-job ids and cancelled uploads, the feed event stream, local-source or
  * shared-file intake, the saved queue, the initial view, both toggles and history. Shared by init()
  * and key entry (acceptEnteredKey), so entering a key leaves the page as a reload with that key
  * would. Safe to re-run (hashchange re-invokes init): restoreQueueState leaves a live queue alone, and
@@ -518,6 +521,7 @@ async function init() {
 async function startSession() {
     const attempt = keyAttempts.current;
     loadDismissedJobIds();
+    loadCancelledUploads();
     connectFeedEvents();
     const serverJobsPromise = fetchRecentJobs();
     let snapshotMerged = false;

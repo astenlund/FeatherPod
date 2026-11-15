@@ -1,6 +1,7 @@
-import { FEED_ID, DISMISSED_STORAGE_KEY, JOB_TTL_MS, LOCAL_SOURCE_KEY, LOCAL_SOURCE_SEEN_KEY, SHARE_TARGET_CACHE, TERMINAL_JOB_STATUSES, UPLOAD_INTERRUPTED_ERROR } from './config.js';
+import { FEED_ID, CANCEL_REQUEST_TIMEOUT_MS, CANCELLED_UPLOADS_STORAGE_KEY, DISMISSED_STORAGE_KEY, JOB_TTL_MS, LOCAL_SOURCE_KEY, LOCAL_SOURCE_SEEN_KEY, SHARE_TARGET_CACHE, TERMINAL_JOB_STATUSES, UPLOAD_INTERRUPTED_ERROR } from './config.js';
 import { isActiveWork, isInUploadPhase } from './utils.js';
 import { createDismissalStore } from './dismissal-store.js';
+import { classifyCancelledUploadJobs, createCancelledUploadStore } from './cancelled-uploads.js';
 import { isAddableServerJob, pairInterruptedUploads } from './interrupted-uploads.js';
 import { getApiKey } from './auth.js';
 import { keyAttempts } from './key-attempts.js';
@@ -18,6 +19,13 @@ let feedEventsSource = null;
  * changed only through loadDismissedJobIds, recordDismissedJobs, confirmDismissedJob and dropDismissedJob
  */
 const dismissedJobs = createDismissalStore({ getStorage: () => localStorage, key: DISMISSED_STORAGE_KEY, ttlMs: JOB_TTL_MS });
+/**
+ * Uploads cancelled before their response arrived, whose jobs recent-jobs merges withhold and cancel; changed only
+ * through loadCancelledUploads, recordCancelledUpload and the merge itself
+ */
+const cancelledUploads = createCancelledUploadStore({ getStorage: () => localStorage, key: CANCELLED_UPLOADS_STORAGE_KEY, ttlMs: JOB_TTL_MS });
+/** @type {Set<string>} Jobs of cancelled uploads whose cancel request is in flight, so overlapping merges send one each */
+const cancellingUploadJobIds = new Set();
 /** @type {number} requestedAt of the newest recent-jobs snapshot merged so far (performance.now()) */
 let newestMergedSnapshotRequestedAt = -Infinity;
 /** @type {{host: string, token: string}|null} */
@@ -199,6 +207,66 @@ export function confirmDismissedJob(jobId, dismissedAt) {
  */
 export function dropDismissedJob(jobId, dismissedAt) {
     dismissedJobs.drop(jobId, dismissedAt);
+}
+
+/**
+ * Load the client upload ids of uploads cancelled before their response arrived, saved by earlier loads of this page,
+ * so a merge after a reload still withholds and cancels their jobs.
+ */
+export function loadCancelledUploads() {
+    cancelledUploads.load();
+}
+
+/**
+ * Remember an upload cancelled before its response arrived (cancelEntry during 'uploading' or 'saving'), so recent-jobs
+ * merges withhold the job the server may still create for it and cancel it on the server, for JOB_TTL_MS, reloads included.
+ * @param {string} clientUploadId - The id the cancelled upload sent
+ */
+export function recordCancelledUpload(clientUploadId) {
+    cancelledUploads.record(clientUploadId);
+}
+
+/**
+ * Ask the server to cancel a job (POST /api/jobs/{id}/cancel), giving up after CANCEL_REQUEST_TIMEOUT_MS. The cancel
+ * has settled when the server cancelled the job or the job is gone (404). Any other status, a timeout or a network
+ * error means the job may still be running, may have completed first or may already be cancelled.
+ * @param {string} jobId
+ * @returns {Promise<boolean>} Whether the cancel settled
+ */
+export async function requestJobCancel(jobId) {
+    try {
+        const response = await fetch('/api/jobs/' + jobId + '/cancel', {
+            method: 'POST',
+            headers: { 'X-API-Key': getApiKey() },
+            signal: AbortSignal.timeout(CANCEL_REQUEST_TIMEOUT_MS)
+        });
+
+        return response.ok || response.status === 404;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Cancel on the server the job of an upload cancelled before its response arrived. Once the cancel settles
+ * (requestJobCancel), the job is recorded as dismissed and its upload forgotten. Otherwise the upload stays remembered,
+ * so the next merge withholds the job again and retries; a job that has meanwhile completed or been cancelled settles
+ * there (see classifyCancelledUploadJobs).
+ * @param {Object} job - Withheld server job (carries clientUploadId)
+ */
+async function cancelCancelledUploadJob(job) {
+    if (cancellingUploadJobIds.has(job.jobId)) {
+        return;
+    }
+    cancellingUploadJobIds.add(job.jobId);
+    try {
+        if (await requestJobCancel(job.jobId)) {
+            recordDismissedJobs([job.jobId]);
+            cancelledUploads.forget(job.clientUploadId);
+        }
+    } finally {
+        cancellingUploadJobIds.delete(job.jobId);
+    }
 }
 
 /**
@@ -509,9 +577,35 @@ function removeReplacedInterruptedUploads(uploadQueue, serverJobs, newEntries) {
 }
 
 /**
+ * Take out of a snapshot the jobs of uploads cancelled before their response arrived, in this tab or another open one
+ * (the store is refreshed from storage first), that the server has not cancelled or completed, and start cancelling them
+ * on the server (cancelCancelledUploadJob); forget the cancelled uploads whose
+ * job is already cancelled or completed (a completed one stays in the snapshot and is added as a completed entry).
+ * @param {Array<Object>} jobs - Server jobs from a recent-jobs snapshot
+ * @returns {Array<Object>} The jobs the merge goes on with
+ */
+function withholdCancelledUploadJobs(jobs) {
+    cancelledUploads.refresh();
+    const { withheld, settled } = classifyCancelledUploadJobs(jobs, clientUploadId => cancelledUploads.has(clientUploadId));
+    for (const clientUploadId of settled) {
+        cancelledUploads.forget(clientUploadId);
+    }
+    if (withheld.length === 0) {
+        return jobs;
+    }
+    for (const job of withheld) {
+        void cancelCancelledUploadJob(job);
+    }
+
+    return jobs.filter(job => !withheld.includes(job));
+}
+
+/**
  * Merge server-known recent jobs into the local upload queue.
  * The server response contains ALL recent jobs (active + terminal from last hour).
  * Coordinates these phases over the shared queue:
+ * - withholdCancelledUploadJobs: takes out, and cancels on the server, the jobs of uploads cancelled before their
+ *   response arrived (cancelled-uploads.js), so no later phase sees them
  * - removeStaleEntries: drops normalizing/failed entries whose jobId is gone from the server,
  *   unless the entry received its jobId after the snapshot was requested
  * - reconcileExistingEntries: applies the status ladder to entries the server still knows
@@ -535,7 +629,7 @@ export function mergeServerJobs(snapshot) {
     }
     newestMergedSnapshotRequestedAt = snapshot.requestedAt;
 
-    const serverJobs = snapshot.jobs;
+    const serverJobs = withholdCancelledUploadJobs(snapshot.jobs);
     const uploadQueue = getQueue();
     const serverJobMap = new Map(serverJobs.map(j => [j.jobId, j]));
     const existingJobIds = new Set(uploadQueue.map(e => e.jobId).filter(Boolean));

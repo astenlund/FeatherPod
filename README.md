@@ -121,6 +121,7 @@ curl -X POST https://<your-app>.azurewebsites.net/api/feeds/{feedId}/episodes \
 - `summary` - Short summary for iTunes (defaults to description if not provided)
 - `publishedDate` - Set explicit date (ISO 8601 format)
 - `normalize=true` (query param) - Async server-side audio normalization to -16 LUFS (returns 202 with job ID)
+- `clientUploadId` - With `normalize=true`, an ID the client picks for this upload (1-64 characters, letters, digits and hyphens). The job stores it and job listings return it, so a client whose upload response never arrived can still recognize the job; the push page sends one with every upload
 
 ### Removing Episodes
 

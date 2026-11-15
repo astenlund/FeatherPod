@@ -21,7 +21,7 @@ public class StubBlobService : IBlobStorageService
 
     public virtual Task UploadAudioAsync(string feedId, string fileName, string filePath) => Task.CompletedTask;
 
-    public virtual Task UploadPendingAudioAsync(string feedId, string jobId, string fileName, string filePath) => Task.CompletedTask;
+    public virtual Task UploadPendingAudioAsync(string feedId, string jobId, string fileName, string filePath, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
     public virtual Task<Stream> DownloadAudioAsync(string feedId, string fileName) => Task.FromResult<Stream>(Stream.Null);
 

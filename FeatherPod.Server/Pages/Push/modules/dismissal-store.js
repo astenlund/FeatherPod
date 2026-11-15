@@ -12,6 +12,8 @@
  * next recent-jobs snapshot, which the merge skips anyway. Confirming the dismissal once the request succeeds saves it
  * as an ordinary one. Saved entries without the pending field (all of them before pending dismissals existed) are
  * ordinary dismissals.
+ * The saved-list mechanics (TTL, entry-by-entry writes, storage failures) live in createSavedEntryList, which the
+ * cancelled-upload store (cancelled-uploads.js) shares.
  * Kept separate so it can be unit-tested under Node (tests/push/dismissal-store.test.js, run via `npm test`).
  */
 
@@ -31,8 +33,10 @@
 
 /**
  * @typedef {Object} SavedDismissal
+ * @property {string} jobId
  * @property {number} dismissedAt - Epoch milliseconds
- * @property {boolean} pending - Recorded for a cancel whose request had not settled when it was saved
+ * @property {true} [pending] - Present only for a dismissal recorded for a cancel whose request had not settled when it
+ *     was saved
  */
 
 /**
@@ -49,6 +53,73 @@ function parseJson(text) {
 }
 
 /**
+ * @typedef {Object} SavedEntryList
+ * @property {() => Map<string, *>} read - The saved entries by id, without expired or malformed ones; throws when the
+ *     storage does
+ * @property {(change: (saved: Map<string, *>) => void) => void} update - Apply a change to the saved entries by id and
+ *     write them back, dropping expired ones on the way; a storage that throws or is full keeps its previous contents
+ */
+
+/**
+ * A list saved in storage of entries keyed by a string id, each stamped with an epoch-ms time: entries older than the
+ * TTL are ignored and dropped on the next write, and the list is changed entry by entry rather than replaced, so entries
+ * other tabs saved survive this tab's writes. A saved entry counts only when its id is a non-empty string and its time
+ * a number. Shared by the dismissal store and the cancelled-upload store (cancelled-uploads.js).
+ * @param {Object} options
+ * @param {() => Storage} options.getStorage - Returns the storage holding the list (getItem/setItem); called on every
+ *     access, so a storage that throws when reached degrades like one that throws on use
+ * @param {string} options.key - Storage key of the list
+ * @param {number} options.ttlMs - How long an entry is kept
+ * @param {() => number} options.now - Clock in epoch milliseconds
+ * @param {string} options.idField - Field of a saved entry holding its id
+ * @param {string} options.timeField - Field of a saved entry holding its time
+ * @param {(entry: Object) => *} options.toEntry - Normalizes a valid saved entry into the value the map holds, which is
+ *     also what update writes back
+ * @returns {SavedEntryList}
+ */
+export function createSavedEntryList({ getStorage, key, ttlMs, now, idField, timeField, toEntry }) {
+    function read() {
+        const saved = new Map();
+        const entries = parseJson(getStorage().getItem(key));
+        if (!Array.isArray(entries)) {
+            return saved;
+        }
+        const oldestKept = now() - ttlMs;
+        for (const entry of entries) {
+            const id = entry?.[idField];
+            const time = entry?.[timeField];
+            if (typeof id === 'string' && id !== '' && typeof time === 'number' && time >= oldestKept) {
+                saved.set(id, toEntry(entry));
+            }
+        }
+
+        return saved;
+    }
+
+    function update(change) {
+        try {
+            const saved = read();
+            change(saved);
+            getStorage().setItem(key, JSON.stringify(Array.from(saved.values())));
+        } catch {
+            // Storage unavailable or full: the saved list keeps its previous contents
+        }
+    }
+
+    return { read, update };
+}
+
+/**
+ * Build a saved dismissal entry, carrying the pending field only for a pending dismissal.
+ * @param {string} jobId
+ * @param {number} dismissedAt
+ * @param {boolean} pending
+ */
+function savedDismissal(jobId, dismissedAt, pending) {
+    return pending ? { jobId, dismissedAt, pending: true } : { jobId, dismissedAt };
+}
+
+/**
  * Create a dismissal store over a storage-like object.
  * @param {Object} options
  * @param {() => Storage} options.getStorage - Returns the storage holding the saved list (getItem/setItem); called on
@@ -61,47 +132,21 @@ function parseJson(text) {
 export function createDismissalStore({ getStorage, key, ttlMs, now = Date.now }) {
     /** @type {Map<string, number>} dismissedAt by jobId */
     const dismissed = new Map();
-
-    /**
-     * Read the saved dismissals, without the ones older than the TTL or malformed.
-     * @returns {Map<string, SavedDismissal>} by jobId
-     */
-    function readSaved() {
-        const saved = new Map();
-        const entries = parseJson(getStorage().getItem(key));
-        if (!Array.isArray(entries)) {
-            return saved;
-        }
-        const oldestKept = now() - ttlMs;
-        for (const entry of entries) {
-            if (entry?.jobId && entry.dismissedAt && entry.dismissedAt >= oldestKept) {
-                saved.set(entry.jobId, { dismissedAt: entry.dismissedAt, pending: entry.pending === true });
-            }
-        }
-
-        return saved;
-    }
-
-    /**
-     * Apply a change to the saved dismissals, dropping expired ones on the way.
-     * @param {(saved: Map<string, SavedDismissal>) => void} change - Mutates the saved dismissals (by jobId)
-     */
-    function updateSaved(change) {
-        try {
-            const saved = readSaved();
-            change(saved);
-            const entries = Array.from(saved, ([jobId, { dismissedAt, pending }]) => (pending ? { jobId, dismissedAt, pending } : { jobId, dismissedAt }));
-            getStorage().setItem(key, JSON.stringify(entries));
-        } catch {
-            // Storage unavailable or full: the saved list keeps its previous contents
-        }
-    }
+    const savedList = createSavedEntryList({
+        getStorage,
+        key,
+        ttlMs,
+        now,
+        idField: 'jobId',
+        timeField: 'dismissedAt',
+        toEntry: entry => savedDismissal(entry.jobId, entry.dismissedAt, entry.pending === true)
+    });
 
     return {
         has: jobId => dismissed.has(jobId),
 
         load() {
-            updateSaved(saved => {
+            savedList.update(saved => {
                 for (const [jobId, { dismissedAt, pending }] of saved) {
                     if (!pending) {
                         dismissed.set(jobId, dismissedAt);
@@ -116,9 +161,9 @@ export function createDismissalStore({ getStorage, key, ttlMs, now = Date.now })
                 for (const jobId of jobIds) {
                     dismissed.set(jobId, dismissedAt);
                 }
-                updateSaved(saved => {
+                savedList.update(saved => {
                     for (const jobId of jobIds) {
-                        saved.set(jobId, { dismissedAt, pending });
+                        saved.set(jobId, savedDismissal(jobId, dismissedAt, pending));
                     }
                 });
             }
@@ -127,9 +172,9 @@ export function createDismissalStore({ getStorage, key, ttlMs, now = Date.now })
         },
 
         confirm(jobId, dismissedAt) {
-            updateSaved(saved => {
+            savedList.update(saved => {
                 if (saved.get(jobId)?.dismissedAt === dismissedAt) {
-                    saved.set(jobId, { dismissedAt, pending: false });
+                    saved.set(jobId, savedDismissal(jobId, dismissedAt, false));
                 }
             });
         },
@@ -138,7 +183,7 @@ export function createDismissalStore({ getStorage, key, ttlMs, now = Date.now })
             if (dismissed.get(jobId) === dismissedAt) {
                 dismissed.delete(jobId);
             }
-            updateSaved(saved => {
+            savedList.update(saved => {
                 if (saved.get(jobId)?.dismissedAt === dismissedAt) {
                     saved.delete(jobId);
                 }

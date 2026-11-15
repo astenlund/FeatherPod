@@ -119,7 +119,7 @@ for (const [label, text] of [['unparseable', '{not json'], ['a non-array', '{"jo
 
 test('malformed saved entries are skipped and the rest kept', () => {
     const storage = memoryStorage({
-        [KEY]: JSON.stringify([null, 'j0', { jobId: '', dismissedAt: T0 }, { jobId: 'j1' }, { jobId: 'j2', dismissedAt: T0 }])
+        [KEY]: JSON.stringify([null, 'j0', { jobId: '', dismissedAt: T0 }, { jobId: 'j1' }, { jobId: 7, dismissedAt: T0 }, { jobId: 'j3', dismissedAt: String(T0) }, { jobId: 'j2', dismissedAt: T0 }])
     });
     const s = store(storage, { t: T0 });
 

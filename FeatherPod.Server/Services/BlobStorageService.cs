@@ -94,12 +94,12 @@ public class BlobStorageService : IBlobStorageService
         _logger.LogInformation("Uploaded audio file to blob storage: {FeedId}/{FileName}", feedId, fileName);
     }
 
-    public async Task UploadPendingAudioAsync(string feedId, string jobId, string fileName, string filePath)
+    public async Task UploadPendingAudioAsync(string feedId, string jobId, string fileName, string filePath, CancellationToken cancellationToken = default)
     {
         var blobClient = _container.GetBlobClient(BlobPaths.Pending(feedId, jobId, fileName));
 
         await using var fileStream = File.OpenRead(filePath);
-        await blobClient.UploadAsync(fileStream, overwrite: true);
+        await blobClient.UploadAsync(fileStream, overwrite: true, cancellationToken);
 
         _logger.LogInformation("Uploaded pending audio file to blob storage: {FeedId}/{JobId}/{FileName}", feedId, jobId, fileName);
     }
