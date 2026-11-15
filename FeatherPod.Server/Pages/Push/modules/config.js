@@ -61,6 +61,9 @@ export const TERMINAL_JOB_STATUSES = new Set(['Completed', 'Failed', 'Cancelled'
 // UPLOAD_PHASES: XHR in flight or server persisting the upload. ACTIVE_STATUSES: any non-terminal status.
 export const UPLOAD_PHASES = new Set(['uploading', 'saving']);
 export const ACTIVE_STATUSES = new Set(['queued', ...UPLOAD_PHASES, 'normalizing']);
+// Error a restored queue gives an entry whose upload a reload interrupted; the recent-jobs merge looks for it to replace
+// such an entry with the job the server created for it (see interrupted-uploads.js)
+export const UPLOAD_INTERRUPTED_ERROR = 'Upload interrupted';
 export const STATES = ['no-key', 'ready', 'queue', 'error'];
 
 // No-key state UI strings

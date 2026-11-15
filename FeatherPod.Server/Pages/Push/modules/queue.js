@@ -1,4 +1,4 @@
-import { FEED_ID, JOB_TTL_MS, QUEUE_STORAGE_KEY, STAGES_WITH_PROGRESS, STR_INVALID_KEY, STR_NO_FEED_ACCESS, TERMINAL_JOB_STATUSES, TRANSCRIPTION_ACTIVE_STATUSES } from './config.js';
+import { FEED_ID, JOB_TTL_MS, QUEUE_STORAGE_KEY, STAGES_WITH_PROGRESS, STR_INVALID_KEY, STR_NO_FEED_ACCESS, TERMINAL_JOB_STATUSES, TRANSCRIPTION_ACTIVE_STATUSES, UPLOAD_INTERRUPTED_ERROR } from './config.js';
 import { isValidMediaFile, isActiveWork, isInUploadPhase, tryParseJson } from './utils.js';
 import { getApiKey } from './auth.js';
 import { KEY_VERDICT, keyAttempts } from './key-attempts.js';
@@ -1168,6 +1168,8 @@ export function clearQueueState() {
 /**
  * Restore queue state from localStorage (data only -- does not show or render any UI).
  * Filters out entries older than 1 hour. Entries without startedAt (pre-migration) are treated as expired.
+ * An entry still uploading or saving is restored as failed with UPLOAD_INTERRUPTED_ERROR (the upload cannot resume);
+ * when the server created a job for it anyway, the recent-jobs merge replaces it with that job (mergeServerJobs).
  * Starts SSE monitors for normalizing entries so progress updates arrive during the sync wait.
  * Caller is responsible for showing the appropriate state after server sync completes.
  * No-op while the queue already holds entries: startup re-runs on hashchange and key entry, and the live
@@ -1215,7 +1217,7 @@ export async function restoreQueueState() {
     for (const entry of uploadQueue) {
         if (isInUploadPhase(entry)) {
             entry.status = 'failed';
-            entry.error = 'Upload interrupted';
+            entry.error = UPLOAD_INTERRUPTED_ERROR;
         } else if (entry.status === 'queued') {
             entry.status = 'cancelled';
         }

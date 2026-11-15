@@ -1,5 +1,6 @@
-import { FEED_ID, DISMISSED_STORAGE_KEY, JOB_TTL_MS, LOCAL_SOURCE_KEY, LOCAL_SOURCE_SEEN_KEY, SHARE_TARGET_CACHE, TERMINAL_JOB_STATUSES } from './config.js';
+import { FEED_ID, DISMISSED_STORAGE_KEY, JOB_TTL_MS, LOCAL_SOURCE_KEY, LOCAL_SOURCE_SEEN_KEY, SHARE_TARGET_CACHE, TERMINAL_JOB_STATUSES, UPLOAD_INTERRUPTED_ERROR } from './config.js';
 import { isActiveWork, isInUploadPhase, tryParseJson } from './utils.js';
+import { isAddableServerJob, pairInterruptedUploads } from './interrupted-uploads.js';
 import { getApiKey } from './auth.js';
 import { keyAttempts } from './key-attempts.js';
 import { getQueue, getActiveUploadId, generateEntryId, addFilesToQueue, monitorEntryNormalizationInBackground, saveQueueState, checkAllComplete, finalizeTerminalEntry } from './queue.js';
@@ -481,12 +482,14 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds, requ
 }
 
 /**
- * Build entries for server jobs not already present in the local queue. Skips cancelled
- * jobs, jobs in dismissedJobIds (dismissed, cleared or cancelled entries, including ones saved
- * by other tabs), and jobs whose fileName matches a currently-uploading entry
+ * Build entries for server jobs not already present in the local queue. Skips, through isAddableServerJob, cancelled
+ * jobs and jobs in dismissedJobIds (dismissed, cleared or cancelled entries, including ones saved
+ * by other tabs), and also jobs whose fileName matches a currently-uploading entry
  * (dedup for in-flight uploads where the SSE event arrives before the XHR 202 response
  * sets the jobId). Entries are returned but not yet pushed onto the queue. Each is stamped
- * with jobIdReceivedAt, so an older snapshot merged later cannot remove it as stale.
+ * with jobIdReceivedAt, so an older snapshot merged later cannot remove it as stale. A job whose upload a reload
+ * interrupted is still built here (its local entry is failed, not uploading); removeReplacedInterruptedUploads then
+ * drops the local entry it replaces.
  * @param {Array<Object>} uploadQueue
  * @param {Array<Object>} serverJobs
  * @param {Set<string>} existingJobIds - jobIds present in the queue before reconciliation
@@ -494,14 +497,12 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds, requ
  */
 function addNewServerEntries(uploadQueue, serverJobs, existingJobIds) {
     const uploadingFileNames = new Set(uploadQueue.filter(isInUploadPhase).map(e => e.fileName));
+    const excludedJobIds = { has: jobId => existingJobIds.has(jobId) || dismissedJobIds.has(jobId) };
     const newEntries = [];
     for (const serverJob of serverJobs) {
-        if (!existingJobIds.has(serverJob.jobId) && !uploadingFileNames.has(serverJob.fileName) && !dismissedJobIds.has(serverJob.jobId)) {
+        if (isAddableServerJob(serverJob, excludedJobIds) && !uploadingFileNames.has(serverJob.fileName)) {
             const serverStatus = serverJob.status;
             const isServerTerminal = TERMINAL_JOB_STATUSES.has(serverStatus);
-            if (serverStatus === 'Cancelled') {
-                continue;
-            }
             newEntries.push({
                 id: generateEntryId(),
                 file: null,
@@ -532,13 +533,35 @@ function addNewServerEntries(uploadQueue, serverJobs, existingJobIds) {
 }
 
 /**
+ * Remove the reload-interrupted upload entries that newly discovered server jobs replace: an entry restoreQueueState
+ * failed with UPLOAD_INTERRUPTED_ERROR whose job the server created anyway (pairing rules in interrupted-uploads.js).
+ * Only jobs the merge is adding as new entries replace anything, so a cancelled, dismissed or already-queued job leaves
+ * the interrupted entry in place.
+ * @param {Array<Object>} uploadQueue
+ * @param {Array<Object>} serverJobs
+ * @param {Array<Object>} newEntries - Entries addNewServerEntries built for this merge
+ * @returns {boolean} True if any entry was removed
+ */
+function removeReplacedInterruptedUploads(uploadQueue, serverJobs, newEntries) {
+    const newJobIds = new Set(newEntries.map(e => e.jobId));
+    const replaced = pairInterruptedUploads(uploadQueue, serverJobs.filter(j => newJobIds.has(j.jobId)), UPLOAD_INTERRUPTED_ERROR);
+    for (const entry of replaced.values()) {
+        removeEntry(uploadQueue, entry);
+    }
+
+    return replaced.size > 0;
+}
+
+/**
  * Merge server-known recent jobs into the local upload queue.
  * The server response contains ALL recent jobs (active + terminal from last hour).
- * Coordinates three behavior-preserving phases over the shared queue:
+ * Coordinates these phases over the shared queue:
  * - removeStaleEntries: drops normalizing/failed entries whose jobId is gone from the server,
  *   unless the entry received its jobId after the snapshot was requested
  * - reconcileExistingEntries: applies the status ladder to entries the server still knows
  * - addNewServerEntries: appends unknown server jobs (e.g., from CLI or another tab)
+ * - removeReplacedInterruptedUploads: drops each "Upload interrupted" entry a reload left whose job is among the new
+ *   ones, so the upload shows once, as the server's entry
  * then repaints the affected DOM, resumes SSE monitoring, refreshes the queue title and toggles
  * (so work discovered after the queue finished gets its toggles back), and persists queue state.
  * If the snapshot is null (fetch failed), skips reconciliation entirely. A snapshot requested before
@@ -564,8 +587,9 @@ export function mergeServerJobs(snapshot) {
 
     const removedStale = removeStaleEntries(uploadQueue, serverJobMap, snapshot.requestedAt);
     const removedReconciled = reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds, snapshot.requestedAt);
-    const removedEntries = removedStale || removedReconciled;
     const newEntries = addNewServerEntries(uploadQueue, serverJobs, existingJobIds);
+    const removedInterrupted = removeReplacedInterruptedUploads(uploadQueue, serverJobs, newEntries);
+    const removedEntries = removedStale || removedReconciled || removedInterrupted;
 
     if (newEntries.length === 0 && changedEntryIds.size === 0 && !removedEntries) {
         return;
