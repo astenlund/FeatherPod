@@ -592,16 +592,21 @@ export function updateQueueTitleForEpisode(episodeId, newTitle) {
 
 /**
  * Update the normalization progress bar from a job status event.
- * Requires job.stage to be set by the Function; no-ops if stage is absent.
+ * Records job.stage on the entry first, so the status label and the bar read the same stage. While transcription is
+ * active and normalization is complete or finishing, shows the indeterminate bar (the label reads "Transcribing");
+ * otherwise drives the bar from job.stage, and no-ops if the event carries no stage.
  * @param {QueueEntry} entry
  * @param {Object} job
  */
 function updateNormalizationProgress(entry, job) {
     const progressBar = getEntryProgressBar(entry.id);
+    if (job.stage) {
+        entry.stage = job.stage;
+    }
 
     // After normalization completes, show indeterminate bar while transcription runs
     const transcriptionActive = TRANSCRIPTION_ACTIVE_STATUSES.has(entry.transcriptionStatus);
-    if (transcriptionActive && (entry.normalizationComplete || job.stage === 'Finishing')) {
+    if (transcriptionActive && (entry.normalizationComplete || entry.stage === 'Finishing')) {
         progressAnimator.reset(entry.id);
         if (progressBar) {
             progressBar.classList.add('indeterminate');
@@ -616,7 +621,6 @@ function updateNormalizationProgress(entry, job) {
         return;
     }
 
-    entry.stage = job.stage;
     const isProgressStage = STAGES_WITH_PROGRESS.includes(job.stage);
 
     if (isProgressStage) {
