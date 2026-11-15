@@ -24,6 +24,7 @@ const CACHED_ASSET_SUFFIXES = [
     '/modules/interrupted-uploads.js',
     '/modules/dismissal-store.js',
     '/modules/cancelled-uploads.js',
+    '/modules/queue-restore.js',
     '/modules/server-sync.js',
     '/modules/youtube-url.js',
     '/modules/youtube.js',

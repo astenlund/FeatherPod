@@ -210,6 +210,16 @@ export function dropDismissedJob(jobId, dismissedAt) {
 }
 
 /**
+ * Whether this tab treats a job as dismissed (dismissed, cleared or cancelled here, or saved as dismissed by another tab
+ * before this tab's last loadDismissedJobIds), as recent-jobs merges do.
+ * @param {string} jobId
+ * @returns {boolean}
+ */
+export function isJobDismissed(jobId) {
+    return dismissedJobs.has(jobId);
+}
+
+/**
  * Load the client upload ids of uploads cancelled before their response arrived, saved by earlier loads of this page,
  * so a merge after a reload still withholds and cancels their jobs.
  */

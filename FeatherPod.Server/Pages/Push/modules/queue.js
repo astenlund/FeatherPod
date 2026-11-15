@@ -8,8 +8,9 @@ import { renderQueueList, updateQueueItemInDOM, updateQueueItemProgress, removeQ
 import { resetNotificationToggle, syncPushSession, notifyQueueComplete } from './notifications.js';
 import { resetWakeLockToggle } from './wake-lock.js';
 import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetchBrowserUploads, initHistorySection, invalidateBrowserUploadsCache } from './history.js';
-import { recordCancelledUpload, recordDismissedJobs, confirmDismissedJob, dropDismissedJob, requestJobCancel, notifyLocalSourceUploaded, returnLocalFiles, returnSharedFiles } from './server-sync.js';
+import { isJobDismissed, recordCancelledUpload, recordDismissedJobs, confirmDismissedJob, dropDismissedJob, requestJobCancel, notifyLocalSourceUploaded, returnLocalFiles, returnSharedFiles } from './server-sync.js';
 import { generateClientUploadId } from './cancelled-uploads.js';
+import { selectRestorableEntries } from './queue-restore.js';
 import { showYouTubeCookieDialog } from './youtube.js';
 import { parseYouTubeFileName } from './youtube-url.js';
 
@@ -1171,7 +1172,10 @@ export function clearQueueState() {
 
 /**
  * Restore queue state from localStorage (data only -- does not show or render any UI).
- * Filters out entries older than 1 hour. Entries without startedAt (pre-migration) are treated as expired.
+ * Restores only the entries selectRestorableEntries (queue-restore.js) keeps: started within JOB_TTL_MS (entries without
+ * startedAt, from before the field existed, count as expired) and not carrying a job this browser has dismissed. The
+ * dismissals must be loaded first (startSession does), since the saved queue may come from another tab that still showed
+ * an entry this tab dismissed.
  * An entry still uploading or saving is restored as failed with UPLOAD_INTERRUPTED_ERROR (the upload cannot resume);
  * when the server created a job for it anyway, the recent-jobs merge replaces it with that job (mergeServerJobs).
  * Starts SSE monitors for normalizing entries so progress updates arrive during the sync wait.
@@ -1199,9 +1203,8 @@ export async function restoreQueueState() {
         return false;
     }
 
-    // Filter out entries older than 1 hour (or missing startedAt -- pre-migration)
-    const oneHourAgo = Date.now() - JOB_TTL_MS;
-    const recentEntries = entries.filter(e => e.startedAt && e.startedAt >= oneHourAgo);
+    // Only entries started within the TTL whose job this browser has not dismissed (another tab may have saved the queue last)
+    const recentEntries = selectRestorableEntries(entries, { now: Date.now(), ttlMs: JOB_TTL_MS, isDismissedJob: isJobDismissed });
     if (recentEntries.length === 0) {
         clearQueueState();
 
