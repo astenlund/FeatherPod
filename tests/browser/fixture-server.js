@@ -6,7 +6,10 @@ import { fileURLToPath } from 'node:url';
 /**
  * Serves the real push page from disk the way FeatherPod.Server's push routes do (GeneratePushPageHtml, ServePushAsset,
  * ServePushModuleAsset in Program.cs) for a feed without artwork, so browser tests run the actual push.js startup with no
- * .NET server or storage. Everything under /api/ is left to the test's route interception; this server answers it 404.
+ * .NET server or storage. Everything under /api/ is left to the test's route interception; this server answers it 404,
+ * unless the test passes `handleApi`, which then answers the /api/ requests that reach the network. A request answered
+ * by route interception never opens a connection, so a test that depends on the browser's per-host connection limit
+ * serves the requests that hold connections (event streams, uploads) through `handleApi` instead.
  */
 
 const pushDir = fileURLToPath(new URL('../../FeatherPod.Server/Pages/Push/', import.meta.url));
@@ -60,8 +63,14 @@ function resolveAsset(urlPath) {
     return null;
 }
 
-async function handle(request, response) {
+async function handle(request, response, handleApi) {
     const urlPath = new URL(request.url, 'http://fixture').pathname;
+
+    if (handleApi && urlPath.startsWith('/api/')) {
+        await handleApi(request, response, urlPath);
+
+        return;
+    }
 
     if (urlPath === '/' + FEED_ID + '/push') {
         response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
@@ -90,12 +99,15 @@ async function handle(request, response) {
 
 /**
  * Start the fixture server on a free loopback port. 127.0.0.1 keeps the page a secure context, as the real deployment's
- * HTTPS origin is.
+ * HTTPS origin is. The server speaks plain HTTP/1.1, so the browser keeps its per-host connection limit against it.
+ * @param {Object} [options]
+ * @param {(request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse, urlPath: string) => Promise<void>|void} [options.handleApi]
+ *     Answers /api/ requests that reach the network; without it they answer 404
  * @returns {Promise<{ origin: string, pushUrl: string, close: () => Promise<void> }>}
  */
-export async function startFixtureServer() {
+export async function startFixtureServer({ handleApi } = {}) {
     const server = createServer((request, response) => {
-        handle(request, response).catch(() => {
+        handle(request, response, handleApi).catch(() => {
             response.writeHead(500);
             response.end();
         });
@@ -107,6 +119,10 @@ export async function startFixtureServer() {
     return {
         origin,
         pushUrl: origin + '/' + FEED_ID + '/push',
-        close: () => new Promise(resolve => server.close(() => resolve())),
+        // Held event streams would keep close() waiting, so end every connection first
+        close: () => new Promise(resolve => {
+            server.close(() => resolve());
+            server.closeAllConnections();
+        }),
     };
 }

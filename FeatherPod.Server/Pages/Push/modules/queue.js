@@ -11,6 +11,7 @@ import { collapseHistoryImmediate, saveToLocalHistory, refreshHistoryList, fetch
 import { isJobDismissed, recordCancelledUpload, recordDismissedJobs, confirmDismissedJob, dropDismissedJob, requestJobCancel, notifyLocalSourceUploaded, returnLocalFiles, returnSharedFiles } from './server-sync.js';
 import { generateClientUploadId } from './cancelled-uploads.js';
 import { selectRestorableEntries } from './queue-restore.js';
+import { createStreamBudget } from './stream-budget.js';
 import { showYouTubeCookieDialog } from './youtube.js';
 import { parseYouTubeFileName } from './youtube-url.js';
 
@@ -24,6 +25,16 @@ let isUploading = false;
 let nextEntryId = 0;
 /** @type {((errorType: 'invalid'|'no-access') => void)|null} Raises the key prompt; registered by push.js */
 let onUploadKeyRejected = null;
+
+/**
+ * Most job progress streams (/api/jobs/{jobId}/progress) open at once. On a plain HTTP/1.1 origin Chromium opens at
+ * most six connections per host; the feed events stream takes one, an upload one, and one stays free for API calls.
+ */
+const MAX_JOB_PROGRESS_STREAMS = 3;
+/** The job progress streams this page holds open; monitorEntryNormalization polls instead when none is free */
+const progressStreams = createStreamBudget(MAX_JOB_PROGRESS_STREAMS);
+/** What pollEntryNormalization resolves when its upgradeWhen option ends the loop so a stream can take over */
+const POLL_UPGRADE = 'upgrade';
 
 /**
  * Register the handler that raises the key prompt (push.js showNoKeyUI). rejectQueueForKey calls it when an upload
@@ -787,6 +798,10 @@ function finalizeCancelledEntry(entry, options) {
 /**
  * Monitor normalization for a queue entry via SSE with polling fallback.
  * Returns a Promise that resolves when normalization completes/fails/cancels.
+ * At most MAX_JOB_PROGRESS_STREAMS job progress streams are open at once (see progressStreams). An entry refused a
+ * stream polls instead, and switches to a stream once one closes, provided it is still this monitor's entry: still
+ * 'normalizing', in the queue, on the same job and not taken over by a newer monitor. An entry that fell back to
+ * polling because its stream failed keeps polling, as before, so a failing stream is not reopened every round.
  * @param {QueueEntry} entry
  * @returns {Promise<void>}
  */
@@ -802,112 +817,145 @@ function monitorEntryNormalization(entry) {
         progressAnimator.reset(entry.id);
         progressAnimator.setFileSize(entry.id, entry.fileSize);
 
-        const sseUrl = '/api/jobs/' + entry.jobId + '/progress';
+        const jobId = entry.jobId;
+        const sseUrl = '/api/jobs/' + jobId + '/progress';
+        const isStillMonitored = () => entry._resolveMonitor === resolve && entry.status === 'normalizing' && entry.jobId === jobId && uploadQueue.includes(entry);
 
         // Resolve this monitor once polling ends. The entry may already belong to a newer monitor by then (a retry, or
         // a merge that revived it), so only this monitor's own resolver is cleared.
-        function pollUntilDone() {
-            pollEntryNormalization(entry).then(() => {
-                if (entry._resolveMonitor === resolve) {
-                    entry._resolveMonitor = null;
-                }
-                resolve();
-            });
-        }
-
-        if (typeof EventSource === 'undefined') {
-            pollUntilDone();
-
-            return;
-        }
-
-        const eventSource = new EventSource(sseUrl);
-        entry.eventSource = eventSource;
-        let lastStatus = null;
-        let connectionEstablished = false;
-        let jobFinished = false;
-
-        function finishMonitoring() {
-            entry.eventSource = null;
-            entry._resolveMonitor = null;
+        function finishPolling() {
+            if (entry._resolveMonitor === resolve) {
+                entry._resolveMonitor = null;
+            }
             resolve();
         }
 
-        const connectionTimeout = setTimeout(() => {
-            if (!connectionEstablished) {
-                eventSource.close();
-                entry.eventSource = null;
-                pollUntilDone();
-            }
-        }, 5000);
+        function pollUntilDone() {
+            pollEntryNormalization(entry).then(finishPolling);
+        }
 
-        eventSource.onopen = () => {
-            connectionEstablished = true;
-            clearTimeout(connectionTimeout);
-        };
-
-        eventSource.addEventListener('progress', (e) => {
-            const parsed = tryParseJson(e.data);
-            if (parsed) {
-                lastStatus = parsed;
-                if (parsed.status === 'Cancelled') {
-                    clearTimeout(connectionTimeout);
-                    jobFinished = true;
-                    eventSource.close();
-                    void finalizeTerminalEntry(entry, parsed);
-                    finishMonitoring();
+        // Poll while every stream slot is taken; once one frees, try for a stream again
+        function pollUntilStreamSlot() {
+            pollEntryNormalization(entry, { upgradeWhen: progressStreams.hasRoom }).then((outcome) => {
+                if (outcome === POLL_UPGRADE && isStillMonitored()) {
+                    openStreamOrPoll();
 
                     return;
                 }
-                updateEntryFromJobStatus(entry, parsed);
-                updateQueueItemProgress(entry);
-            }
-        });
+                finishPolling();
+            });
+        }
 
-        eventSource.addEventListener('done', async () => {
-            clearTimeout(connectionTimeout);
-            jobFinished = true;
-            eventSource.close();
+        function openStreamOrPoll() {
+            if (typeof EventSource === 'undefined') {
+                pollUntilDone();
 
-            await finalizeTerminalEntry(entry, lastStatus);
-            finishMonitoring();
-        });
-
-        // Named 'error' event from server (e.g., job not found)
-        eventSource.addEventListener('error', (e) => {
-            if (!e.data) {
                 return;
             }
-            clearTimeout(connectionTimeout);
-            jobFinished = true;
-            eventSource.close();
-            const data = tryParseJson(e.data);
-            markLiveUpdate(entry);
-            entry.status = 'failed';
-            entry.error = data?.error || 'An error occurred';
-            progressAnimator.removeSlot(entry.id);
 
-            updateQueueItemInDOM(entry);
-            finishMonitoring();
-        });
+            /** @type {EventSource|null} */
+            let eventSource = null;
+            if (!progressStreams.tryAcquire(() => eventSource !== null && eventSource.readyState !== EventSource.CLOSED)) {
+                pollUntilStreamSlot();
 
-        // Connection error - fall back to polling
-        eventSource.onerror = () => {
-            if (jobFinished) {
                 return;
             }
-            clearTimeout(connectionTimeout);
-            eventSource.close();
-            entry.eventSource = null;
-            pollUntilDone();
-        };
+            eventSource = new EventSource(sseUrl);
+            listenToStream(eventSource);
+        }
+
+        /** @param {EventSource} eventSource */
+        function listenToStream(eventSource) {
+            entry.eventSource = eventSource;
+            let lastStatus = null;
+            let connectionEstablished = false;
+            let jobFinished = false;
+
+            function finishMonitoring() {
+                entry.eventSource = null;
+                entry._resolveMonitor = null;
+                resolve();
+            }
+
+            const connectionTimeout = setTimeout(() => {
+                if (!connectionEstablished) {
+                    eventSource.close();
+                    entry.eventSource = null;
+                    pollUntilDone();
+                }
+            }, 5000);
+
+            eventSource.onopen = () => {
+                connectionEstablished = true;
+                clearTimeout(connectionTimeout);
+            };
+
+            eventSource.addEventListener('progress', (e) => {
+                const parsed = tryParseJson(e.data);
+                if (parsed) {
+                    lastStatus = parsed;
+                    if (parsed.status === 'Cancelled') {
+                        clearTimeout(connectionTimeout);
+                        jobFinished = true;
+                        eventSource.close();
+                        void finalizeTerminalEntry(entry, parsed);
+                        finishMonitoring();
+
+                        return;
+                    }
+                    updateEntryFromJobStatus(entry, parsed);
+                    updateQueueItemProgress(entry);
+                }
+            });
+
+            eventSource.addEventListener('done', async () => {
+                clearTimeout(connectionTimeout);
+                jobFinished = true;
+                eventSource.close();
+
+                await finalizeTerminalEntry(entry, lastStatus);
+                finishMonitoring();
+            });
+
+            // Named 'error' event from server (e.g., job not found)
+            eventSource.addEventListener('error', (e) => {
+                if (!e.data) {
+                    return;
+                }
+                clearTimeout(connectionTimeout);
+                jobFinished = true;
+                eventSource.close();
+                const data = tryParseJson(e.data);
+                markLiveUpdate(entry);
+                entry.status = 'failed';
+                entry.error = data?.error || 'An error occurred';
+                progressAnimator.removeSlot(entry.id);
+
+                updateQueueItemInDOM(entry);
+                finishMonitoring();
+            });
+
+            // Connection error - fall back to polling
+            eventSource.onerror = () => {
+                if (jobFinished) {
+                    return;
+                }
+                clearTimeout(connectionTimeout);
+                eventSource.close();
+                entry.eventSource = null;
+                pollUntilDone();
+            };
+        }
+
+        openStreamOrPoll();
     });
 }
 
 /**
  * Poll normalization job status for a queue entry: the fallback monitorEntryNormalization uses when
  * EventSource is unavailable, when the SSE connection is not established in time, and when the
- * stream errors or closes before its done event. Retries transient errors (network failures,
+ * stream errors or closes before its done event, and the stand-in for a stream while every progress stream slot is
+ * taken (options.upgradeWhen). Retries transient errors (network failures,
  * non-OK responses) with exponential backoff; after maxAttempts consecutive failures it stops polling
  * without marking the entry failed, leaving its status to the next recent-jobs merge. This handles mobile
  * browsers where the network may not be immediately available after resuming from background.
@@ -918,10 +966,13 @@ function monitorEntryNormalization(entry) {
  * answer already in flight when that happens is dropped instead of re-creating a progress slot or overwriting the
  * retried entry. A loop that stops this way leaves the progress slot alone, since the path that finished or
  * restarted the entry owns it now; only a loop that gives up on failures removes it.
+ * With options.upgradeWhen, each round first asks it whether the entry may switch to a stream; when it answers true,
+ * the loop stops without polling that round and resolves POLL_UPGRADE, leaving the progress slot to the stream.
  * @param {QueueEntry} entry
- * @returns {Promise<void>}
+ * @param {{upgradeWhen?: () => boolean}} [options]
+ * @returns {Promise<typeof POLL_UPGRADE|undefined>} POLL_UPGRADE when upgradeWhen ended the loop, otherwise undefined
  */
-async function pollEntryNormalization(entry) {
+async function pollEntryNormalization(entry, options = {}) {
     const pollInterval = 2000;
     const maxAttempts = 5;
     const baseRetryDelay = 2000;
@@ -931,6 +982,10 @@ async function pollEntryNormalization(entry) {
     let consecutiveErrors = 0;
 
     while (isStillPolled()) {
+        if (options.upgradeWhen?.()) {
+            return POLL_UPGRADE;
+        }
+
         let job = null;
         try {
             const response = await fetch('/api/jobs/' + jobId, {
