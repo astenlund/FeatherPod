@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Azure.Core;
 using Azure.Identity;
+using FeatherPod.Server.Validation;
 
 namespace FeatherPod.Server.Services;
 
@@ -128,8 +129,10 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
         return VttSerializer.Serialize(segments);
     }
 
-    private static void ThrowForFastFailure(HttpStatusCode statusCode, string body)
+    private static void ThrowForFastFailure(HttpStatusCode statusCode, string rawBody)
     {
+        var body = SasRedaction.Redact(rawBody);
+
         // 400 covers payload-too-large/duration-too-long ("AudioTooLong", "InvalidAudioLength").
         // 413 is the explicit Payload-Too-Large case. 404 means the endpoint isn't routed in
         // the region. All three are recoverable by falling back to the batch endpoint.
@@ -210,7 +213,7 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
                 {
                     var code = error.TryGetProperty("code", out var c) ? c.GetString() : null;
                     var message = error.TryGetProperty("message", out var m) ? m.GetString() : null;
-                    errorMessage = $"{code}: {message}";
+                    errorMessage = SasRedaction.Redact($"{code}: {message}");
                     _logger.LogWarning("Batch transcription failed: {Error}", errorMessage);
                 }
 
@@ -308,7 +311,7 @@ public class SpeechTranscriptionService : ISpeechTranscriptionService
 
         if (!response.IsSuccessStatusCode)
         {
-            throw new HttpRequestException($"Speech API {response.RequestMessage?.Method} {response.RequestMessage?.RequestUri?.AbsolutePath} failed ({(int)response.StatusCode}): {body}");
+            throw new HttpRequestException($"Speech API {response.RequestMessage?.Method} {response.RequestMessage?.RequestUri?.AbsolutePath} failed ({(int)response.StatusCode}): {SasRedaction.Redact(body)}");
         }
 
         return JsonDocument.Parse(body);

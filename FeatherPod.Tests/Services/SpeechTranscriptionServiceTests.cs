@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using Azure.Core;
 using FeatherPod.Server.Services;
+using FeatherPod.Server.Validation;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -11,13 +12,16 @@ namespace FeatherPod.Tests.Services;
 /// Pure unit tests for the batch REST paths of <see cref="SpeechTranscriptionService"/>, driven by a
 /// stub <see cref="HttpMessageHandler"/> injected through a stub <see cref="IHttpClientFactory"/> and a
 /// stub <see cref="TokenCredential"/>. Covers success-path JSON parsing, the pinned non-2xx error
-/// format, that parsed values outlive their <see cref="System.Text.Json.JsonDocument"/> scope, and the
-/// single 401-triggered token refresh + retry.
+/// format, that parsed values outlive their <see cref="System.Text.Json.JsonDocument"/> scope, the
+/// single 401-triggered token refresh + retry, and that a SAS URL echoed in Speech error text is redacted.
 /// </summary>
 [Collection("Sequential")]
 public class SpeechTranscriptionServiceTests
 {
     private const string Endpoint = "https://speech.example";
+    private const string SasBlobUrl = "https://acct.blob.core.windows.net/pending/job-1/audio.mp3";
+    private const string SasSignature = "SECRETsig%2Bvalue%3D";
+    private const string SasUrl = $"{SasBlobUrl}?sv=2024-11-04&sr=b&sp=r&sig={SasSignature}";
 
     [Fact]
     public async Task SubmitAsync_SuccessResponse_ReturnsSelfLink()
@@ -46,6 +50,50 @@ public class SpeechTranscriptionServiceTests
 
         // Assert
         Assert.Equal("Speech API POST /speechtotext/v3.2/transcriptions failed (400): bad payload", ex.Message);
+    }
+
+    [Fact]
+    public async Task SubmitAsync_ErrorBodyEchoesSasUrl_ThrowsWithoutToken()
+    {
+        // Arrange
+        var handler = new QueuedHandler(Json(HttpStatusCode.BadRequest, $$"""{"code":"InvalidUri","message":"cannot read {{SasUrl}}"}"""));
+        var service = CreateService(handler, new StubTokenCredential());
+
+        // Act
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() => service.SubmitAsync(SasUrl, CancellationToken.None));
+
+        // Assert
+        Assert.DoesNotContain(SasSignature, ex.Message);
+        Assert.Contains($"{SasBlobUrl}?{SasRedaction.RedactedQuery}", ex.Message);
+    }
+
+    [Fact]
+    public async Task PollUntilCompleteAsync_FailedMessageEchoesSasUrl_ReturnsErrorWithoutToken()
+    {
+        // Arrange
+        var handler = new QueuedHandler(Json(HttpStatusCode.OK, """{"status":"Failed","properties":{"error":{"code":"InvalidData","message":"cannot download """ + SasUrl + "\"}}}"));
+        var service = CreateService(handler, new StubTokenCredential());
+
+        // Act
+        var (_, _, errorMessage) = await service.PollUntilCompleteAsync("https://azure.example/transcriptions/abc", CancellationToken.None);
+
+        // Assert
+        Assert.Equal($"InvalidData: cannot download {SasBlobUrl}?{SasRedaction.RedactedQuery}", errorMessage);
+    }
+
+    [Fact]
+    public async Task TranscribeFastAsync_ErrorBodyEchoesSasUrl_ThrowsWithoutToken()
+    {
+        // Arrange
+        var handler = new QueuedHandler(Json(HttpStatusCode.InternalServerError, $"upstream failure for {SasUrl}"));
+        var service = CreateService(handler, new StubTokenCredential());
+
+        // Act
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() => service.TranscribeFastAsync(new MemoryStream([1, 2, 3]), "audio/mpeg", "audio.mp3", CancellationToken.None));
+
+        // Assert
+        Assert.DoesNotContain(SasSignature, ex.Message);
+        Assert.Contains($"{SasBlobUrl}?{SasRedaction.RedactedQuery}", ex.Message);
     }
 
     [Fact]
