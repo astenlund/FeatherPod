@@ -139,6 +139,18 @@ export default [
         },
     },
 
+    // Playwright browser tests (run via `npm run test:browser`): Node code, plus the callbacks they hand to
+    // page.evaluate/addInitScript, which run in the page and reach it through `window`
+    {
+        files: ['tests/browser/**/*.js'],
+        languageOptions: {
+            globals: {
+                URL: 'readonly',
+                window: 'readonly',
+            },
+        },
+    },
+
     // Service worker specific globals
     {
         files: [`${pushDir}push-sw.js`],
