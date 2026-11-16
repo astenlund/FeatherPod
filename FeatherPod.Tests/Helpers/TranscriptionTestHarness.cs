@@ -76,10 +76,12 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
 
     /// <summary>
     /// Submit a request for <paramref name="fileName"/> and wait until the service has run its completion check,
-    /// which follows the transcription attempt and its temp-file cleanup on every path.
+    /// which follows the transcription attempt and its temp-file cleanup on every path. The wait is registered before
+    /// the request is submitted, since a completion check that runs before the wait exists would go unobserved.
     /// </summary>
     public async Task SubmitAndWaitAsync(string fileName = DefaultFileName)
     {
+        var processingComplete = Jobs.WaitForProcessingCompleteAsync(JobId, TimeSpan.FromSeconds(5));
         await _channel.SubmitAsync(new TranscriptionRequest
         {
             JobId = JobId,
@@ -88,7 +90,7 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
             EpisodeId = "ep-1",
         });
 
-        await Jobs.WaitForProcessingCompleteAsync(JobId, TimeSpan.FromSeconds(5));
+        await processingComplete;
     }
 
     /// <summary>

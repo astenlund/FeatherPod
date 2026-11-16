@@ -44,7 +44,9 @@ public sealed class InMemoryJobService : IJobService
     /// Wait until the next <see cref="GetJobStatusAsync"/> call for <paramref name="jobId"/>.
     /// In the <c>TranscriptionBackgroundService</c> pipeline this fires after the finally
     /// block has run, so observable side effects (terminal status, DeleteAsync, temp file cleanup)
-    /// are guaranteed to have completed.
+    /// are guaranteed to have completed. The wait registers synchronously, before the method's first
+    /// await, and a call that happens before it is not observed, so start the wait before triggering
+    /// the work and await the returned task afterwards.
     /// </summary>
     public async Task WaitForProcessingCompleteAsync(string jobId, TimeSpan timeout)
     {
