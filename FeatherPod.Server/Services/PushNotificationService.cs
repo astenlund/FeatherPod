@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
 using FeatherPod.Server.Models;
+using FeatherPod.Server.Validation;
 using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using Lib.Net.Http.WebPush;
@@ -25,12 +26,23 @@ public class PushNotificationService
     public bool IsEnabled => _vapidAuth is not null;
 
     public PushNotificationService(IBlobStorageService blobStorageService, EpisodeService episodeService, IJobService jobService, IConfiguration config, ILogger<PushNotificationService> logger)
+        : this(blobStorageService, episodeService, jobService, config, logger, new PushServiceClient())
+    {
+    }
+
+    internal PushNotificationService(
+        IBlobStorageService blobStorageService,
+        EpisodeService episodeService,
+        IJobService jobService,
+        IConfiguration config,
+        ILogger<PushNotificationService> logger,
+        PushServiceClient pushClient)
     {
         _blobStorageService = blobStorageService;
         _episodeService = episodeService;
         _jobService = jobService;
         _logger = logger;
-        _pushClient = new PushServiceClient();
+        _pushClient = pushClient;
         _activityWindow = TimeSpan.FromHours(config.GetValue("PushNotifications:ActivityWindowHours", 2.0));
 
         var publicKey = config["PushNotifications:VapidPublicKey"];
@@ -52,11 +64,20 @@ public class PushNotificationService
     // SUBSCRIPTION MANAGEMENT
     // ========================================================================
 
-    public async Task SubscribeAsync(string feedId, PushSubscriptionRequest request)
+    /// <summary>
+    /// Registers or refreshes a subscription. Returns false, storing nothing, when the endpoint is not
+    /// a known browser push service (see <see cref="PushEndpointValidation"/>).
+    /// </summary>
+    public async Task<bool> SubscribeAsync(string feedId, PushSubscriptionRequest request)
     {
+        if (!PushEndpointValidation.IsAllowedEndpoint(request.Endpoint))
+        {
+            return false;
+        }
+
         if (!IsEnabled)
         {
-            return;
+            return true;
         }
 
         await EnsureFeedLoadedAsync(feedId);
@@ -107,6 +128,8 @@ public class PushNotificationService
             await PersistAsync(feedId);
             _logger.LogInformation("Push subscription registered for feed {FeedId}: {Endpoint}", feedId, TruncateEndpoint(request.Endpoint));
         }
+
+        return true;
     }
 
     public async Task UnsubscribeAsync(string feedId, string endpoint)
@@ -361,19 +384,36 @@ public class PushNotificationService
             await EnsureFeedLoadedAsync(feedId);
 
             List<PushSubscriptionInfo> activeSubscriptions;
+            List<string> foreignEndpoints;
             await _lock.WaitAsync();
             try
             {
+                // Subscriptions stored before endpoints were validated may name a host other than a push service.
+                var subscriptions = _cache[feedId];
+                foreignEndpoints = subscriptions.Where(s => !PushEndpointValidation.IsAllowedEndpoint(s.Endpoint)).Select(s => s.Endpoint).ToList();
+                subscriptions.RemoveAll(s => foreignEndpoints.Contains(s.Endpoint));
+
                 var cutoff = DateTime.UtcNow - _activityWindow;
-                activeSubscriptions = _cache[feedId].Where(s => s.LastActiveAt >= cutoff).ToList();
+                activeSubscriptions = subscriptions.Where(s => s.LastActiveAt >= cutoff).ToList();
             }
             finally
             {
                 _lock.Release();
             }
 
+            foreach (var endpoint in foreignEndpoints)
+            {
+                _logger.LogWarning("Removed push subscription with a non-push-service endpoint for feed {FeedId}: {Endpoint}", feedId, TruncateEndpoint(endpoint));
+            }
+
+            // The removals are persisted after delivery, so a storage failure cannot cost genuine subscribers their notification.
             if (activeSubscriptions.Count == 0)
             {
+                if (foreignEndpoints.Count > 0)
+                {
+                    await PersistAsync(feedId);
+                }
+
                 return;
             }
 
@@ -419,7 +459,10 @@ public class PushNotificationService
                 {
                     _lock.Release();
                 }
+            }
 
+            if (staleEndpoints.Count > 0 || foreignEndpoints.Count > 0)
+            {
                 await PersistAsync(feedId);
             }
 

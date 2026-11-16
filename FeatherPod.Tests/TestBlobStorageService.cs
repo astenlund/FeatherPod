@@ -223,7 +223,7 @@ public class TestBlobStorageService : IBlobStorageService
         return await File.ReadAllTextAsync(path);
     }
 
-    public async Task SavePushSubscriptionsAsync(string feedId, string subscriptionsJson)
+    public virtual async Task SavePushSubscriptionsAsync(string feedId, string subscriptionsJson)
     {
         var feedDir = Path.Combine(_rootPath, feedId);
         Directory.CreateDirectory(feedDir);

@@ -448,12 +448,10 @@ class Program
                         return Results.BadRequest(new { error = "Push notifications are not configured" });
                     }
 
-                    if (!Uri.TryCreate(body.Endpoint, UriKind.Absolute, out var endpointUri) || endpointUri.Scheme != "https")
+                    if (!await pushService.SubscribeAsync(feedId, body))
                     {
-                        return Results.BadRequest(new { error = "Endpoint must be an absolute HTTPS URL" });
+                        return Results.BadRequest(new { error = "Endpoint must be an HTTPS URL of a known browser push service" });
                     }
-
-                    await pushService.SubscribeAsync(feedId, body);
 
                     return Results.Ok(new { message = "Subscribed" });
                 })
