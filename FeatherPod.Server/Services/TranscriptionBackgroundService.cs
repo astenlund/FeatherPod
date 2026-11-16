@@ -80,7 +80,7 @@ public class TranscriptionBackgroundService : BackgroundService
 
         lifetime.ApplicationStopping.Register(() => _channel.Complete());
 
-        var maxConcurrent = configuration.GetValue("AzureSpeech:MaxConcurrent", 5);
+        var maxConcurrent = configuration.GetValue("AzureSpeech:MaxConcurrent", 3);
         _concurrency = new SemaphoreSlim(maxConcurrent, maxConcurrent);
         _useFastTranscription = configuration.GetValue("AzureSpeech:UseFastTranscription", true);
         _fastMaxDuration = TimeSpan.FromMinutes(configuration.GetValue("AzureSpeech:FastMaxDurationMinutes", 110));

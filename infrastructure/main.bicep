@@ -227,7 +227,7 @@ resource appServiceSettings 'Microsoft.Web/sites/config@2023-01-01' = {
     AzureOpenAI__Endpoint: 'https://${openAiAccountName}.openai.azure.com/'
     AzureOpenAI__Deployment: gpt4oMiniDeployment.name
     AzureSpeech__Endpoint: 'https://${speechAccountName}.cognitiveservices.azure.com/'
-    AzureSpeech__MaxConcurrent: '5'
+    AzureSpeech__MaxConcurrent: '3'
     AzureSpeech__UseFastTranscription: 'true'
     AzureSpeech__FastTimeoutMinutes: '15'
     AzureSpeech__FastMaxDurationMinutes: '110'
