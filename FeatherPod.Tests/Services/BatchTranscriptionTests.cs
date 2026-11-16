@@ -6,7 +6,8 @@ namespace FeatherPod.Tests.Services;
 /// <summary>
 /// Drives <see cref="FeatherPod.Server.Services.TranscriptionBackgroundService"/> on the batch path
 /// (<c>UseFastTranscription=false</c>). Covers batch success and failure outcomes plus the
-/// quota-cleanup DeleteAsync call in the finally block.
+/// quota-cleanup DeleteAsync call in the finally block, and which audio a batch job submits: the
+/// original pending blob, or for M4A a WAV conversion uploaded beside it.
 /// </summary>
 [Collection("Sequential")]
 public class BatchTranscriptionTests : IAsyncLifetime
@@ -112,5 +113,53 @@ public class BatchTranscriptionTests : IAsyncLifetime
         Assert.Equal(TranscriptionStatuses.Failed, entity.TranscriptionStatus);
         Assert.Equal("Batch transcription timed out", entity.TranscriptionError);
         Assert.Contains("https://azure.example/transcriptions/jkl", _harness.Speech.DeletedUrls);
+    }
+
+    [Fact]
+    public async Task M4a_DownloadsConvertsAndSubmitsUploadedWav()
+    {
+        // Arrange
+        const string m4aFileName = "episode.m4a";
+        var wavBlobName = $"_transcription-{TranscriptionTestHarness.JobId}.wav";
+        _harness.Jobs.SetEntity(TranscriptionTestHarness.CreateEntity(m4aFileName));
+        _harness.Speech.SubmitReturns = "https://azure.example/transcriptions/m4a";
+        _harness.Speech.PollReturns = ("Succeeded", "https://azure.example/transcriptions/m4a/files", null);
+        _harness.Speech.GetResultReturns = "WEBVTT\r\n\r\n00:00:00.000 --> 00:00:02.000\r\n<v Speaker 0>Hi.</v>\r\n";
+
+        // Act
+        await _harness.SubmitAndWaitAsync(m4aFileName);
+
+        // Assert
+        var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
+        Assert.Equal(TranscriptionStatuses.Completed, entity.TranscriptionStatus);
+        Assert.Equal([m4aFileName], _harness.Blob.PendingDownloads);
+        var conversion = Assert.Single(_harness.Converter.Conversions);
+        Assert.Equal(TranscriptionTestHarness.TempInputPath(m4aFileName), conversion.InputPath);
+        Assert.Equal(TranscriptionTestHarness.TempWavPath, conversion.WavPath);
+        Assert.Equal([(wavBlobName, true)], _harness.Blob.PendingAudioUploads);
+        Assert.Equal([wavBlobName], _harness.Blob.SasRequests);
+        Assert.Equal([RecordingBlobService.SasUrlFor(wavBlobName)], _harness.Speech.SubmittedAudioUrls);
+        Assert.False(File.Exists(TranscriptionTestHarness.TempInputPath(m4aFileName)));
+        Assert.False(File.Exists(TranscriptionTestHarness.TempWavPath));
+    }
+
+    [Fact]
+    public async Task Mp3_SubmitsOriginalPendingBlobWithoutDownloadOrConversion()
+    {
+        // Arrange
+        _harness.Jobs.SetEntity(TranscriptionTestHarness.CreateEntity());
+        _harness.Speech.SubmitReturns = "https://azure.example/transcriptions/mp3";
+        _harness.Speech.PollReturns = ("Succeeded", "https://azure.example/transcriptions/mp3/files", null);
+        _harness.Speech.GetResultReturns = "WEBVTT\r\n\r\n00:00:00.000 --> 00:00:02.000\r\n<v Speaker 0>Hi.</v>\r\n";
+
+        // Act
+        await _harness.SubmitAndWaitAsync();
+
+        // Assert
+        Assert.Empty(_harness.Blob.PendingDownloads);
+        Assert.Empty(_harness.Converter.Conversions);
+        Assert.Empty(_harness.Blob.PendingAudioUploads);
+        Assert.Equal([TranscriptionTestHarness.DefaultFileName], _harness.Blob.SasRequests);
+        Assert.Equal([RecordingBlobService.SasUrlFor(TranscriptionTestHarness.DefaultFileName)], _harness.Speech.SubmittedAudioUrls);
     }
 }

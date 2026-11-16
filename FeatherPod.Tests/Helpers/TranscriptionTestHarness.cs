@@ -17,6 +17,8 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
 {
     public const string JobId = "job-1";
 
+    public const string DefaultFileName = "episode.mp3";
+
     private readonly TranscriptionChannel _channel = new();
     private readonly StubLifetime _lifetime = new();
     private readonly TranscriptionBackgroundService _service;
@@ -34,6 +36,8 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
 
     public FakeAudioDurationProbe Duration { get; } = new();
 
+    public FakeWavConverter Converter { get; } = new();
+
     public Task InitializeAsync() => _service.StartAsync(CancellationToken.None);
 
     public async Task DisposeAsync()
@@ -43,13 +47,23 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
         _lifetime.Dispose();
     }
 
-    public static JobStatusEntity CreateEntity() => new()
+    /// <summary>
+    /// Path the service downloads the pending blob to for <paramref name="fileName"/>, so tests can check its cleanup.
+    /// </summary>
+    public static string TempInputPath(string fileName) => Path.Combine(Path.GetTempPath(), "FeatherPod", $"transcribe-{JobId}{Path.GetExtension(fileName)}");
+
+    /// <summary>
+    /// Path the service converts to, so tests can check its cleanup.
+    /// </summary>
+    public static string TempWavPath => Path.Combine(Path.GetTempPath(), "FeatherPod", $"transcribe-{JobId}.wav");
+
+    public static JobStatusEntity CreateEntity(string fileName = DefaultFileName) => new()
     {
         PartitionKey = JobStorageNames.JobsPartitionKey,
         RowKey = JobId,
         Status = nameof(JobStatus.Processing),
         FeedId = "test-feed",
-        FileName = "episode.mp3",
+        FileName = fileName,
         Title = "Test Episode",
         Source = nameof(UploadSource.Browser),
         OriginalFileSize = 1024,
@@ -58,13 +72,17 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
         QueuedAt = DateTimeOffset.UtcNow,
     };
 
-    public async Task SubmitAndWaitAsync()
+    /// <summary>
+    /// Submit a request for <paramref name="fileName"/> and wait until the service has run its completion check,
+    /// which follows the transcription attempt and its temp-file cleanup on every path.
+    /// </summary>
+    public async Task SubmitAndWaitAsync(string fileName = DefaultFileName)
     {
         await _channel.SubmitAsync(new TranscriptionRequest
         {
             JobId = JobId,
             FeedId = "test-feed",
-            FileName = "episode.mp3",
+            FileName = fileName,
             EpisodeId = "ep-1",
         });
 
@@ -126,7 +144,7 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
             new NullJobProgressChannel(),
             completionService,
             Duration,
-            new WavConverter(new FFmpegBinaryManager(), NullLogger<WavConverter>.Instance),
+            Converter,
             _lifetime,
             configuration,
             NullLogger<TranscriptionBackgroundService>.Instance);
@@ -156,9 +174,14 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
 
         public List<string> DeletedUrls { get; } = [];
 
+        public List<(string ContentType, string? FileName)> FastRequests { get; } = [];
+
+        public List<string> SubmittedAudioUrls { get; } = [];
+
         public Task<string?> TranscribeFastAsync(Stream audio, string contentType, string? fileName, CancellationToken ct)
         {
             FastCallCount++;
+            FastRequests.Add((contentType, fileName));
 
             if (FastThrows != null)
             {
@@ -171,6 +194,7 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
         public Task<string> SubmitAsync(string audioUrl, CancellationToken ct)
         {
             SubmitCallCount++;
+            SubmittedAudioUrls.Add(audioUrl);
 
             if (SubmitThrows != null)
             {
@@ -208,5 +232,30 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
         public TimeSpan Duration { get; set; } = TimeSpan.Zero;
 
         public Task<TimeSpan> GetDurationAsync(string filePath, CancellationToken ct) => Task.FromResult(Duration);
+    }
+
+    /// <summary>
+    /// <see cref="IWavConverter"/> that records each conversion and writes a placeholder WAV instead of running FFmpeg.
+    /// A configured <see cref="Throws"/> fails the conversion without writing output, as the real converter's contract promises.
+    /// </summary>
+    public sealed class FakeWavConverter : IWavConverter
+    {
+        public Exception? Throws { get; set; }
+
+        public List<(string InputPath, string WavPath)> Conversions { get; } = [];
+
+        public Task ConvertAsync(string inputPath, string wavPath, CancellationToken ct)
+        {
+            Conversions.Add((inputPath, wavPath));
+
+            if (Throws != null)
+            {
+                throw Throws;
+            }
+
+            File.WriteAllBytes(wavPath, [0x52, 0x49, 0x46, 0x46]);
+
+            return Task.CompletedTask;
+        }
     }
 }

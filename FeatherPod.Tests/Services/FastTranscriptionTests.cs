@@ -1,4 +1,5 @@
 using FeatherPod.Server.Services;
+using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using FeatherPod.Tests.Helpers;
 
@@ -7,11 +8,14 @@ namespace FeatherPod.Tests.Services;
 /// <summary>
 /// Drives <see cref="TranscriptionBackgroundService"/> on the Fast path
 /// (<c>UseFastTranscription=true</c>). Covers Fast success and failure outcomes, the
-/// Fast-to-batch fallback when the endpoint is unavailable, and the duration cap that skips Fast.
+/// Fast-to-batch fallback when the endpoint is unavailable, and the duration cap that skips Fast,
+/// for both directly accepted audio and M4A, which the service converts to WAV first.
 /// </summary>
 [Collection("Sequential")]
 public class FastTranscriptionTests : IAsyncLifetime
 {
+    private const string M4aFileName = "episode.m4a";
+
     private readonly TranscriptionTestHarness _harness = new(useFast: true);
 
     public Task InitializeAsync() => _harness.InitializeAsync();
@@ -121,5 +125,115 @@ public class FastTranscriptionTests : IAsyncLifetime
         Assert.Equal(TranscriptionStatuses.Completed, entity.TranscriptionStatus);
         Assert.Equal(0, _harness.Speech.FastCallCount);
         Assert.Contains("https://azure.example/transcriptions/long", _harness.Speech.DeletedUrls);
+    }
+
+    [Fact]
+    public async Task M4aUnderFastCap_ConvertsOnceAndSendsWavToFast()
+    {
+        // Arrange
+        _harness.Jobs.SetEntity(TranscriptionTestHarness.CreateEntity(M4aFileName));
+        _harness.Duration.Duration = TimeSpan.FromMinutes(20);
+        _harness.Speech.FastReturns = "WEBVTT\r\n\r\n00:00:00.000 --> 00:00:01.000\r\n<v Speaker 0>Fast.</v>\r\n";
+
+        // Act
+        await _harness.SubmitAndWaitAsync(M4aFileName);
+
+        // Assert
+        var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
+        Assert.Equal(TranscriptionStatuses.Completed, entity.TranscriptionStatus);
+        Assert.Equal([M4aFileName], _harness.Blob.PendingDownloads);
+        var conversion = Assert.Single(_harness.Converter.Conversions);
+        Assert.Equal(TranscriptionTestHarness.TempInputPath(M4aFileName), conversion.InputPath);
+        Assert.Equal(TranscriptionTestHarness.TempWavPath, conversion.WavPath);
+        var fastRequest = Assert.Single(_harness.Speech.FastRequests);
+        Assert.Equal(AudioHelper.GetMimeType(".wav"), fastRequest.ContentType);
+        Assert.Equal(Path.GetFileName(TranscriptionTestHarness.TempWavPath), fastRequest.FileName);
+        Assert.Empty(_harness.Blob.PendingAudioUploads);
+        Assert.Equal(0, _harness.Speech.SubmitCallCount);
+        AssertTempFilesDeleted();
+    }
+
+    [Fact]
+    public async Task M4aFastUnavailable_FallsBackToBatchReusingDownloadAndConvertedWav()
+    {
+        // Arrange
+        _harness.Jobs.SetEntity(TranscriptionTestHarness.CreateEntity(M4aFileName));
+        _harness.Duration.Duration = TimeSpan.FromMinutes(5);
+        _harness.Speech.FastThrows = new FastTranscriptionUnavailableException("InvalidAudioFormat");
+        _harness.Speech.SubmitReturns = "https://azure.example/transcriptions/m4a-fallback";
+        _harness.Speech.PollReturns = ("Succeeded", "https://azure.example/transcriptions/m4a-fallback/files", null);
+        _harness.Speech.GetResultReturns = "WEBVTT\r\n\r\n00:00:00.000 --> 00:00:02.000\r\n<v Speaker 0>Batch.</v>\r\n";
+
+        // Act
+        await _harness.SubmitAndWaitAsync(M4aFileName);
+
+        // Assert -- the fallback reuses the Fast attempt's download and WAV rather than redoing either.
+        var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
+        Assert.Equal(TranscriptionStatuses.Completed, entity.TranscriptionStatus);
+        Assert.Equal(1, _harness.Speech.FastCallCount);
+        Assert.Equal([M4aFileName], _harness.Blob.PendingDownloads);
+        Assert.Single(_harness.Converter.Conversions);
+        AssertBatchSubmittedConvertedWav();
+        Assert.Contains("https://azure.example/transcriptions/m4a-fallback", _harness.Speech.DeletedUrls);
+        AssertTempFilesDeleted();
+    }
+
+    [Fact]
+    public async Task M4aOverFastCap_UsesBatchWithSingleConversion()
+    {
+        // Arrange -- 200 minutes is > the 110-minute Fast cap.
+        _harness.Jobs.SetEntity(TranscriptionTestHarness.CreateEntity(M4aFileName));
+        _harness.Duration.Duration = TimeSpan.FromMinutes(200);
+        _harness.Speech.SubmitReturns = "https://azure.example/transcriptions/m4a-long";
+        _harness.Speech.PollReturns = ("Succeeded", "https://azure.example/transcriptions/m4a-long/files", null);
+        _harness.Speech.GetResultReturns = "WEBVTT\r\n\r\n00:00:00.000 --> 00:00:01.000\r\n<v Speaker 0>Long.</v>\r\n";
+
+        // Act
+        await _harness.SubmitAndWaitAsync(M4aFileName);
+
+        // Assert
+        var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
+        Assert.Equal(TranscriptionStatuses.Completed, entity.TranscriptionStatus);
+        Assert.Equal(0, _harness.Speech.FastCallCount);
+        Assert.Equal([M4aFileName], _harness.Blob.PendingDownloads);
+        Assert.Single(_harness.Converter.Conversions);
+        AssertBatchSubmittedConvertedWav();
+        AssertTempFilesDeleted();
+    }
+
+    [Fact]
+    public async Task M4aConversionFails_MarksFailedAndDeletesTempInput()
+    {
+        // Arrange
+        _harness.Jobs.SetEntity(TranscriptionTestHarness.CreateEntity(M4aFileName));
+        _harness.Duration.Duration = TimeSpan.FromMinutes(5);
+        _harness.Converter.Throws = new InvalidOperationException("FFmpeg is not available for WAV conversion");
+
+        // Act -- SubmitAndWaitAsync returns only once the completion check has run after the failure.
+        await _harness.SubmitAndWaitAsync(M4aFileName);
+
+        // Assert
+        var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
+        Assert.Equal(TranscriptionStatuses.Failed, entity.TranscriptionStatus);
+        Assert.Equal("FFmpeg is not available for WAV conversion", entity.TranscriptionError);
+        Assert.Single(_harness.Converter.Conversions);
+        Assert.Equal(0, _harness.Speech.FastCallCount);
+        Assert.Equal(0, _harness.Speech.SubmitCallCount);
+        Assert.Empty(_harness.Blob.UploadedTranscripts);
+        AssertTempFilesDeleted();
+    }
+
+    private void AssertBatchSubmittedConvertedWav()
+    {
+        var wavBlobName = $"_transcription-{TranscriptionTestHarness.JobId}.wav";
+        Assert.Equal([(wavBlobName, true)], _harness.Blob.PendingAudioUploads);
+        Assert.Equal([wavBlobName], _harness.Blob.SasRequests);
+        Assert.Equal([RecordingBlobService.SasUrlFor(wavBlobName)], _harness.Speech.SubmittedAudioUrls);
+    }
+
+    private static void AssertTempFilesDeleted()
+    {
+        Assert.False(File.Exists(TranscriptionTestHarness.TempInputPath(M4aFileName)));
+        Assert.False(File.Exists(TranscriptionTestHarness.TempWavPath));
     }
 }
