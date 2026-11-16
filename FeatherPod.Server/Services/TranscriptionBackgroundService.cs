@@ -34,7 +34,7 @@ public class TranscriptionBackgroundService : BackgroundService
     private readonly IJobProgressChannel _progressChannel;
     private readonly JobCompletionService _completionService;
     private readonly IAudioDurationProbe _durationProbe;
-    private readonly WavConverter _wavConverter;
+    private readonly IWavConverter _wavConverter;
     private readonly ILogger<TranscriptionBackgroundService> _logger;
     private readonly SemaphoreSlim _concurrency;
     private readonly bool _useFastTranscription;
@@ -54,7 +54,7 @@ public class TranscriptionBackgroundService : BackgroundService
         IJobProgressChannel progressChannel,
         JobCompletionService completionService,
         IAudioDurationProbe durationProbe,
-        WavConverter wavConverter,
+        IWavConverter wavConverter,
         IHostApplicationLifetime lifetime,
         IConfiguration configuration,
         ILogger<TranscriptionBackgroundService> logger)
@@ -387,7 +387,7 @@ public class TranscriptionBackgroundService : BackgroundService
     }
 
     /// <summary>
-    /// Convert <paramref name="tempInputFile"/> to 16 kHz mono WAV via <see cref="WavConverter"/>.
+    /// Convert <paramref name="tempInputFile"/> to 16 kHz mono WAV via <see cref="IWavConverter"/>.
     /// Returns the temp WAV path (a failed conversion leaves none behind). Pure local I/O -- no
     /// blob upload (callers do that separately for batch).
     /// </summary>

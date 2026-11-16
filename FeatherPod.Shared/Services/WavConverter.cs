@@ -5,10 +5,9 @@ using Microsoft.Extensions.Logging;
 namespace FeatherPod.Shared.Services;
 
 /// <summary>
-/// Converts audio to 16 kHz mono WAV with FFMpegCore, the input format the Azure Speech
-/// endpoints accept for containers they reject (M4A/M4B/MP4).
+/// <see cref="IWavConverter"/> backed by FFMpegCore, using the binaries <see cref="FFmpegBinaryManager"/> resolves.
 /// </summary>
-public sealed class WavConverter
+public sealed class WavConverter : IWavConverter
 {
     private readonly FFmpegBinaryManager _binaryManager;
     private readonly ILogger<WavConverter> _logger;
@@ -19,11 +18,7 @@ public sealed class WavConverter
         _logger = logger;
     }
 
-    /// <summary>
-    /// Writes <paramref name="inputPath"/> as 16 kHz mono WAV to <paramref name="wavPath"/>,
-    /// overwriting it. On failure or cancellation the output is deleted before the exception
-    /// propagates, so callers can treat a thrown conversion as leaving no output behind.
-    /// </summary>
+    /// <inheritdoc />
     public async Task ConvertAsync(string inputPath, string wavPath, CancellationToken ct)
     {
         if (!await _binaryManager.EnsureFFmpegAvailableAsync(ct))

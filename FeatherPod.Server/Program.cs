@@ -116,7 +116,7 @@ class Program
         builder.Services.AddHttpClient(SpeechTranscriptionService.BatchHttpClientName);
         builder.Services.AddSingleton<ISpeechTranscriptionService, SpeechTranscriptionService>();
         builder.Services.AddSingleton<IAudioDurationProbe, FFprobeAudioDurationProbe>();
-        builder.Services.AddSingleton<WavConverter>();
+        builder.Services.AddSingleton<IWavConverter, WavConverter>();
         builder.Services.AddSingleton<ITranscriptionChannel, TranscriptionChannel>();
         builder.Services.AddHostedService<TranscriptionBackgroundService>();
 
