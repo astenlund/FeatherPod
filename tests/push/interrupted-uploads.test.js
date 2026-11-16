@@ -1,84 +1,96 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isAddableServerJob, pairInterruptedUploads } from '../../FeatherPod.Server/Pages/Push/modules/interrupted-uploads.js';
+import { isAddableServerJob, pairInterruptedUploads, selectAddableServerJobs } from '../../FeatherPod.Server/Pages/Push/modules/interrupted-uploads.js';
 
 const INTERRUPTED = 'Upload interrupted';
 const T0 = Date.parse('2026-11-15T10:00:00Z');
+const HOUR = 60 * 60 * 1000;
 
 /**
  * Build a reload-interrupted queue entry.
  * @param {string} id
- * @param {string} fileName
- * @param {number} startedAt - Epoch milliseconds
+ * @param {string|null} clientUploadId
  * @param {Object} [overrides]
  */
-function interrupted(id, fileName, startedAt, overrides = {}) {
-    return { id, fileName, startedAt, status: 'failed', jobId: null, error: INTERRUPTED, ...overrides };
+function interrupted(id, clientUploadId, overrides = {}) {
+    return { id, fileName: 'talk.mp3', startedAt: T0, clientUploadId, status: 'failed', jobId: null, error: INTERRUPTED, ...overrides };
 }
 
 /**
  * Build a server job.
  * @param {string} jobId
- * @param {string} fileName
- * @param {number|null} queuedAt - Epoch milliseconds, or null for a job without queuedAt
+ * @param {string|null} clientUploadId - null for a job from a client that sends none (the CLI)
+ * @param {Object} [overrides]
  */
-function job(jobId, fileName, queuedAt) {
-    return { jobId, fileName, status: 'Running', ...(queuedAt === null ? {} : { queuedAt: new Date(queuedAt).toISOString() }) };
+function job(jobId, clientUploadId, overrides = {}) {
+    return { jobId, fileName: 'talk.mp3', status: 'Running', queuedAt: new Date(T0 + 5000).toISOString(), clientUploadId, ...overrides };
 }
 
-test('a job for the same file queued after the entry started replaces it', () => {
+test('the job carrying the entry\'s clientUploadId replaces it', () => {
     // Arrange
-    const entry = interrupted('e1', 'talk.mp3', T0);
+    const entry = interrupted('e1', 'u1');
 
     // Act
-    const pairs = pairInterruptedUploads([entry], [job('j1', 'talk.mp3', T0 + 5000)], INTERRUPTED);
+    const pairs = pairInterruptedUploads([entry], [job('j1', 'u1')], INTERRUPTED);
 
     // Assert
     assert.equal(pairs.get('j1'), entry);
     assert.equal(pairs.size, 1);
 });
 
-test('a job queued in the same millisecond the entry started still replaces it', () => {
-    // Arrange
-    const entry = interrupted('e1', 'talk.mp3', T0);
+test('the entry\'s own job replaces it with the device clock ahead of the server', () => {
+    // Arrange: the page stamped startedAt an hour ahead of the server's queuedAt
+    const entry = interrupted('e1', 'u1', { startedAt: T0 + HOUR });
 
     // Act
-    const pairs = pairInterruptedUploads([entry], [job('j1', 'talk.mp3', T0)], INTERRUPTED);
+    const pairs = pairInterruptedUploads([entry], [job('j1', 'u1', { queuedAt: new Date(T0).toISOString() })], INTERRUPTED);
 
     // Assert
     assert.equal(pairs.get('j1'), entry);
 });
 
-test('a job for another file name replaces nothing', () => {
+test('the entry\'s own job replaces it whatever its queuedAt, including none', () => {
     // Arrange
-    const entry = interrupted('e1', 'talk.mp3', T0);
+    const entries = [interrupted('e1', 'u1'), interrupted('e2', 'u2')];
+    const jobs = [job('j1', 'u1', { queuedAt: undefined }), job('j2', 'u2', { queuedAt: 'not a date' })];
 
     // Act
-    const pairs = pairInterruptedUploads([entry], [job('j1', 'other.mp3', T0 + 5000)], INTERRUPTED);
+    const pairs = pairInterruptedUploads(entries, jobs, INTERRUPTED);
+
+    // Assert
+    assert.equal(pairs.get('j1'), entries[0]);
+    assert.equal(pairs.get('j2'), entries[1]);
+});
+
+test('a same-name job from a client without a clientUploadId replaces nothing, with the device clock behind the server', () => {
+    // Arrange: the page stamped startedAt an hour behind, so the old timing rule would have let a CLI job claim it
+    const entry = interrupted('e1', 'u1', { startedAt: T0 - HOUR });
+
+    // Act
+    const pairs = pairInterruptedUploads([entry], [job('j-cli', null)], INTERRUPTED);
 
     // Assert
     assert.equal(pairs.size, 0);
 });
 
-test('a job queued before the entry started cannot claim it', () => {
+test('a same-name job carrying another clientUploadId replaces nothing', () => {
     // Arrange
-    const entry = interrupted('e1', 'talk.mp3', T0);
+    const entry = interrupted('e1', 'u1');
 
     // Act
-    const pairs = pairInterruptedUploads([entry], [job('j-old', 'talk.mp3', T0 - 60000)], INTERRUPTED);
+    const pairs = pairInterruptedUploads([entry], [job('j-other', 'u-other')], INTERRUPTED);
 
     // Assert
     assert.equal(pairs.size, 0);
 });
 
-test('a job without a usable queuedAt replaces nothing', () => {
-    // Arrange
-    const entry = interrupted('e1', 'talk.mp3', T0);
-    const unparseable = { ...job('j2', 'talk.mp3', null), queuedAt: 'not a date' };
+test('an entry without a clientUploadId is replaced by nothing', () => {
+    // Arrange: an entry saved before uploads carried an id
+    const entries = [interrupted('e1', null), interrupted('e2', undefined)];
 
     // Act
-    const pairs = pairInterruptedUploads([entry], [job('j1', 'talk.mp3', null), unparseable], INTERRUPTED);
+    const pairs = pairInterruptedUploads(entries, [job('j-cli', null), job('j1', 'u1')], INTERRUPTED);
 
     // Assert
     assert.equal(pairs.size, 0);
@@ -86,23 +98,23 @@ test('a job without a usable queuedAt replaces nothing', () => {
 
 test('entries that are not reload-interrupted uploads are never replaced', () => {
     // Arrange
-    const withJob = interrupted('e1', 'talk.mp3', T0, { jobId: 'j-known' });
-    const otherError = interrupted('e2', 'talk.mp3', T0, { error: 'Network error' });
-    const notFailed = interrupted('e3', 'talk.mp3', T0, { status: 'normalizing' });
-    const noStart = interrupted('e4', 'talk.mp3', undefined);
+    const withJob = interrupted('e1', 'u1', { jobId: 'j-known' });
+    const otherError = interrupted('e2', 'u2', { error: 'Network error' });
+    const notFailed = interrupted('e3', 'u3', { status: 'normalizing' });
+    const jobs = [job('j1', 'u1'), job('j2', 'u2'), job('j3', 'u3')];
 
     // Act
-    const pairs = pairInterruptedUploads([withJob, otherError, notFailed, noStart], [job('j1', 'talk.mp3', T0 + 5000)], INTERRUPTED);
+    const pairs = pairInterruptedUploads([withJob, otherError, notFailed], jobs, INTERRUPTED);
 
     // Assert
     assert.equal(pairs.size, 0);
 });
 
-test('each job replaces at most one entry and each entry is replaced at most once', () => {
+test('several interrupted entries for the same file each pair with their own job', () => {
     // Arrange
-    const first = interrupted('e1', 'talk.mp3', T0);
-    const second = interrupted('e2', 'talk.mp3', T0 + 10000);
-    const jobs = [job('j2', 'talk.mp3', T0 + 25000), job('j1', 'talk.mp3', T0 + 15000), job('j3', 'talk.mp3', T0 + 30000)];
+    const first = interrupted('e1', 'u1');
+    const second = interrupted('e2', 'u2', { startedAt: T0 + 10000 });
+    const jobs = [job('j2', 'u2'), job('j3', 'u3'), job('j1', 'u1')];
 
     // Act
     const pairs = pairInterruptedUploads([first, second], jobs, INTERRUPTED);
@@ -114,23 +126,12 @@ test('each job replaces at most one entry and each entry is replaced at most onc
     assert.equal(pairs.size, 2);
 });
 
-test('a single interrupted entry is replaced by only one of several matching jobs', () => {
-    // Arrange
-    const entry = interrupted('e1', 'talk.mp3', T0);
-
-    // Act
-    const pairs = pairInterruptedUploads([entry], [job('j2', 'talk.mp3', T0 + 9000), job('j1', 'talk.mp3', T0 + 3000)], INTERRUPTED);
-
-    // Assert
-    assert.deepEqual([...pairs.keys()], ['j1']);
-});
-
 test('the merge adds neither a cancelled job nor a dismissed or already-queued one', () => {
     // Arrange
     const excluded = new Set(['j-dismissed', 'j-queued']);
 
     // Act
-    const addable = jobId => isAddableServerJob({ ...job(jobId, 'talk.mp3', T0), status: jobId === 'j-cancelled' ? 'Cancelled' : 'Running' }, excluded);
+    const addable = jobId => isAddableServerJob({ ...job(jobId, null), status: jobId === 'j-cancelled' ? 'Cancelled' : 'Running' }, excluded);
 
     // Assert
     assert.equal(addable('j-running'), true);
@@ -139,16 +140,33 @@ test('the merge adds neither a cancelled job nor a dismissed or already-queued o
     assert.equal(addable('j-queued'), false);
 });
 
-test('a cancelled or dismissed job matching an interrupted entry replaces nothing', () => {
+test('the merge holds back the job of an upload still in flight but adds same-name jobs from other sources', () => {
+    // Arrange: one entry still uploading talk.mp3 and one saving it, beside a finished entry for the same file
+    const isUploading = entry => entry.status === 'uploading' || entry.status === 'saving';
+    const entries = [
+        { id: 'e1', fileName: 'talk.mp3', status: 'uploading', clientUploadId: 'u-uploading' },
+        { id: 'e2', fileName: 'talk.mp3', status: 'saving', clientUploadId: 'u-saving' },
+        { id: 'e3', fileName: 'talk.mp3', status: 'completed', clientUploadId: 'u-done', jobId: 'j-done' }
+    ];
+    const jobs = [job('j-own', 'u-uploading'), job('j-own-saving', 'u-saving'), job('j-cli', null), job('j-other', 'u-other'), job('j-done-again', 'u-done')];
+
+    // Act
+    const added = selectAddableServerJobs(jobs, entries, new Set(), isUploading);
+
+    // Assert
+    assert.deepEqual(added.map(j => j.jobId), ['j-cli', 'j-other', 'j-done-again']);
+});
+
+test('a cancelled or dismissed job carrying an interrupted entry\'s clientUploadId replaces nothing', () => {
     // Arrange
-    const entry = interrupted('e1', 'talk.mp3', T0);
-    const cancelled = { ...job('j-cancelled', 'talk.mp3', T0 + 5000), status: 'Cancelled' };
-    const dismissed = job('j-dismissed', 'talk.mp3', T0 + 6000);
+    const entries = [interrupted('e1', 'u1'), interrupted('e2', 'u2')];
+    const cancelled = job('j-cancelled', 'u1', { status: 'Cancelled' });
+    const dismissed = job('j-dismissed', 'u2');
     const dismissedJobIds = new Map([['j-dismissed', T0 + 7000]]);
 
     // Act
     const addedJobs = [cancelled, dismissed].filter(j => isAddableServerJob(j, dismissedJobIds));
-    const pairs = pairInterruptedUploads([entry], addedJobs, INTERRUPTED);
+    const pairs = pairInterruptedUploads(entries, addedJobs, INTERRUPTED);
 
     // Assert
     assert.equal(pairs.size, 0);
@@ -156,11 +174,11 @@ test('a cancelled or dismissed job matching an interrupted entry replaces nothin
 
 test('no jobs or no entries yield no pairs', () => {
     // Arrange
-    const entry = interrupted('e1', 'talk.mp3', T0);
+    const entry = interrupted('e1', 'u1');
 
     // Act
     const noJobs = pairInterruptedUploads([entry], [], INTERRUPTED);
-    const noEntries = pairInterruptedUploads([], [job('j1', 'talk.mp3', T0 + 5000)], INTERRUPTED);
+    const noEntries = pairInterruptedUploads([], [job('j1', 'u1')], INTERRUPTED);
 
     // Assert
     assert.equal(noJobs.size, 0);

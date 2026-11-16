@@ -120,7 +120,8 @@ if (navigator.serviceWorker) {
  * @property {string|null} jobId - Server normalization job ID
  * @property {string|null} [clientUploadId] - Id this entry's latest upload sent, which the server stores on the job it
  *     creates (set when the upload starts, cleared on retry, persisted); a cancel before the response arrived remembers
- *     it so recent-jobs merges withhold and cancel that job (see cancelled-uploads.js)
+ *     it so recent-jobs merges withhold and cancel that job (see cancelled-uploads.js), and recent-jobs merges recognize
+ *     by it the job of an upload still in flight or interrupted by a reload (see interrupted-uploads.js)
  * @property {number|null} [jobIdReceivedAt] - performance.now() when this page received jobId, from a 202 response or
  *     from the snapshot merge that discovered the job (not persisted); a recent-jobs snapshot requested earlier can lack
  *     the job, so mergeServerJobs does not treat it as stale

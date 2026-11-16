@@ -2,7 +2,7 @@ import { FEED_ID, CANCEL_REQUEST_TIMEOUT_MS, CANCELLED_UPLOADS_STORAGE_KEY, DISM
 import { isActiveWork, isInUploadPhase } from './utils.js';
 import { createDismissalStore } from './dismissal-store.js';
 import { classifyCancelledUploadJobs, createCancelledUploadStore } from './cancelled-uploads.js';
-import { isAddableServerJob, pairInterruptedUploads } from './interrupted-uploads.js';
+import { pairInterruptedUploads, selectAddableServerJobs } from './interrupted-uploads.js';
 import { getApiKey } from './auth.js';
 import { keyAttempts } from './key-attempts.js';
 import { getQueue, getActiveUploadId, generateEntryId, addFilesToQueue, monitorEntryNormalizationInBackground, saveQueueState, checkAllComplete, finalizeTerminalEntry } from './queue.js';
@@ -516,11 +516,11 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds, requ
 }
 
 /**
- * Build entries for server jobs not already present in the local queue. Skips, through isAddableServerJob, cancelled
+ * Build entries for server jobs not already present in the local queue. Skips, through selectAddableServerJobs, cancelled
  * jobs and jobs in dismissedJobs (dismissed, cleared or cancelled entries, including ones saved
- * by other tabs), and also jobs whose fileName matches a currently-uploading entry
- * (dedup for in-flight uploads where the SSE event arrives before the XHR 202 response
- * sets the jobId). Entries are returned but not yet pushed onto the queue. Each is stamped
+ * by other tabs), and also the job of an upload still in flight, recognized by the clientUploadId it carries (the job
+ * can appear in a snapshot before the XHR 202 response sets the entry's jobId); a job for a file of the same name from
+ * another source is added. Entries are returned but not yet pushed onto the queue. Each is stamped
  * with jobIdReceivedAt, so an older snapshot merged later cannot remove it as stale. A job whose upload a reload
  * interrupted is still built here (its local entry is failed, not uploading); removeReplacedInterruptedUploads then
  * drops the local entry it replaces.
@@ -530,37 +530,34 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds, requ
  * @returns {Array<Object>} Newly built queue entries
  */
 function addNewServerEntries(uploadQueue, serverJobs, existingJobIds) {
-    const uploadingFileNames = new Set(uploadQueue.filter(isInUploadPhase).map(e => e.fileName));
     const excludedJobIds = { has: jobId => existingJobIds.has(jobId) || dismissedJobs.has(jobId) };
     const newEntries = [];
-    for (const serverJob of serverJobs) {
-        if (isAddableServerJob(serverJob, excludedJobIds) && !uploadingFileNames.has(serverJob.fileName)) {
-            const serverStatus = serverJob.status;
-            const isServerTerminal = TERMINAL_JOB_STATUSES.has(serverStatus);
-            newEntries.push({
-                id: generateEntryId(),
-                file: null,
-                status: isServerTerminal ? (serverStatus === 'Completed' ? 'completed' : 'failed') : 'normalizing',
-                progress: serverJob.progressPercent ?? (isServerTerminal ? 100 : 0),
-                stage: serverJob.stage || 'Queued',
-                jobId: serverJob.jobId,
-                jobIdReceivedAt: performance.now(),
-                episodeId: serverJob.episodeId || null,
-                episode: null,
-                error: serverJob.error || null,
-                xhr: null,
-                eventSource: null,
-                fileSize: 0,
-                fileName: serverJob.fileName || 'Unknown',
-                title: serverJob.title || null,
-                validationError: false,
-                startedAt: serverJob.queuedAt ? new Date(serverJob.queuedAt).getTime() : Date.now(),
-                normalizationComplete: serverJob.normalizationComplete || false,
-                transcriptionStatus: serverJob.transcriptionStatus || null,
-                transcriptionError: serverJob.transcriptionError || null,
-                _resolveMonitor: null
-            });
-        }
+    for (const serverJob of selectAddableServerJobs(serverJobs, uploadQueue, excludedJobIds, isInUploadPhase)) {
+        const serverStatus = serverJob.status;
+        const isServerTerminal = TERMINAL_JOB_STATUSES.has(serverStatus);
+        newEntries.push({
+            id: generateEntryId(),
+            file: null,
+            status: isServerTerminal ? (serverStatus === 'Completed' ? 'completed' : 'failed') : 'normalizing',
+            progress: serverJob.progressPercent ?? (isServerTerminal ? 100 : 0),
+            stage: serverJob.stage || 'Queued',
+            jobId: serverJob.jobId,
+            jobIdReceivedAt: performance.now(),
+            episodeId: serverJob.episodeId || null,
+            episode: null,
+            error: serverJob.error || null,
+            xhr: null,
+            eventSource: null,
+            fileSize: 0,
+            fileName: serverJob.fileName || 'Unknown',
+            title: serverJob.title || null,
+            validationError: false,
+            startedAt: serverJob.queuedAt ? new Date(serverJob.queuedAt).getTime() : Date.now(),
+            normalizationComplete: serverJob.normalizationComplete || false,
+            transcriptionStatus: serverJob.transcriptionStatus || null,
+            transcriptionError: serverJob.transcriptionError || null,
+            _resolveMonitor: null
+        });
     }
 
     return newEntries;
