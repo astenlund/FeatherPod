@@ -38,6 +38,8 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
 
     public FakeWavConverter Converter { get; } = new();
 
+    public CapturingLogger<TranscriptionBackgroundService> Logger { get; } = new();
+
     public Task InitializeAsync() => _service.StartAsync(CancellationToken.None);
 
     public async Task DisposeAsync()
@@ -147,7 +149,7 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
             Converter,
             _lifetime,
             configuration,
-            NullLogger<TranscriptionBackgroundService>.Instance);
+            Logger);
     }
 
     public sealed class FakeSpeechTranscriptionService : ISpeechTranscriptionService
@@ -227,11 +229,38 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
         }
     }
 
+    /// <summary>
+    /// <see cref="IAudioDurationProbe"/> that reports <see cref="Duration"/> for both a local path and a URL, recording
+    /// each probe's target. A configured <see cref="UrlThrows"/> fails only URL probes, as an unreachable URL would.
+    /// </summary>
     public sealed class FakeAudioDurationProbe : IAudioDurationProbe
     {
         public TimeSpan Duration { get; set; } = TimeSpan.Zero;
 
-        public Task<TimeSpan> GetDurationAsync(string filePath, CancellationToken ct) => Task.FromResult(Duration);
+        public Exception? UrlThrows { get; set; }
+
+        public List<string> PathProbes { get; } = [];
+
+        public List<Uri> UrlProbes { get; } = [];
+
+        public Task<TimeSpan> GetDurationAsync(string filePath, CancellationToken ct)
+        {
+            PathProbes.Add(filePath);
+
+            return Task.FromResult(Duration);
+        }
+
+        public Task<TimeSpan> GetDurationAsync(Uri source, CancellationToken ct)
+        {
+            UrlProbes.Add(source);
+
+            if (UrlThrows != null)
+            {
+                throw UrlThrows;
+            }
+
+            return Task.FromResult(Duration);
+        }
     }
 
     /// <summary>

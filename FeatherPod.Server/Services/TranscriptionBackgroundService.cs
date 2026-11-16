@@ -10,7 +10,10 @@ namespace FeatherPod.Server.Services;
 /// or the batch endpoint (fallback for audio &gt; <c>AzureSpeech:FastMaxDurationMinutes</c>,
 /// or when Fast returns <see cref="FastTranscriptionUnavailableException"/>).
 /// M4A/M4B/MP4 are converted to 16 kHz mono WAV in both paths because the Speech APIs
-/// don't accept the MP4 container despite "AAC" appearing in their format list.
+/// don't accept the MP4 container despite "AAC" appearing in their format list. With Fast enabled,
+/// MP3/WAV/OGG/FLAC are probed for duration through a SAS URL first, so audio over the cap goes to
+/// batch without a download; if that probe fails they are downloaded and probed locally (see
+/// <see cref="TryProbePendingBlobAsync"/>). Other formats are downloaded before probing.
 /// Bounded concurrency via SemaphoreSlim. On startup, jobs a previous process left Queued or Running
 /// are resubmitted (see <see cref="RecoverInterruptedTranscriptionsAsync"/>).
 /// </summary>
@@ -21,6 +24,12 @@ public class TranscriptionBackgroundService : BackgroundService
     /// The APIs don't support the MP4/M4A container despite listing "AAC" as supported.
     /// </summary>
     private static readonly HashSet<string> ConvertExtensions = new(StringComparer.OrdinalIgnoreCase) { ".m4a", ".m4b", ".mp4" };
+
+    /// <summary>
+    /// Extensions whose duration is probed through a SAS URL before any download. They match the formats
+    /// <see cref="IAudioDurationProbe"/>'s URL method reads; every other name keeps the download-then-probe order.
+    /// </summary>
+    private static readonly HashSet<string> UrlProbeExtensions = new(StringComparer.OrdinalIgnoreCase) { ".mp3", ".wav", ".ogg", ".flac" };
 
     /// <summary>
     /// Transcription statuses a restart can leave behind with no request in the in-memory channel.
@@ -190,21 +199,31 @@ public class TranscriptionBackgroundService : BackgroundService
         {
             if (_useFastTranscription)
             {
-                tempInputFile = await DownloadPendingBlobToTempAsync(request, ct);
+                TimeSpan duration;
 
                 if (needsConversion)
                 {
+                    tempInputFile = await DownloadPendingBlobToTempAsync(request, ct);
                     tempWavFile = await ConvertToWavAsync(tempInputFile, request.JobId, ct);
+                    duration = await _durationProbe.GetDurationAsync(tempWavFile, ct);
                 }
-
-                var probePath = tempWavFile ?? tempInputFile;
-                var duration = await _durationProbe.GetDurationAsync(probePath, ct);
+                else if (UrlProbeExtensions.Contains(Path.GetExtension(request.FileName)) && await TryProbePendingBlobAsync(request, ct) is { } remoteDuration)
+                {
+                    duration = remoteDuration;
+                }
+                else
+                {
+                    tempInputFile = await DownloadPendingBlobToTempAsync(request, ct);
+                    duration = await _durationProbe.GetDurationAsync(tempInputFile, ct);
+                }
 
                 if (duration <= _fastMaxDuration)
                 {
+                    tempInputFile ??= await DownloadPendingBlobToTempAsync(request, ct);
+
                     try
                     {
-                        await TranscribeViaFastAsync(request, probePath, ct);
+                        await TranscribeViaFastAsync(request, tempWavFile ?? tempInputFile, ct);
                         transcriptionResolved = true;
                     }
                     catch (FastTranscriptionUnavailableException ex)
@@ -371,6 +390,36 @@ public class TranscriptionBackgroundService : BackgroundService
         Directory.CreateDirectory(tempDir);
 
         return tempDir;
+    }
+
+    /// <summary>
+    /// Probe the pending blob's duration through a read-only SAS URL, before anything is downloaded, so audio
+    /// that goes to batch (which reads the blob by SAS itself) never touches local disk. Returns null when the
+    /// SAS URL or the URL probe fails; the caller then downloads the blob and probes the local copy instead.
+    /// </summary>
+    private async Task<TimeSpan?> TryProbePendingBlobAsync(TranscriptionRequest request, CancellationToken ct)
+    {
+        try
+        {
+            var sasUrl = await _blobService.GeneratePendingBlobSasUrlAsync(request.FeedId, request.JobId, request.FileName);
+
+            return await _durationProbe.GetDurationAsync(new Uri(sasUrl), ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Log the exception type only: ffprobe echoes its input, so the message can carry the SAS token.
+            _logger.LogWarning(
+                "Probing {FileName} by URL failed ({ExceptionType}) for job {JobId}; downloading it to probe locally",
+                request.FileName,
+                ex.GetType().Name,
+                request.JobId);
+
+            return null;
+        }
     }
 
     private async Task<string> DownloadPendingBlobToTempAsync(TranscriptionRequest request, CancellationToken ct)

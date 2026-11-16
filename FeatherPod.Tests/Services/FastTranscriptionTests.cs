@@ -2,6 +2,7 @@ using FeatherPod.Server.Services;
 using FeatherPod.Shared;
 using FeatherPod.Shared.Models;
 using FeatherPod.Tests.Helpers;
+using Microsoft.Extensions.Logging;
 
 namespace FeatherPod.Tests.Services;
 
@@ -9,7 +10,9 @@ namespace FeatherPod.Tests.Services;
 /// Drives <see cref="TranscriptionBackgroundService"/> on the Fast path
 /// (<c>UseFastTranscription=true</c>). Covers Fast success and failure outcomes, the
 /// Fast-to-batch fallback when the endpoint is unavailable, and the duration cap that skips Fast,
-/// for both directly accepted audio and M4A, which the service converts to WAV first.
+/// for both directly accepted audio and M4A, which the service converts to WAV first. MP3/WAV/OGG/FLAC
+/// are probed by SAS URL before any download, falling back to a local probe; other unconverted names
+/// keep the download-then-probe order.
 /// </summary>
 [Collection("Sequential")]
 public class FastTranscriptionTests : IAsyncLifetime
@@ -108,9 +111,10 @@ public class FastTranscriptionTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task DurationOverFastCap_SkipsFastAndUsesBatch()
+    public async Task Mp3OverFastCap_ProbesByUrlAndBatchesWithoutDownload()
     {
         // Arrange -- 200 minutes is > the 110-minute Fast cap.
+        var sasUrl = RecordingBlobService.SasUrlFor(TranscriptionTestHarness.DefaultFileName);
         _harness.Jobs.SetEntity(TranscriptionTestHarness.CreateEntity());
         _harness.Duration.Duration = TimeSpan.FromMinutes(200);
         _harness.Speech.SubmitReturns = "https://azure.example/transcriptions/long";
@@ -123,8 +127,82 @@ public class FastTranscriptionTests : IAsyncLifetime
         // Assert
         var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
         Assert.Equal(TranscriptionStatuses.Completed, entity.TranscriptionStatus);
+        Assert.Equal([new Uri(sasUrl)], _harness.Duration.UrlProbes);
+        Assert.Empty(_harness.Duration.PathProbes);
+        Assert.Empty(_harness.Blob.PendingDownloads);
         Assert.Equal(0, _harness.Speech.FastCallCount);
+        Assert.Equal([sasUrl], _harness.Speech.SubmittedAudioUrls);
         Assert.Contains("https://azure.example/transcriptions/long", _harness.Speech.DeletedUrls);
+    }
+
+    [Fact]
+    public async Task Mp3UnderFastCap_ProbesByUrlThenDownloadsOnceForFast()
+    {
+        // Arrange
+        _harness.Jobs.SetEntity(TranscriptionTestHarness.CreateEntity());
+        _harness.Duration.Duration = TimeSpan.FromMinutes(20);
+        _harness.Speech.FastReturns = "WEBVTT\r\n\r\n00:00:00.000 --> 00:00:01.000\r\n<v Speaker 0>Fast.</v>\r\n";
+
+        // Act
+        await _harness.SubmitAndWaitAsync();
+
+        // Assert
+        var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
+        Assert.Equal(TranscriptionStatuses.Completed, entity.TranscriptionStatus);
+        Assert.Equal([new Uri(RecordingBlobService.SasUrlFor(TranscriptionTestHarness.DefaultFileName))], _harness.Duration.UrlProbes);
+        Assert.Empty(_harness.Duration.PathProbes);
+        Assert.Equal([TranscriptionTestHarness.DefaultFileName], _harness.Blob.PendingDownloads);
+        var fastRequest = Assert.Single(_harness.Speech.FastRequests);
+        Assert.Equal(AudioHelper.GetMimeType(TranscriptionTestHarness.DefaultFileName), fastRequest.ContentType);
+        Assert.Equal(0, _harness.Speech.SubmitCallCount);
+        Assert.False(File.Exists(TranscriptionTestHarness.TempInputPath(TranscriptionTestHarness.DefaultFileName)));
+    }
+
+    [Fact]
+    public async Task OtherFormatUnderFastCap_DownloadsAndProbesLocallyWithoutUrlProbe()
+    {
+        // Arrange -- only MP3/WAV/OGG/FLAC are probed by URL; any other unconverted name keeps the download-first order.
+        const string aacFileName = "episode.aac";
+        _harness.Jobs.SetEntity(TranscriptionTestHarness.CreateEntity(aacFileName));
+        _harness.Duration.Duration = TimeSpan.FromMinutes(20);
+        _harness.Speech.FastReturns = "WEBVTT\r\n\r\n00:00:00.000 --> 00:00:01.000\r\n<v Speaker 0>Fast.</v>\r\n";
+
+        // Act
+        await _harness.SubmitAndWaitAsync(aacFileName);
+
+        // Assert
+        var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
+        Assert.Equal(TranscriptionStatuses.Completed, entity.TranscriptionStatus);
+        Assert.Empty(_harness.Duration.UrlProbes);
+        Assert.Equal([TranscriptionTestHarness.TempInputPath(aacFileName)], _harness.Duration.PathProbes);
+        Assert.Equal([aacFileName], _harness.Blob.PendingDownloads);
+        Assert.Empty(_harness.Blob.SasRequests);
+        Assert.Equal(1, _harness.Speech.FastCallCount);
+    }
+
+    [Fact]
+    public async Task UrlProbeFails_DownloadsAndProbesLocally_WithoutLoggingTheSasUrl()
+    {
+        // Arrange -- ffprobe's error text echoes its input, so a failure can carry the SAS token.
+        const string secret = "sig=SECRET-TOKEN";
+        _harness.Jobs.SetEntity(TranscriptionTestHarness.CreateEntity());
+        _harness.Duration.Duration = TimeSpan.FromMinutes(20);
+        _harness.Duration.UrlThrows = new InvalidOperationException($"ffprobe exited with code 1: https://blob.example/pending/episode.mp3?{secret}: Server returned 403");
+        _harness.Speech.FastReturns = "WEBVTT\r\n\r\n00:00:00.000 --> 00:00:01.000\r\n<v Speaker 0>Fast.</v>\r\n";
+
+        // Act
+        await _harness.SubmitAndWaitAsync();
+
+        // Assert
+        var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
+        Assert.Equal(TranscriptionStatuses.Completed, entity.TranscriptionStatus);
+        Assert.Single(_harness.Duration.UrlProbes);
+        Assert.Equal([TranscriptionTestHarness.TempInputPath(TranscriptionTestHarness.DefaultFileName)], _harness.Duration.PathProbes);
+        Assert.Equal([TranscriptionTestHarness.DefaultFileName], _harness.Blob.PendingDownloads);
+        Assert.Equal(1, _harness.Speech.FastCallCount);
+        var warning = Assert.Single(_harness.Logger.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Contains(TranscriptionTestHarness.DefaultFileName, warning.Message);
+        Assert.DoesNotContain(_harness.Logger.Entries, e => e.Text.Contains(secret, StringComparison.Ordinal) || e.Text.Contains("blob.example", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -142,6 +220,8 @@ public class FastTranscriptionTests : IAsyncLifetime
         var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
         Assert.Equal(TranscriptionStatuses.Completed, entity.TranscriptionStatus);
         Assert.Equal([M4aFileName], _harness.Blob.PendingDownloads);
+        Assert.Equal([TranscriptionTestHarness.TempWavPath], _harness.Duration.PathProbes);
+        Assert.Empty(_harness.Duration.UrlProbes);
         var conversion = Assert.Single(_harness.Converter.Conversions);
         Assert.Equal(TranscriptionTestHarness.TempInputPath(M4aFileName), conversion.InputPath);
         Assert.Equal(TranscriptionTestHarness.TempWavPath, conversion.WavPath);
