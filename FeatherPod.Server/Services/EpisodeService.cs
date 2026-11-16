@@ -586,6 +586,42 @@ public sealed partial class EpisodeService : IDisposable
         return UpdateEpisodeMetadataAsync(feedId, id, title: newTitle);
     }
 
+    /// <summary>
+    /// Renames an episode only while its title is still <paramref name="expectedTitle"/>, comparing inside the lock so a
+    /// rename made in the meantime is never overwritten. Returns the renamed episode, or null when the episode does not
+    /// exist or its title has changed.
+    /// </summary>
+    public async Task<Episode?> RenameEpisodeIfTitleIsAsync(string feedId, string id, string expectedTitle, string newTitle)
+    {
+        await _lock.WaitAsync();
+
+        try
+        {
+            if (!_episodesByFeed.TryGetValue(feedId, out var episodes))
+            {
+                return null;
+            }
+
+            var index = episodes.FindIndex(e => e.Id == id);
+            if (index < 0 || !string.Equals(episodes[index].Title, expectedTitle, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            var updated = episodes[index] with { Title = newTitle };
+            episodes[index] = updated;
+            BumpFeedModifiedAt(feedId);
+            await SaveEpisodesAsync(feedId);
+            _logger.LogInformation("Updated episode title in feed {FeedId}: {OldTitle} -> {NewTitle}", feedId, expectedTitle, newTitle);
+
+            return updated;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     public async Task<Episode?> UpdateEpisodeMetadataAsync(string feedId, string id, string? title = null, string? note = null)
     {
         await _lock.WaitAsync();

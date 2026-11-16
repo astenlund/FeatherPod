@@ -136,11 +136,93 @@ public sealed class IntegrationTests : IDisposable
         return Assert.Single(body.RootElement.EnumerateArray()).GetProperty("title").GetString();
     }
 
+    private static async Task<string> GetSingleEpisodeIdAsync(HttpClient client)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"/api/feeds/{TestFeedId}/episodes");
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+
+        var response = await client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+
+        return Assert.Single(body.RootElement.EnumerateArray()).GetProperty("id").GetString()!;
+    }
+
+    /// <summary>
+    /// Builds a factory whose AI title answers only when the returned source is completed, and whose log signal completes
+    /// once the controller has logged the outcome of the job's title update, which it does only after the update and any
+    /// episode rename it leads to have run.
+    /// </summary>
+    private (WebApplicationFactory<FeatherPod.Server.ServerAssemblyMarker> Factory, HttpClient Client, TaskCompletionSource<string?> AiAnswer, LogSignal TitleApplied) CreateFactoryWithHeldAiTitle()
+    {
+        var aiAnswer = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var titleApplied = new LogSignal(message => message.StartsWith("Updated job ", StringComparison.Ordinal) || message.StartsWith("AI title for job ", StringComparison.Ordinal));
+        var factory = _factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IAiService>();
+            services.AddSingleton<IAiService>(new StubAiService(_ => aiAnswer.Task));
+        }));
+        var client = factory.CreateClient();
+
+        // Added to the built host's factory, since the test factory's CreateHost clears providers registered before it runs
+        factory.Services.GetRequiredService<ILoggerFactory>().AddProvider(titleApplied);
+
+        return (factory, client, aiAnswer, titleApplied);
+    }
+
     private sealed class StubAiService(Func<string, Task<string?>> suggestTitle) : IAiService
     {
         public bool IsAvailable => true;
 
         public Task<string?> SuggestTitleAsync(string filename, string? note = null, CancellationToken cancellationToken = default) => suggestTitle(filename);
+    }
+
+    /// <summary>
+    /// A logger provider that completes the first time a log message matches; a wait that times out reports the messages
+    /// logged so far.
+    /// </summary>
+    private sealed class LogSignal(Func<string, bool> match) : ILoggerProvider
+    {
+        private readonly TaskCompletionSource _seen = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly System.Collections.Concurrent.ConcurrentQueue<string> _messages = new();
+
+        private Func<string, bool> Match { get; } = match;
+
+        public async Task WaitAsync()
+        {
+            try
+            {
+                await _seen.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            catch (TimeoutException)
+            {
+                Assert.Fail($"No matching log message within 10 s. Logged:{Environment.NewLine}{string.Join(Environment.NewLine, _messages)}");
+            }
+        }
+
+        public ILogger CreateLogger(string categoryName) => new SignalingLogger(this);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class SignalingLogger(LogSignal owner) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                var message = formatter(state, exception);
+                owner._messages.Enqueue($"[{logLevel}] {message}");
+                if (owner.Match(message))
+                {
+                    owner._seen.TrySetResult();
+                }
+            }
+        }
     }
 
     [AzuriteFact]
@@ -1190,6 +1272,53 @@ public sealed class IntegrationTests : IDisposable
 
         // Assert
         Assert.Equal("auto title test", await GetSingleEpisodeTitleAsync(client));
+    }
+
+    [AzuriteFact]
+    public async Task PostEpisode_WithNormalize_WithoutTitle_ShouldRenameEpisode_WhenAiTitleArrivesAfterPublish()
+    {
+        // Arrange - the AI answers only after the job has completed and published its episode under the parsed title
+        var (factory, client, aiAnswer, titleApplied) = CreateFactoryWithHeldAiTitle();
+        using var ownedFactory = factory;
+        using var ownedClient = client;
+        await CreateTestFeedAsync(client);
+        var jobId = await UploadUntitledForNormalizationAsync(client, "auto_title_test.mp3");
+        await CompleteNormalizationAsync(client, jobId);
+        var publishedTitle = await GetSingleEpisodeTitleAsync(client);
+
+        // Act
+        aiAnswer.SetResult("Late AI Title");
+        await titleApplied.WaitAsync();
+
+        // Assert
+        Assert.Equal("auto title test", publishedTitle);
+        Assert.Equal("Late AI Title", await GetSingleEpisodeTitleAsync(client));
+    }
+
+    [AzuriteFact]
+    public async Task PostEpisode_WithNormalize_WithoutTitle_ShouldKeepUserRename_WhenAiTitleArrivesAfterIt()
+    {
+        // Arrange - the episode is published under the parsed title and renamed by the user before the AI answers
+        var (factory, client, aiAnswer, titleApplied) = CreateFactoryWithHeldAiTitle();
+        using var ownedFactory = factory;
+        using var ownedClient = client;
+        await CreateTestFeedAsync(client);
+        var jobId = await UploadUntitledForNormalizationAsync(client, "auto_title_test.mp3");
+        await CompleteNormalizationAsync(client, jobId);
+        var episodeId = await GetSingleEpisodeIdAsync(client);
+        using var rename = new HttpRequestMessage(HttpMethod.Patch, $"/api/feeds/{TestFeedId}/episodes/{episodeId}")
+        {
+            Content = JsonContent.Create(new { title = "My Own Title" })
+        };
+        rename.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        (await client.SendAsync(rename)).EnsureSuccessStatusCode();
+
+        // Act
+        aiAnswer.SetResult("Late AI Title");
+        await titleApplied.WaitAsync();
+
+        // Assert
+        Assert.Equal("My Own Title", await GetSingleEpisodeTitleAsync(client));
     }
 
     [AzuriteFact]

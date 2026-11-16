@@ -24,12 +24,13 @@ public class EpisodesController : ControllerBase
     private readonly ISpeechTranscriptionService _speechService;
     private readonly IJobProgressChannel _progressChannel;
     private readonly PushNotificationService _pushNotificationService;
+    private readonly JobCompletionService _jobCompletionService;
     private readonly ILogger<EpisodesController> _logger;
     private readonly string _baseUrl;
     private readonly string? _progressMode;
     private readonly int _progressIntervalMs;
 
-    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IAiService aiService, ITranscriptionChannel transcriptionChannel, ISpeechTranscriptionService speechService, IJobProgressChannel progressChannel, PushNotificationService pushNotificationService, ILogger<EpisodesController> logger, IConfiguration configuration)
+    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IAiService aiService, ITranscriptionChannel transcriptionChannel, ISpeechTranscriptionService speechService, IJobProgressChannel progressChannel, PushNotificationService pushNotificationService, JobCompletionService jobCompletionService, ILogger<EpisodesController> logger, IConfiguration configuration)
     {
         _episodeService = episodeService;
         _blobStorageService = blobStorageService;
@@ -41,6 +42,7 @@ public class EpisodesController : ControllerBase
         _speechService = speechService;
         _progressChannel = progressChannel;
         _pushNotificationService = pushNotificationService;
+        _jobCompletionService = jobCompletionService;
         _logger = logger;
         _baseUrl = configuration.GetSection("Podcast")["BaseUrl"]
             ?? throw new InvalidOperationException("Podcast.BaseUrl must be configured in appsettings.json");
@@ -514,7 +516,7 @@ public class EpisodesController : ControllerBase
         // the update needs the job entity to exist and a job cancelled with its aborted upload needs no title
         if (deferAiTitle)
         {
-            _ = UpdateJobTitleFromAiAsync(jobId, fileName);
+            _ = UpdateJobTitleFromAiAsync(jobId, fileName, effectiveTitle);
         }
 
         await _jobService.QueueNormalizationJobAsync(job, CancellationToken.None);
@@ -614,16 +616,17 @@ public class EpisodesController : ControllerBase
     }
 
     /// <summary>
-    /// Replaces an untitled job's placeholder title with the AI-generated (or heuristic fallback) title. Runs in the
-    /// background and must start only after the job entity exists, since an update of a missing entity is lost.
+    /// Replaces an untitled job's placeholder title with the AI-generated (or heuristic fallback) title, and the title of
+    /// the episode the job already published when it arrives after the join (JobCompletionService.ApplyDeferredTitleAsync).
+    /// Runs in the background and must start only after the job entity exists, since an update of a missing entity is lost.
     /// </summary>
-    private async Task UpdateJobTitleFromAiAsync(string jobId, string fileName)
+    private async Task UpdateJobTitleFromAiAsync(string jobId, string fileName, string placeholderTitle)
     {
         try
         {
             var title = await EpisodeService.GenerateTitleAsync(fileName, _aiService);
 
-            if (await _jobService.UpdateJobStatusAsync(jobId, entity => entity.Title = title) == null)
+            if (!await _jobCompletionService.ApplyDeferredTitleAsync(jobId, title, placeholderTitle, CancellationToken.None))
             {
                 _logger.LogWarning("AI title for job {JobId} was lost: the job could not be updated", jobId);
             }

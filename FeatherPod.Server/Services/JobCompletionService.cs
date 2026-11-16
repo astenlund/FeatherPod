@@ -171,12 +171,13 @@ public class JobCompletionService
         if (normFailed)
         {
             _logger.LogWarning("Normalization failed for job {JobId}, no episode created", jobId);
-            await PublishTerminalProgress(jobId, ct);
+            PublishTerminalProgress(jobId, await _jobService.GetJobStatusAsync(jobId, ct));
 
             return;
         }
 
         // Create episode from entity metadata
+        Episode? published = null;
         try
         {
             var latestTitle = entity.Title ?? entity.FileName ?? "Untitled";
@@ -220,14 +221,22 @@ public class JobCompletionService
 
             _feedEventChannel.Publish(entity.FeedId!, "episode-added");
             _logger.LogInformation("Episode {EpisodeId} created for job {JobId}", episode.Id, jobId);
+            published = episode;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to create episode for job {JobId}", jobId);
         }
 
+        // A deferred title written after the terminal status above found no episode to rename yet, so carry it over now
+        var fresh = await _jobService.GetJobStatusAsync(jobId, ct);
+        if (published != null && fresh?.Title is { } currentTitle && !string.Equals(currentTitle, published.Title, StringComparison.Ordinal))
+        {
+            await RenameEpisodeIfTitleIsAsync(published.FeedId, published.Id, published.Title, currentTitle, jobId);
+        }
+
         // Publish terminal progress and push notification
-        await PublishTerminalProgress(jobId, ct);
+        PublishTerminalProgress(jobId, fresh);
 
         // Clean up pending blob
         try
@@ -244,10 +253,55 @@ public class JobCompletionService
         }
     }
 
-    private async Task PublishTerminalProgress(string jobId, CancellationToken ct)
+    /// <summary>
+    /// Replaces an untitled job's placeholder title with its deferred (AI or heuristic) title. When the join has already
+    /// completed the job, the title also goes to the episode the job published, as long as that episode still carries the
+    /// placeholder; when the join completes the job later, it reads the title itself. If the episode does not exist yet,
+    /// the join's own re-read after publishing carries the title over. Returns false when the job could not be updated.
+    /// </summary>
+    public async Task<bool> ApplyDeferredTitleAsync(string jobId, string title, string placeholderTitle, CancellationToken ct)
     {
-        // Re-read for accurate state
-        var fresh = await _jobService.GetJobStatusAsync(jobId, ct);
+        var updated = await _jobService.UpdateJobStatusAsync(jobId, e => e.Title = title, ct);
+        if (updated == null)
+        {
+            return false;
+        }
+
+        if (updated.GetJobStatus() == JobStatus.Completed && updated.FeedId != null && updated.EpisodeId != null)
+        {
+            await RenameEpisodeIfTitleIsAsync(updated.FeedId, updated.EpisodeId, placeholderTitle, title, jobId);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Renames a job's episode from the title it was published under to a deferred title that arrived later, unless the
+    /// episode is gone or has been renamed since. A failure is logged, not thrown, so the caller's remaining steps run.
+    /// </summary>
+    private async Task RenameEpisodeIfTitleIsAsync(string feedId, string episodeId, string expectedTitle, string newTitle, string jobId)
+    {
+        if (string.Equals(expectedTitle, newTitle, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        try
+        {
+            if (await _episodeService.RenameEpisodeIfTitleIsAsync(feedId, episodeId, expectedTitle, newTitle) != null)
+            {
+                _feedEventChannel.Publish(feedId, "episode-updated");
+                _logger.LogInformation("Episode {EpisodeId} of job {JobId} took its deferred title", episodeId, jobId);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to give episode {EpisodeId} of job {JobId} its deferred title", episodeId, jobId);
+        }
+    }
+
+    private void PublishTerminalProgress(string jobId, JobStatusEntity? fresh)
+    {
         if (fresh != null)
         {
             var response = JobStatusResponse.FromEntity(fresh);
