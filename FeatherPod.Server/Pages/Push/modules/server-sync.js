@@ -619,7 +619,7 @@ function withholdCancelledUploadJobs(jobs) {
  * - addNewServerEntries: appends unknown server jobs (e.g., from CLI or another tab)
  * - removeReplacedInterruptedUploads: drops each "Upload interrupted" entry a reload left whose job is among the new
  *   ones, so the upload shows once, as the server's entry
- * then repaints the affected DOM, resumes SSE monitoring, refreshes the queue title and toggles
+ * then repaints the affected DOM, resumes normalization monitoring, refreshes the queue title and toggles
  * (so work discovered after the queue finished gets its toggles back), and persists queue state.
  * If the snapshot is null (fetch failed), skips reconciliation entirely. A snapshot requested before
  * the newest one already merged is outdated (responses can arrive out of order) and is ignored, so it
@@ -685,10 +685,10 @@ export function mergeServerJobs(snapshot) {
         }
     }
 
-    // Start SSE monitoring for new normalizing entries only.
+    // Start normalization monitoring for new normalizing entries only.
     // isResuming=true: these jobs were already in progress on the server when we
     // discovered them, so the animator must snap to the live value rather than
-    // treat the first SSE update as a fresh stage start.
+    // treat the first live update as a fresh stage start.
     for (const entry of newEntries) {
         if (entry.status === 'normalizing') {
             monitorEntryNormalizationInBackground(entry, { isResuming: true });

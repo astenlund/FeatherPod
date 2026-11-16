@@ -328,7 +328,7 @@ export function checkAllComplete() {
  * When the promise resolves: updates DOM, saves state, calls checkAllComplete().
  * Pass `isResuming: true` for any caller that picks up an in-progress server job
  * mid-stream (page reload restore, failed-entry recovery, server-discovered jobs)
- * so the first SSE update snaps to the live value via the animator's restoring
+ * so the first live update snaps to the live value via the animator's restoring
  * branch instead of being treated as a fresh stage start.
  * @param {QueueEntry} entry
  * @param {{ isResuming?: boolean }} [options]
@@ -1233,12 +1233,13 @@ export function clearQueueState() {
  * an entry this tab dismissed.
  * An entry still uploading or saving is restored as failed with UPLOAD_INTERRUPTED_ERROR (the upload cannot resume);
  * when the server created a job for it anyway, the recent-jobs merge replaces it with that job (mergeServerJobs).
- * Starts SSE monitors for normalizing entries so progress updates arrive during the sync wait.
+ * Starts normalization monitors (a progress stream, or polling while every stream slot is taken; see
+ * monitorEntryNormalization) for normalizing entries so progress updates arrive during the sync wait.
  * Caller is responsible for showing the appropriate state after server sync completes.
  * No-op while the queue already holds entries: startup re-runs on hashchange and key entry, and the live
- * in-memory queue is authoritative. The saved copy can lag it (upload and SSE progress updates do not trigger
+ * in-memory queue is authoritative. The saved copy can lag it (upload and live progress updates do not trigger
  * a save) or come from another tab (the key is per feed and shared across tabs), and the in-flight uploads,
- * SSE monitors and animator slots reference the live entries, so restoring over them would orphan those.
+ * normalization monitors and animator slots reference the live entries, so restoring over them would orphan those.
  * @returns {Promise<boolean>} True if entries were restored into uploadQueue
  */
 export async function restoreQueueState() {
@@ -1294,7 +1295,7 @@ export async function restoreQueueState() {
     }
 
     // Data restored -- caller decides when to show state (after server sync completes)
-    // Start SSE monitors now so progress updates arrive during the sync wait.
+    // Start normalization monitors now so progress updates arrive during the sync wait.
     // isResuming=true so the animator snaps to the live server value instead of
     // computing an inflated velocity from a fake stage start at 0.
     for (const entry of uploadQueue.filter(e => e.status === 'normalizing' && e.jobId)) {
