@@ -13,7 +13,7 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 - **RSS podcast feeds** - iTunes spec compatible with per-feed configuration
 - **CLI tool** - Command-line interface for episode, icon, feed, and user management
 - **REST API** - REST API for management (consumed by CLI tool)
-- **Browser push page** - PWA at `/{feedId}/push#API_KEY` with multi-file upload, server-side normalization, real-time progress, upload history, episode context menus (rename, delete), cross-device sync via SSE, push notifications via Web Push API, and screen wake lock
+- **Browser push page** - PWA at `/{feedId}/push#API_KEY` with multi-file upload, server-side normalization, real-time progress, upload history, episode context menus (rename, retry transcript when it failed, delete), cross-device sync via SSE, push notifications via Web Push API, and screen wake lock
 - **YouTube import** - Paste or share a YouTube link on the push page to import audio or video episodes via yt-dlp, with cookie-based authentication for bot detection bypass
 - **Android Share Target** - Install the push page as a PWA to share audio files directly from Android
 - **Windows context menu** - Right-click audio files in Explorer to push to a feed
@@ -197,6 +197,8 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 | `/api/jobs/{jobId}/cancel` | POST | Admin/Owner | Cancel a normalization job; with `?attempt=N`, only while the job is still on that attempt |
 | `/api/jobs/{jobId}/retry` | POST | Admin/Owner | Retry a job whose normalization failed, in place under a new attempt, while its upload is kept (202 with job; 410 `source-gone` means re-upload); with `?attempt=N`, only while the job is still on that attempt |
 | `/api/jobs/{jobId}/progress` | GET | Public | SSE stream for real-time job progress |
+
+Job listings and status responses carry `attempt` (starting at 1, increased by each normalization retry, which resets the job in place) and `kind` (`TranscriptRetry` for a transcript retry job, null for an upload). A client that acts on a job it has seen sends the `attempt` it saw as `?attempt=N` to cancel or retry, so the action never reaches a later attempt.
 
 ### YouTube Import
 
