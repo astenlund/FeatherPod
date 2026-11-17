@@ -525,6 +525,39 @@ internal static class EpisodeHelpers
         return errorMsg;
     }
 
+    /// <summary>
+    /// The episodes whose transcript failed, the only ones a transcript retry accepts.
+    /// </summary>
+    internal static List<Episode> WithFailedTranscript(IEnumerable<Episode> episodes) => [.. episodes.Where(e => e.TranscriptStatus == TranscriptStatus.Failed)];
+
+    /// <summary>
+    /// Ask the server to retry an episode's failed transcript (POST .../transcript/retry). Reports nothing itself; the caller words
+    /// the outcome, including the server's specific refusal reason for an ineligible episode.
+    /// </summary>
+    internal static async Task<TranscriptRetryRequestResult> RetryTranscriptAsync(
+        HttpClient httpClient, string feedId, string episodeId,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await httpClient.PostAsync($"/api/feeds/{feedId}/episodes/{episodeId}/transcript/retry", null, cancellationToken);
+            var json = await response.Content.ReadAsStringAsync(cancellationToken);
+            var body = string.IsNullOrWhiteSpace(json) ? default : JsonSerializer.Deserialize<JsonElement>(json);
+            string? ReadString(string name) => body.ValueKind == JsonValueKind.Object && body.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+            if (response.IsSuccessStatusCode)
+            {
+                return new() { Success = true, JobId = ReadString("jobId") };
+            }
+
+            return new() { Success = false, Reason = ReadString("reason"), ErrorMessage = ReadString("error") ?? $"Server returned {(int)response.StatusCode}" };
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException)
+        {
+            return new() { Success = false, ErrorMessage = ex.Message };
+        }
+    }
+
     internal static async Task<string?> SuggestTitleAsync(
         HttpClient httpClient, string feedId, string episodeId, string? note = null,
         CancellationToken cancellationToken = default)
@@ -665,6 +698,19 @@ internal static class EpisodeHelpers
             .StartAsync("[bold]Downloading FFmpeg...[/]", async _ => await FFmpegService.DownloadFFmpegAsync());
     }
 
+    /// <summary>
+    /// The line printed under a server-side normalization failure: the job id, which the HTTP API's normalization retry
+    /// (POST /api/jobs/{jobId}/retry) or the push page needs, since the CLI has no retry command for it.
+    /// </summary>
+    internal static string NormalizationFailureJobHint(string jobId) =>
+        $"  Job ID: [grey]{Markup.Escape(jobId)}[/] [grey](retry without re-uploading: POST /api/jobs/{Markup.Escape(jobId)}/retry)[/]";
+
+    /// <summary>
+    /// Whether a streamed job's outcome gets <see cref="NormalizationFailureJobHint"/>: only a job that ended Failed, the one outcome the
+    /// retry endpoint accepts (the rule the polling fallback applies too); a cancelled job or a stream that closed early gets none.
+    /// </summary>
+    internal static bool ShowsNormalizationRetryHint(NormalizationProgressRenderer.NormalizationResult result) => result.JobFailed;
+
     private static async Task<bool> PollJobCompletionAsync(HttpClient httpClient, string jobId, string fileName)
     {
         const int maxWaitMs = 600000; // 10 minutes
@@ -678,6 +724,10 @@ internal static class EpisodeHelpers
                 cts.Token);
 
             NormalizationProgressRenderer.DisplayResult(result);
+            if (ShowsNormalizationRetryHint(result))
+            {
+                Out.MarkupLine(NormalizationFailureJobHint(jobId));
+            }
 
             return result.Success;
         }
@@ -796,7 +846,7 @@ internal static class EpisodeHelpers
 
         if (finalStatus?.Status == nameof(JobStatus.Failed))
         {
-            return new(false, Error: finalStatus.Error ?? "Unknown error");
+            return new(false, Error: finalStatus.Error ?? "Unknown error", JobFailed: true);
         }
 
         if (finalStatus?.Status == nameof(JobStatus.Cancelled))
@@ -854,6 +904,7 @@ internal static class EpisodeHelpers
                         {
                             Out.BlankLine();
                             Out.Error($"Normalization failed: {Markup.Escape(status.Error ?? "Unknown error")}");
+                            Out.MarkupLine(NormalizationFailureJobHint(jobId));
 
                             return false;
                         }

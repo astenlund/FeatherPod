@@ -34,10 +34,12 @@ public class BatchTranscriptionTests : IAsyncLifetime
         var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
         Assert.Equal(TranscriptionStatuses.Completed, entity.TranscriptionStatus);
         Assert.Null(entity.TranscriptionError);
-        Assert.Single(_harness.Blob.UploadedTranscripts);
-        Assert.Equal("test-feed", _harness.Blob.UploadedTranscripts[0].FeedId);
-        Assert.Equal("ep-1", _harness.Blob.UploadedTranscripts[0].EpisodeId);
-        Assert.StartsWith("WEBVTT", _harness.Blob.UploadedTranscripts[0].Vtt);
+        Assert.Single(_harness.Blob.StagedTranscripts);
+        Assert.Equal("test-feed", _harness.Blob.StagedTranscripts[0].FeedId);
+        Assert.Equal(TranscriptionTestHarness.JobId, _harness.Blob.StagedTranscripts[0].JobId);
+        Assert.Equal(1, _harness.Blob.StagedTranscripts[0].Attempt);
+        Assert.Empty(_harness.Blob.UploadedTranscripts);
+        Assert.StartsWith("WEBVTT", _harness.Blob.StagedTranscripts[0].Vtt);
         Assert.Contains("https://azure.example/transcriptions/abc", _harness.Speech.DeletedUrls);
     }
 
@@ -56,7 +58,7 @@ public class BatchTranscriptionTests : IAsyncLifetime
         var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
         Assert.Equal(TranscriptionStatuses.Failed, entity.TranscriptionStatus);
         Assert.Equal("BadRequest: audio too short", entity.TranscriptionError);
-        Assert.Empty(_harness.Blob.UploadedTranscripts);
+        Assert.Empty(_harness.Blob.StagedTranscripts);
         Assert.Contains("https://azure.example/transcriptions/def", _harness.Speech.DeletedUrls);
     }
 
@@ -76,7 +78,7 @@ public class BatchTranscriptionTests : IAsyncLifetime
         var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
         Assert.Equal(TranscriptionStatuses.Failed, entity.TranscriptionStatus);
         Assert.Equal("Transcription produced no output", entity.TranscriptionError);
-        Assert.Empty(_harness.Blob.UploadedTranscripts);
+        Assert.Empty(_harness.Blob.StagedTranscripts);
         Assert.Contains("https://azure.example/transcriptions/ghi", _harness.Speech.DeletedUrls);
     }
 
@@ -120,7 +122,7 @@ public class BatchTranscriptionTests : IAsyncLifetime
     {
         // Arrange
         const string m4aFileName = "episode.m4a";
-        var wavBlobName = $"_transcription-{TranscriptionTestHarness.JobId}.wav";
+        var wavBlobName = $"_transcription-{TranscriptionTestHarness.JobId}-a1.wav";
         _harness.Jobs.SetEntity(TranscriptionTestHarness.CreateEntity(m4aFileName));
         _harness.Speech.SubmitReturns = "https://azure.example/transcriptions/m4a";
         _harness.Speech.PollReturns = ("Succeeded", "https://azure.example/transcriptions/m4a/files", null);

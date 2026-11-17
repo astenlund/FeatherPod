@@ -55,6 +55,9 @@ public sealed class UploadAbortTests : IDisposable
         Assert.Equal(created.JobId, cancelledJobId);
         Assert.Equal("0d6f1e3a-5a52-4f4b-9a3e-2f6a1c9b7e10", created.ClientUploadId);
         Assert.Empty(jobService.Queued);
+
+        // The cancel was decided on the upload's own attempt, so it can never reach a normalization retry of the job
+        Assert.Equal(1, jobService.CancelExpectedAttempt);
     }
 
     [AzuriteFact]
@@ -347,8 +350,14 @@ public sealed class UploadAbortTests : IDisposable
             return Task.CompletedTask;
         }
 
-        public Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default)
+        /// <summary>
+        /// The attempt the last cancel was conditional on, recorded before the cancel signal fires.
+        /// </summary>
+        public int? CancelExpectedAttempt { get; private set; }
+
+        public Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default, int? expectedAttempt = null)
         {
+            CancelExpectedAttempt = expectedAttempt;
             _cancelled.TrySetResult(jobId);
             if (!CancelTakesEffect)
             {
@@ -366,11 +375,16 @@ public sealed class UploadAbortTests : IDisposable
         public Task<List<JobStatusEntity>> GetActiveJobsByTranscriptionStatusAsync(IReadOnlyCollection<string> transcriptionStatuses, CancellationToken cancellationToken = default) =>
             _inner.GetActiveJobsByTranscriptionStatusAsync(transcriptionStatuses, cancellationToken);
 
+        public Task<List<JobStatusEntity>> GetActiveJobsAsync(CancellationToken cancellationToken = default) => _inner.GetActiveJobsAsync(cancellationToken);
+
         public Task<List<JobStatusEntity>> GetRecentJobsByFeedAsync(string feedId, TimeSpan since, CancellationToken cancellationToken = default) => _inner.GetRecentJobsByFeedAsync(feedId, since, cancellationToken);
+
+        public Task<bool> TryReplaceAsync(JobStatusEntity entity, CancellationToken cancellationToken = default) => _inner.TryReplaceAsync(entity, cancellationToken);
 
         public Task<JobStatusEntity?> UpdateJobStatusAsync(string jobId, Action<JobStatusEntity> mutate, CancellationToken cancellationToken = default) => _inner.UpdateJobStatusAsync(jobId, mutate, cancellationToken);
 
-        public Task<JobStatusEntity?> MergeJobFieldsAsync(string jobId, Action<JobStatusEntity> configure, CancellationToken cancellationToken = default) => _inner.MergeJobFieldsAsync(jobId, configure, cancellationToken);
+        public Task<JobStatusEntity?> MergeJobFieldsAsync(string jobId, Action<JobStatusEntity> configure, CancellationToken cancellationToken = default, int? expectedAttempt = null, Func<JobStatusEntity, bool>? onlyIf = null) =>
+            _inner.MergeJobFieldsAsync(jobId, configure, cancellationToken, expectedAttempt, onlyIf);
 
         public Task MergeWithETagAsync(string jobId, Action<JobStatusEntity> configure, Azure.ETag etag, CancellationToken cancellationToken = default) => _inner.MergeWithETagAsync(jobId, configure, etag, cancellationToken);
     }

@@ -1,4 +1,5 @@
 using FeatherPod.Server.Services;
+using FeatherPod.Shared;
 
 namespace FeatherPod.Tests;
 
@@ -120,7 +121,7 @@ public class TestBlobStorageService : IBlobStorageService
         return await Task.FromResult(fileInfo.Length);
     }
 
-    public async Task<string> DownloadAudioToTempAsync(string feedId, string fileName)
+    public virtual async Task<string> DownloadAudioToTempAsync(string feedId, string fileName)
     {
         var sourcePath = Path.Combine(_rootPath, feedId, "audio", fileName);
         var tempDir = Path.Combine(Path.GetTempPath(), "FeatherPod");
@@ -244,6 +245,28 @@ public class TestBlobStorageService : IBlobStorageService
         return Task.FromResult(new Uri(path).AbsoluteUri);
     }
 
+    public Task<bool> PendingBlobExistsAsync(string feedId, string jobId, string fileName) =>
+        Task.FromResult(File.Exists(Path.Combine(_rootPath, feedId, "pending", jobId, fileName)));
+
+    public Task<string> GenerateAudioSasUrlAsync(string feedId, string fileName) =>
+        Task.FromResult(new Uri(Path.Combine(_rootPath, feedId, "audio", fileName)).AbsoluteUri);
+
+    public async Task UploadPendingTranscriptAsync(string feedId, string jobId, int attempt, string vttContent)
+    {
+        var path = GetLocalPath(BlobPaths.PendingTranscript(feedId, jobId, attempt));
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, vttContent);
+    }
+
+    public virtual async Task<string?> DownloadPendingTranscriptAsync(string feedId, string jobId, int attempt)
+    {
+        var path = GetLocalPath(BlobPaths.PendingTranscript(feedId, jobId, attempt));
+
+        return File.Exists(path) ? await File.ReadAllTextAsync(path) : null;
+    }
+
+    private string GetLocalPath(string blobPath) => Path.Combine([_rootPath, .. blobPath.Split('/')]);
+
     public async Task DeletePendingJobBlobsAsync(string feedId, string jobId)
     {
         var pendingPath = Path.Combine(_rootPath, feedId, "pending", jobId);
@@ -254,7 +277,7 @@ public class TestBlobStorageService : IBlobStorageService
         await Task.CompletedTask;
     }
 
-    public async Task UploadTranscriptAsync(string feedId, string episodeId, string vttContent)
+    public virtual async Task UploadTranscriptAsync(string feedId, string episodeId, string vttContent)
     {
         var transcriptDir = Path.Combine(_rootPath, feedId, "transcripts");
         Directory.CreateDirectory(transcriptDir);
@@ -272,7 +295,7 @@ public class TestBlobStorageService : IBlobStorageService
         return File.OpenRead(filePath);
     }
 
-    public async Task DeleteTranscriptAsync(string feedId, string episodeId)
+    public virtual async Task DeleteTranscriptAsync(string feedId, string episodeId)
     {
         var filePath = Path.Combine(_rootPath, feedId, "transcripts", $"{episodeId}.vtt");
         if (File.Exists(filePath))

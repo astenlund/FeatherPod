@@ -36,7 +36,24 @@ public interface IBlobStorageService
     // Pending blob operations
     Task<Stream> DownloadPendingBlobAsync(string feedId, string jobId, string fileName);
     Task<string> GeneratePendingBlobSasUrlAsync(string feedId, string jobId, string fileName);
+    Task<bool> PendingBlobExistsAsync(string feedId, string jobId, string fileName);
     Task DeletePendingJobBlobsAsync(string feedId, string jobId);
+
+    /// <summary>
+    /// Read-only SAS URL for a published episode audio blob (the source of a transcript retry's batch or URL-probe path).
+    /// </summary>
+    Task<string> GenerateAudioSasUrlAsync(string feedId, string fileName);
+
+    /// <summary>
+    /// Stage a transcription run's transcript under its job's pending blobs, scoped to the run's attempt. Only the job's join of that
+    /// attempt moves it to the episode's transcript location, so a run that is no longer current never touches a published transcript.
+    /// </summary>
+    Task UploadPendingTranscriptAsync(string feedId, string jobId, int attempt, string vttContent);
+
+    /// <summary>
+    /// Read a transcript staged by <see cref="UploadPendingTranscriptAsync"/> for <paramref name="attempt"/>, or null when none exists.
+    /// </summary>
+    Task<string?> DownloadPendingTranscriptAsync(string feedId, string jobId, int attempt);
 
     // Push subscription operations (feed-aware)
     Task<string?> LoadPushSubscriptionsAsync(string feedId);

@@ -8,6 +8,36 @@ public sealed class RecordingBlobService : StubBlobService
 {
     public List<(string FeedId, string EpisodeId, string Vtt)> UploadedTranscripts { get; } = [];
 
+    /// <summary>
+    /// Transcripts staged by transcription runs (they publish to the episode's location only through their job's join).
+    /// </summary>
+    public List<(string FeedId, string JobId, int Attempt, string Vtt)> StagedTranscripts { get; } = [];
+
+    public override Task UploadPendingTranscriptAsync(string feedId, string jobId, int attempt, string vttContent)
+    {
+        StagedTranscripts.Add((feedId, jobId, attempt, vttContent));
+
+        return Task.CompletedTask;
+    }
+
+    public List<string> AudioDownloads { get; } = [];
+
+    public List<string> AudioSasRequests { get; } = [];
+
+    public override Task<Stream> DownloadAudioAsync(string feedId, string fileName)
+    {
+        AudioDownloads.Add(fileName);
+
+        return Task.FromResult<Stream>(new MemoryStream([1, 2, 3]));
+    }
+
+    public override Task<string> GenerateAudioSasUrlAsync(string feedId, string fileName)
+    {
+        AudioSasRequests.Add(fileName);
+
+        return Task.FromResult($"https://blob.example/audio/{fileName}");
+    }
+
     public List<string> PendingDownloads { get; } = [];
 
     public List<(string FileName, bool SourceExisted)> PendingAudioUploads { get; } = [];

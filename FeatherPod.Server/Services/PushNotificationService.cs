@@ -22,6 +22,12 @@ public class PushNotificationService
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly ConcurrentDictionary<string, List<PushSubscriptionInfo>> _cache = new();
     private readonly ConcurrentDictionary<string, NotificationSession> _sessions = new();
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _notifiedTranscriptRetries = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// How long a transcript retry's notification claim is kept; far longer than reports of one terminal state are apart.
+    /// </summary>
+    private static readonly TimeSpan NotifiedRetryHorizon = TimeSpan.FromHours(6);
 
     public bool IsEnabled => _vapidAuth is not null;
 
@@ -184,12 +190,27 @@ public class PushNotificationService
             return;
         }
 
+        // Transcript retries are notified on their own, never as part of the upload session (TryNotifyTranscriptRetryAsync)
+        jobIds = await ExcludeTranscriptRetriesAsync(jobIds);
+
         // Step 1: add jobIds to session under lock, update uploadsRemaining
         List<string> newJobIds;
         int sessionTotal;
         await _lock.WaitAsync();
         try
         {
+            // With nothing to track, no session is created: a session always waits on a job or an upload, since one that waits on
+            // nothing never completes and would swallow the fallback notifications of jobs it does not track
+            if (jobIds.Count == 0 && uploadsRemaining == 0)
+            {
+                if (_sessions.TryGetValue(feedId, out var existing))
+                {
+                    existing.UploadsRemaining = uploadsRemaining;
+                }
+
+                return;
+            }
+
             var session = _sessions.GetOrAdd(feedId, _ => new NotificationSession());
             newJobIds = jobIds.Where(id => session.PendingJobIds.Add(id)).ToList();
             session.UploadsRemaining = uploadsRemaining;
@@ -268,6 +289,47 @@ public class PushNotificationService
         }
     }
 
+    private async Task<IReadOnlyList<string>> ExcludeTranscriptRetriesAsync(IReadOnlyList<string> jobIds)
+    {
+        var uploads = new List<string>(jobIds.Count);
+        foreach (var jobId in jobIds)
+        {
+            var entity = await _jobService.GetJobStatusAsync(jobId);
+            if (!JobKinds.IsTranscriptRetry(entity?.Kind))
+            {
+                uploads.Add(jobId);
+            }
+        }
+
+        return uploads;
+    }
+
+    /// <summary>
+    /// Claim the single notification of a transcript retry job's terminal status: several ingestion points report the same
+    /// terminal state (the join, a polling progress stream per open tab), and only the first claim sends. Keyed by job id, which
+    /// suffices because a transcript retry job is written terminal once and never reset. Claims older than
+    /// <see cref="NotifiedRetryHorizon"/> are pruned on insert, so the record stays bounded; a report arriving after a restart
+    /// cannot double-notify, since a stream opened then finds the job already terminal and sends nothing.
+    /// </summary>
+    internal bool TryClaimTranscriptRetryNotification(JobStatusResponse progress)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (!_notifiedTranscriptRetries.TryAdd(progress.JobId!, now))
+        {
+            return false;
+        }
+
+        foreach (var (jobId, claimedAt) in _notifiedTranscriptRetries)
+        {
+            if (now - claimedAt > NotifiedRetryHorizon)
+            {
+                _notifiedTranscriptRetries.TryRemove(jobId, out _);
+            }
+        }
+
+        return true;
+    }
+
     public void TryNotifyJobTerminal(JobStatusResponse progress)
     {
         try
@@ -279,6 +341,17 @@ public class PushNotificationService
 
             if (!progress.Status.IsTerminal())
             {
+                return;
+            }
+
+            // A transcript retry is never counted or worded as an upload: it is notified on its own, outside the upload session
+            if (JobKinds.IsTranscriptRetry(progress.Kind))
+            {
+                if (TryClaimTranscriptRetryNotification(progress))
+                {
+                    _ = TryNotifyTranscriptRetryAsync(progress);
+                }
+
                 return;
             }
 
@@ -365,6 +438,34 @@ public class PushNotificationService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error in TryNotifyFallbackAsync for job {JobId}", progress.JobId);
+        }
+    }
+
+    /// <summary>
+    /// Notify the outcome of a transcript retry job on its own: "Transcript ready" when its transcription completed, "Transcript failed"
+    /// otherwise; a cancelled retry is not notified. The job never joins an upload session (TrackJobsAsync skips it), so an upload's
+    /// session notification neither waits for nor counts it.
+    /// </summary>
+    internal static string TranscriptRetryNotificationTitle(JobStatusResponse progress) =>
+        progress.TranscriptionStatus == TranscriptionStatuses.Completed ? "Transcript ready" : "Transcript failed";
+
+    private async Task TryNotifyTranscriptRetryAsync(JobStatusResponse progress)
+    {
+        try
+        {
+            var feedId = progress.FeedId!;
+            if (progress.Status == nameof(JobStatus.Cancelled) || !await HasActiveSubscriptionsAsync(feedId))
+            {
+                return;
+            }
+
+            var title = await ResolveEpisodeTitleAsync(feedId, progress.EpisodeId, progress.FileName);
+
+            await TryNotifyAsync(feedId, TranscriptRetryNotificationTitle(progress), title, $"/{feedId}/icon-192.png");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error in TryNotifyTranscriptRetryAsync for job {JobId}", progress.JobId);
         }
     }
 

@@ -269,9 +269,40 @@ public class BlobStorageService : IBlobStorageService
         return await blobClient.OpenReadAsync();
     }
 
-    public async Task<string> GeneratePendingBlobSasUrlAsync(string feedId, string jobId, string fileName)
+    public Task<string> GeneratePendingBlobSasUrlAsync(string feedId, string jobId, string fileName) => GenerateReadSasUrlAsync(BlobPaths.Pending(feedId, jobId, fileName));
+
+    public Task<string> GenerateAudioSasUrlAsync(string feedId, string fileName) => GenerateReadSasUrlAsync(BlobPaths.Audio(feedId, fileName));
+
+    public async Task UploadPendingTranscriptAsync(string feedId, string jobId, int attempt, string vttContent)
     {
-        var blobPath = BlobPaths.Pending(feedId, jobId, fileName);
+        await UploadTextAsync(BlobPaths.PendingTranscript(feedId, jobId, attempt), vttContent);
+    }
+
+    public async Task<bool> PendingBlobExistsAsync(string feedId, string jobId, string fileName)
+    {
+        var blobClient = _container.GetBlobClient(BlobPaths.Pending(feedId, jobId, fileName));
+
+        return await blobClient.ExistsAsync();
+    }
+
+    public async Task<string?> DownloadPendingTranscriptAsync(string feedId, string jobId, int attempt)
+    {
+        var blobClient = _container.GetBlobClient(BlobPaths.PendingTranscript(feedId, jobId, attempt));
+
+        try
+        {
+            var response = await blobClient.DownloadContentAsync();
+
+            return response.Value.Content.ToString();
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 404)
+        {
+            return null;
+        }
+    }
+
+    private async Task<string> GenerateReadSasUrlAsync(string blobPath)
+    {
         var blobClient = _container.GetBlobClient(blobPath);
 
         var builder = new BlobSasBuilder

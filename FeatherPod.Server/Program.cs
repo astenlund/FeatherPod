@@ -120,6 +120,11 @@ class Program
         builder.Services.AddSingleton<ITranscriptionChannel, TranscriptionChannel>();
         builder.Services.AddHostedService<TranscriptionBackgroundService>();
 
+        // Transcript and normalization retry, and the recurring recovery that keeps a retry from stranding a job
+        builder.Services.AddSingleton<JobRetryService>();
+        builder.Services.AddSingleton(TimeProvider.System);
+        builder.Services.AddHostedService<JobRecoveryService>();
+
         // Add background services
         builder.Services.AddHostedService<BlobSyncBackgroundService>();
         builder.Services.AddHostedService<TempFileCleanupService>();

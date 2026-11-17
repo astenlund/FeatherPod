@@ -14,7 +14,8 @@ public static class NormalizationProgressRenderer
     /// <summary>
     /// Result of a normalization operation with optional metadata.
     /// </summary>
-    public record NormalizationResult(bool Success, string? Error = null, string? EpisodeId = null);
+    /// <param name="JobFailed">Whether the job itself ended Failed, as opposed to cancelled or a stream that closed early.</param>
+    public record NormalizationResult(bool Success, string? Error = null, string? EpisodeId = null, bool JobFailed = false);
 
     /// <summary>
     /// Run an async operation with progress bar display.

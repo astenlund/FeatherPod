@@ -17,6 +17,7 @@ public class JobsController : ControllerBase
     private readonly IJobProgressChannel _progressChannel;
     private readonly IFeedEventChannel _feedEventChannel;
     private readonly PushNotificationService _pushNotificationService;
+    private readonly JobRetryService _jobRetryService;
     private readonly int _pollIntervalMs;
 
     private static readonly TimeSpan PushFallbackTimeout = TimeSpan.FromMilliseconds(1500);
@@ -24,8 +25,9 @@ public class JobsController : ControllerBase
     private static readonly TimeSpan MaxSinceDuration = TimeSpan.FromHours(24);
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public JobsController(IJobService jobService, IBlobStorageService blobService, IUserService userService, IJobProgressChannel progressChannel, IFeedEventChannel feedEventChannel, PushNotificationService pushNotificationService, IConfiguration configuration)
+    public JobsController(IJobService jobService, IBlobStorageService blobService, IUserService userService, IJobProgressChannel progressChannel, IFeedEventChannel feedEventChannel, PushNotificationService pushNotificationService, JobRetryService jobRetryService, IConfiguration configuration)
     {
+        _jobRetryService = jobRetryService;
         _jobService = jobService;
         _blobService = blobService;
         _userService = userService;
@@ -159,14 +161,50 @@ public class JobsController : ControllerBase
     }
 
     /// <summary>
-    /// Cancel a normalization job. Cleans up pending blobs.
+    /// Retry a job whose normalization failed, without re-uploading: the job is reset in place under a new attempt and re-queued while
+    /// its pending source exists (202 with the job). Refusals carry a <c>reason</c> (RetryResponses.Reasons); <c>source-gone</c> (410)
+    /// tells a client still holding the file to upload it again. With <paramref name="attempt"/>, the retry applies only while the job is
+    /// still on that attempt (409 otherwise), so a retry decided on a view of an earlier attempt never resets a later one.
+    /// </summary>
+    [HttpPost("{jobId}/retry")]
+    [ProducesResponseType<JobStatusResponse>(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status410Gone)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> RetryJob(string jobId, [FromQuery] int? attempt = null)
+    {
+        var entity = await _jobService.GetJobStatusAsync(jobId, HttpContext.RequestAborted);
+        if (entity == null)
+        {
+            return NotFound(new { error = $"Job '{jobId}' not found", reason = RetryResponses.Reasons.NotFound });
+        }
+
+        if (!HasJobPermission(entity))
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have permission to retry this job" });
+        }
+
+        var result = await _jobRetryService.RetryNormalizationAsync(entity, HttpContext.RequestAborted, attempt);
+        if (result.Outcome == JobRetryOutcome.Accepted && entity.FeedId != null)
+        {
+            _feedEventChannel.Publish(entity.FeedId, "job-added");
+        }
+
+        return RetryResponses.ToActionResult(this, result);
+    }
+
+    /// <summary>
+    /// Cancel a normalization job. Cleans up pending blobs. With <paramref name="attempt"/>, the cancel applies only while the job is
+    /// still on that attempt, so a cancel decided on a view of an earlier attempt (a stale dismissal) never cancels a retried job.
     /// </summary>
     [HttpPost("{jobId}/cancel")]
     [ProducesResponseType<JobStatusResponse>(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     [ProducesResponseType(StatusCodes.Status403Forbidden)]
     [ProducesResponseType(StatusCodes.Status409Conflict)]
-    public async Task<IActionResult> CancelJob(string jobId)
+    public async Task<IActionResult> CancelJob(string jobId, [FromQuery] int? attempt = null)
     {
         var entity = await _jobService.GetJobStatusAsync(jobId, HttpContext.RequestAborted);
         if (entity == null)
@@ -174,17 +212,15 @@ public class JobsController : ControllerBase
             return NotFound(new { error = $"Job '{jobId}' not found" });
         }
 
-        // Check feed ownership
-        var user = HttpContext.Items["User"] as User;
-        if (user != null && user.Role != UserRole.Admin && (entity.FeedId == null || !user.OwnedFeeds.Contains(entity.FeedId)))
+        if (!HasJobPermission(entity))
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "You do not have permission to cancel this job" });
         }
 
-        var cancelled = await _jobService.CancelJobAsync(jobId, HttpContext.RequestAborted);
+        var cancelled = await _jobService.CancelJobAsync(jobId, HttpContext.RequestAborted, attempt);
         if (cancelled == null)
         {
-            return Conflict(new { error = "Job is already in a terminal state" });
+            return Conflict(new { error = "Job is already in a terminal state or on a later attempt" });
         }
 
         // Publish cancellation to channel for instant SSE notification
@@ -358,6 +394,16 @@ public class JobsController : ControllerBase
         {
             _progressChannel.Unsubscribe(jobId, reader);
         }
+    }
+
+    /// <summary>
+    /// Whether the request's user may act on the job: an Admin, or an owner of the job's feed.
+    /// </summary>
+    private bool HasJobPermission(JobStatusEntity entity)
+    {
+        var user = HttpContext.Items["User"] as User;
+
+        return user == null || user.Role == UserRole.Admin || (entity.FeedId != null && user.OwnedFeeds.Contains(entity.FeedId));
     }
 
     private async Task WriteEventAsync(string eventType, string data, CancellationToken cancellationToken)

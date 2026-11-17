@@ -52,12 +52,12 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
     /// <summary>
     /// Path the service downloads the pending blob to for <paramref name="fileName"/>, so tests can check its cleanup.
     /// </summary>
-    public static string TempInputPath(string fileName) => Path.Combine(Path.GetTempPath(), "FeatherPod", $"transcribe-{JobId}{Path.GetExtension(fileName)}");
+    public static string TempInputPath(string fileName) => Path.Combine(Path.GetTempPath(), "FeatherPod", $"transcribe-{JobId}-a1{Path.GetExtension(fileName)}");
 
     /// <summary>
     /// Path the service converts to, so tests can check its cleanup.
     /// </summary>
-    public static string TempWavPath => Path.Combine(Path.GetTempPath(), "FeatherPod", $"transcribe-{JobId}.wav");
+    public static string TempWavPath => Path.Combine(Path.GetTempPath(), "FeatherPod", $"transcribe-{JobId}-a1.wav");
 
     public static JobStatusEntity CreateEntity(string fileName = DefaultFileName) => new()
     {
@@ -79,16 +79,17 @@ public sealed class TranscriptionTestHarness : IAsyncLifetime
     /// which follows the transcription attempt and its temp-file cleanup on every path. The wait is registered before
     /// the request is submitted, since a completion check that runs before the wait exists would go unobserved.
     /// </summary>
-    public async Task SubmitAndWaitAsync(string fileName = DefaultFileName)
+    public async Task SubmitAndWaitAsync(string fileName = DefaultFileName, Func<TranscriptionRequest, TranscriptionRequest>? configure = null)
     {
         var processingComplete = Jobs.WaitForProcessingCompleteAsync(JobId, TimeSpan.FromSeconds(5));
-        await _channel.SubmitAsync(new TranscriptionRequest
+        var request = new TranscriptionRequest
         {
             JobId = JobId,
             FeedId = "test-feed",
             FileName = fileName,
             EpisodeId = "ep-1",
-        });
+        };
+        await _channel.SubmitAsync(configure?.Invoke(request) ?? request);
 
         await processingComplete;
     }

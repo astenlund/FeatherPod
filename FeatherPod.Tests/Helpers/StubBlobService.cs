@@ -53,7 +53,15 @@ public class StubBlobService : IBlobStorageService
 
     public virtual Task<string> GeneratePendingBlobSasUrlAsync(string feedId, string jobId, string fileName) => Task.FromResult(string.Empty);
 
+    public virtual Task<bool> PendingBlobExistsAsync(string feedId, string jobId, string fileName) => Task.FromResult(true);
+
     public virtual Task DeletePendingJobBlobsAsync(string feedId, string jobId) => Task.CompletedTask;
+
+    public virtual Task<string> GenerateAudioSasUrlAsync(string feedId, string fileName) => Task.FromResult(string.Empty);
+
+    public virtual Task UploadPendingTranscriptAsync(string feedId, string jobId, int attempt, string vttContent) => Task.CompletedTask;
+
+    public virtual Task<string?> DownloadPendingTranscriptAsync(string feedId, string jobId, int attempt) => Task.FromResult<string?>(null);
 
     public virtual Task<string?> LoadPushSubscriptionsAsync(string feedId) => Task.FromResult<string?>(null);
 

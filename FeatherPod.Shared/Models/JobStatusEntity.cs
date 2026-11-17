@@ -164,6 +164,36 @@ public class JobStatusEntity : ITableEntity
     public string? ClientUploadId { get; set; }
 
     /// <summary>
+    /// The job's current attempt: 1 for its first run, incremented by every normalization retry reset. Queue messages, normalization
+    /// signals and transcription runs carry the attempt they were started for, and only work of the current attempt may change the job.
+    /// Null for a job created before attempts existed, which is its first attempt (see <see cref="GetAttempt"/>).
+    /// </summary>
+    public int? Attempt { get; set; }
+
+    /// <summary>
+    /// What the job does (a <see cref="JobKinds"/> value); null for an upload job.
+    /// </summary>
+    public string? Kind { get; set; }
+
+    /// <summary>
+    /// For a transcript retry, the upload time of the episode incarnation it was started on; its join publishes only to that
+    /// incarnation, never to an episode deleted and re-created under the same id meanwhile.
+    /// </summary>
+    public DateTimeOffset? EpisodeUploadedAt { get; set; }
+
+    /// <summary>
+    /// When the scheduled cleanup claimed this job's pending source for deletion (a conditional write on the job, so a normalization
+    /// retry reset based on an earlier read loses its race). A retry refuses a job whose source was claimed.
+    /// </summary>
+    public DateTimeOffset? SourceSweptAt { get; set; }
+
+    /// <summary>
+    /// When a transcript retry's join claimed the job (a conditional write that leaves the job non-terminal while the join publishes).
+    /// A join that finds the claim returns; the job's terminal status is written once, after publishing, with the actual outcome.
+    /// </summary>
+    public DateTimeOffset? JoinClaimedAt { get; set; }
+
+    /// <summary>
     /// Azure Table Storage timestamp (managed by the service).
     /// </summary>
     public DateTimeOffset? Timestamp { get; set; }
@@ -182,6 +212,17 @@ public class JobStatusEntity : ITableEntity
     }
 
     /// <summary>
+    /// The job's current attempt, reading a missing value as the first attempt.
+    /// </summary>
+    public int GetAttempt() => Attempt ?? 1;
+
+    /// <summary>
+    /// Whether work started for <paramref name="attempt"/> (null meaning the first attempt, as on messages sent before attempts existed)
+    /// belongs to this job's current attempt.
+    /// </summary>
+    public bool IsCurrentAttempt(int? attempt) => (attempt ?? 1) == GetAttempt();
+
+    /// <summary>
     /// Set the status from enum.
     /// </summary>
     public void SetJobStatus(JobStatus status)
@@ -194,12 +235,20 @@ public class JobStatusEntity : ITableEntity
     /// </summary>
     public static JobStatusEntity CreateQueued(CreateJobOptions options)
     {
+        var transcriptRetry = JobKinds.IsTranscriptRetry(options.Kind);
+
         return new JobStatusEntity
         {
             PartitionKey = JobStorageNames.JobsPartitionKey,
             RowKey = options.JobId,
             Status = nameof(JobStatus.Queued),
-            NormalizationStage = nameof(Models.NormalizationStage.Queued),
+            Attempt = 1,
+            Kind = options.Kind,
+            EpisodeUploadedAt = options.EpisodeUploadedAt,
+
+            // A transcript retry has no normalization track: it starts terminal and successful, so its join waits on transcription alone
+            NormalizationStage = transcriptRetry ? nameof(Models.NormalizationStage.Completed) : nameof(Models.NormalizationStage.Queued),
+            NormalizationComplete = transcriptRetry ? true : null,
             FeedId = options.FeedId,
             FileName = options.FileName,
             Title = options.Title,
@@ -207,8 +256,8 @@ public class JobStatusEntity : ITableEntity
             ProgressMode = options.ProgressMode,
             ProgressIntervalMs = options.ProgressIntervalMs,
             QueuedAt = DateTimeOffset.UtcNow,
-            NormalizationProgress = 0,
-            ProgressMessage = "Waiting in queue",
+            NormalizationProgress = transcriptRetry ? 100 : 0,
+            ProgressMessage = transcriptRetry ? "Waiting to transcribe" : "Waiting in queue",
             Description = options.Description,
             Summary = options.Summary,
             PublishedDate = options.PublishedDate,

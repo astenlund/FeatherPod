@@ -207,6 +207,74 @@ public class CleanupFunctionTests : IAsyncLifetime
     }
 
     [AzuriteFact]
+    public async Task CleanupOrphanedBlobs_PreservesBlobOfJobResetForNormalizationRetry()
+    {
+        // Arrange - a job that failed in normalization a day ago, then reset by a normalization retry
+        var jobId = Guid.NewGuid().ToString();
+        var blobPath = $"test-feed/pending/{jobId}/test.mp3";
+        await _containerClient.GetBlobClient(blobPath).UploadAsync(BinaryData.FromString("fake audio"));
+
+        var job = new JobStatusEntity
+        {
+            PartitionKey = JobStorageNames.JobsPartitionKey,
+            RowKey = jobId,
+            Status = nameof(JobStatus.Failed),
+            FeedId = "test-feed",
+            NormalizationComplete = true,
+            NormalizationError = "FFmpeg crashed",
+            QueuedAt = DateTimeOffset.UtcNow.AddDays(-1),
+            CompletedAt = DateTimeOffset.UtcNow.AddDays(-1)
+        };
+        FeatherPod.Server.Services.JobRetryService.ResetForNormalizationRetry(job, speechAvailable: false, DateTimeOffset.UtcNow);
+        await _tableClientInstance.AddEntityAsync(job);
+
+        var settings = Options.Create(new FunctionSettings
+        {
+            ContainerName = _containerName,
+            JobRetentionDays = 7,
+            OrphanedBlobRetentionDays = 0
+        });
+        var logger = LoggerFactory.Create(b => b.AddConsole()).CreateLogger<CleanupFunction>();
+        var function = new CleanupFunction(_blobClient, _tableClient, new StubHttpClientFactory(), settings, logger);
+
+        // Act
+        var deleted = await function.CleanupOrphanedBlobsAsync(_tableClientInstance, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(0, deleted);
+        Assert.True(await _containerClient.GetBlobClient(blobPath).ExistsAsync());
+    }
+
+    [AzuriteFact]
+    public async Task CleanupOrphanedBlobs_StuckActiveJob_DeletesOnlyThroughTheJobRowClaim()
+    {
+        // Arrange - an active job stuck for longer than the retention window
+        var jobId = Guid.NewGuid().ToString();
+        var blobPath = $"test-feed/pending/{jobId}/test.mp3";
+        await _containerClient.GetBlobClient(blobPath).UploadAsync(BinaryData.FromString("fake audio"));
+        await _tableClientInstance.AddEntityAsync(new JobStatusEntity
+        {
+            PartitionKey = JobStorageNames.JobsPartitionKey,
+            RowKey = jobId,
+            Status = nameof(JobStatus.Processing),
+            FeedId = "test-feed",
+            QueuedAt = DateTimeOffset.UtcNow.AddDays(-10)
+        });
+
+        var settings = Options.Create(new FunctionSettings { ContainerName = _containerName, JobRetentionDays = 7, OrphanedBlobRetentionDays = 0 });
+        var logger = LoggerFactory.Create(b => b.AddConsole()).CreateLogger<CleanupFunction>();
+        var function = new CleanupFunction(_blobClient, _tableClient, new StubHttpClientFactory(), settings, logger);
+
+        // Act
+        var deleted = await function.CleanupOrphanedBlobsAsync(_tableClientInstance, CancellationToken.None);
+
+        // Assert - the deletion was claimed on the job row, the claim a reset of that row would have refused
+        Assert.Equal(1, deleted);
+        var job = (await _tableClientInstance.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId)).Value;
+        Assert.NotNull(job.SourceSweptAt);
+    }
+
+    [AzuriteFact]
     public async Task CleanupOrphanedBlobs_DeletesBlobsForCompletedJobs()
     {
         // Arrange - create a pending blob where job is already completed (orphaned cleanup failure)

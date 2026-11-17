@@ -13,7 +13,10 @@ namespace FeatherPod.Server.Services;
 /// don't accept the MP4 container despite "AAC" appearing in their format list. With Fast enabled,
 /// MP3/WAV/OGG/FLAC are probed for duration through a SAS URL first, so audio over the cap goes to
 /// batch without a download; if that probe fails they are downloaded and probed locally (see
-/// <see cref="TryProbePendingBlobAsync"/>). Other formats are downloaded before probing.
+/// <see cref="TryProbeSourceAsync"/>). Other formats are downloaded before probing. The source is the job's pending upload, or for a
+/// transcript retry (<see cref="TranscriptionRequest.FromEpisodeAudio"/>) the published episode audio. Every run stages its
+/// transcript for its own attempt (BlobPaths.PendingTranscript), and only the job's join publishes it; every status write and temp file
+/// is scoped to the run's attempt, so a run of an earlier attempt records nothing on a retried job.
 /// Bounded concurrency via SemaphoreSlim. On startup, jobs a previous process left Queued or Running
 /// are resubmitted (see <see cref="RecoverInterruptedTranscriptionsAsync"/>).
 /// </summary>
@@ -149,6 +152,8 @@ public class TranscriptionBackgroundService : BackgroundService
                 FeedId = job.FeedId,
                 FileName = job.FileName,
                 EpisodeId = job.EpisodeId,
+                Attempt = job.GetAttempt(),
+                FromEpisodeAudio = JobKinds.IsTranscriptRetry(job.Kind),
             }, ct);
             resubmitted++;
         }
@@ -187,7 +192,7 @@ public class TranscriptionBackgroundService : BackgroundService
         {
             e.TranscriptionStatus = TranscriptionStatuses.Running;
             e.TranscriptionStartedAt = DateTimeOffset.UtcNow;
-        }, ct);
+        }, ct, RunAttempt(request), TrackOpen);
         PublishProgress(request.JobId, running, "Running");
 
         string? tempInputFile = null;
@@ -203,23 +208,23 @@ public class TranscriptionBackgroundService : BackgroundService
 
                 if (needsConversion)
                 {
-                    tempInputFile = await DownloadPendingBlobToTempAsync(request, ct);
-                    tempWavFile = await ConvertToWavAsync(tempInputFile, request.JobId, ct);
+                    tempInputFile = await DownloadSourceToTempAsync(request, ct);
+                    tempWavFile = await ConvertToWavAsync(tempInputFile, request, ct);
                     duration = await _durationProbe.GetDurationAsync(tempWavFile, ct);
                 }
-                else if (UrlProbeExtensions.Contains(Path.GetExtension(request.FileName)) && await TryProbePendingBlobAsync(request, ct) is { } remoteDuration)
+                else if (UrlProbeExtensions.Contains(Path.GetExtension(request.FileName)) && await TryProbeSourceAsync(request, ct) is { } remoteDuration)
                 {
                     duration = remoteDuration;
                 }
                 else
                 {
-                    tempInputFile = await DownloadPendingBlobToTempAsync(request, ct);
+                    tempInputFile = await DownloadSourceToTempAsync(request, ct);
                     duration = await _durationProbe.GetDurationAsync(tempInputFile, ct);
                 }
 
                 if (duration <= _fastMaxDuration)
                 {
-                    tempInputFile ??= await DownloadPendingBlobToTempAsync(request, ct);
+                    tempInputFile ??= await DownloadSourceToTempAsync(request, ct);
 
                     try
                     {
@@ -251,8 +256,8 @@ public class TranscriptionBackgroundService : BackgroundService
                 // the download + WAV conversion now so the batch upload has a local file.
                 if (needsConversion)
                 {
-                    tempInputFile ??= await DownloadPendingBlobToTempAsync(request, ct);
-                    tempWavFile ??= await ConvertToWavAsync(tempInputFile, request.JobId, ct);
+                    tempInputFile ??= await DownloadSourceToTempAsync(request, ct);
+                    tempWavFile ??= await ConvertToWavAsync(tempInputFile, request, ct);
                 }
 
                 await TranscribeViaBatchAsync(request, tempWavFile, ct);
@@ -298,17 +303,20 @@ public class TranscriptionBackgroundService : BackgroundService
     private async Task TranscribeViaBatchAsync(TranscriptionRequest request, string? tempWavFile, CancellationToken ct)
     {
         // Batch needs an Azure-reachable URL. A non-null tempWavFile means the caller already
-        // converted M4A/M4B/MP4 to WAV; upload it as a sibling blob. Otherwise (MP3/WAV/OGG/FLAC)
-        // use the original pending blob via SAS.
-        var sasFileName = request.FileName;
-
+        // converted M4A/M4B/MP4 to WAV; upload it as a sibling blob under the job's pending blobs.
+        // Otherwise (MP3/WAV/OGG/FLAC) use the source audio itself via SAS.
+        string sasUrl;
         if (tempWavFile is not null)
         {
-            sasFileName = $"_transcription-{request.JobId}.wav";
-            await _blobService.UploadPendingAudioAsync(request.FeedId, request.JobId, sasFileName, tempWavFile);
+            var wavFileName = $"_transcription-{request.JobId}-a{RunAttempt(request)}.wav";
+            await _blobService.UploadPendingAudioAsync(request.FeedId, request.JobId, wavFileName, tempWavFile);
+            sasUrl = await _blobService.GeneratePendingBlobSasUrlAsync(request.FeedId, request.JobId, wavFileName);
+        }
+        else
+        {
+            sasUrl = await GenerateSourceSasUrlAsync(request);
         }
 
-        var sasUrl = await _blobService.GeneratePendingBlobSasUrlAsync(request.FeedId, request.JobId, sasFileName);
         var transcriptionUrl = await _speechService.SubmitAsync(sasUrl, ct);
 
         try
@@ -348,14 +356,28 @@ public class TranscriptionBackgroundService : BackgroundService
         }
     }
 
+    /// <summary>
+    /// The attempt a run writes for: a run carries the attempt it was started for, and a request without one belongs to the first.
+    /// </summary>
+    private static int RunAttempt(TranscriptionRequest request) => request.Attempt ?? 1;
+
+    /// <summary>
+    /// Whether a run may still write its job's transcription track: only while the track is open (Queued, Running, or unset on a row
+    /// written before tracks were recorded). Once something else ended the track (the recurring recovery failing a stalled retry, a
+    /// cancel), a late run writes nothing, so an ended outcome stays final. Checked on the read each write is conditional on.
+    /// </summary>
+    private static bool TrackOpen(JobStatusEntity job) => job.TranscriptionStatus is null or TranscriptionStatuses.Queued or TranscriptionStatuses.Running;
+
     private async Task MarkCompletedAsync(TranscriptionRequest request, string vtt, string mode, CancellationToken ct)
     {
-        await _blobService.UploadTranscriptAsync(request.FeedId, request.EpisodeId, vtt);
+        // Every run stages its result for its own attempt, and only the job's join of that attempt publishes it to the episode's
+        // transcript location (JobCompletionService), so a run of an earlier attempt or of an ended job never touches a published one
+        await _blobService.UploadPendingTranscriptAsync(request.FeedId, request.JobId, RunAttempt(request), vtt);
 
         var completed = await _jobService.MergeJobFieldsAsync(request.JobId, e =>
         {
             e.TranscriptionStatus = TranscriptionStatuses.Completed;
-        }, ct);
+        }, ct, RunAttempt(request), TrackOpen);
         PublishProgress(request.JobId, completed, "Completed");
         _logger.LogInformation("{Mode} transcription completed for job {JobId}", mode, request.JobId);
     }
@@ -372,7 +394,7 @@ public class TranscriptionBackgroundService : BackgroundService
         {
             e.TranscriptionStatus = TranscriptionStatuses.Failed;
             e.TranscriptionError = error.Truncate(500);
-        }, ct);
+        }, ct, RunAttempt(request), TrackOpen);
         PublishProgress(request.JobId, failed, stage);
     }
 
@@ -393,15 +415,15 @@ public class TranscriptionBackgroundService : BackgroundService
     }
 
     /// <summary>
-    /// Probe the pending blob's duration through a read-only SAS URL, before anything is downloaded, so audio
+    /// Probe the source audio's duration through a read-only SAS URL, before anything is downloaded, so audio
     /// that goes to batch (which reads the blob by SAS itself) never touches local disk. Returns null when the
     /// SAS URL or the URL probe fails; the caller then downloads the blob and probes the local copy instead.
     /// </summary>
-    private async Task<TimeSpan?> TryProbePendingBlobAsync(TranscriptionRequest request, CancellationToken ct)
+    private async Task<TimeSpan?> TryProbeSourceAsync(TranscriptionRequest request, CancellationToken ct)
     {
         try
         {
-            var sasUrl = await _blobService.GeneratePendingBlobSasUrlAsync(request.FeedId, request.JobId, request.FileName);
+            var sasUrl = await GenerateSourceSasUrlAsync(request);
 
             return await _durationProbe.GetDurationAsync(new Uri(sasUrl), ct);
         }
@@ -422,11 +444,21 @@ public class TranscriptionBackgroundService : BackgroundService
         }
     }
 
-    private async Task<string> DownloadPendingBlobToTempAsync(TranscriptionRequest request, CancellationToken ct)
-    {
-        var tempInputFile = Path.Combine(GetOrCreateTempDir(), $"transcribe-{request.JobId}{Path.GetExtension(request.FileName)}");
+    /// <summary>
+    /// Read-only SAS URL of the run's source audio: the published episode audio for a transcript retry, the pending upload otherwise.
+    /// </summary>
+    private Task<string> GenerateSourceSasUrlAsync(TranscriptionRequest request) =>
+        request.FromEpisodeAudio
+            ? _blobService.GenerateAudioSasUrlAsync(request.FeedId, request.FileName)
+            : _blobService.GeneratePendingBlobSasUrlAsync(request.FeedId, request.JobId, request.FileName);
 
-        await using (var downloadStream = await _blobService.DownloadPendingBlobAsync(request.FeedId, request.JobId, request.FileName))
+    private async Task<string> DownloadSourceToTempAsync(TranscriptionRequest request, CancellationToken ct)
+    {
+        var tempInputFile = Path.Combine(GetOrCreateTempDir(), $"{RunArtifactStem(request)}{Path.GetExtension(request.FileName)}");
+
+        await using (var downloadStream = request.FromEpisodeAudio
+            ? await _blobService.DownloadAudioAsync(request.FeedId, request.FileName)
+            : await _blobService.DownloadPendingBlobAsync(request.FeedId, request.JobId, request.FileName))
         await using (var fileStream = File.Create(tempInputFile))
         {
             await downloadStream.CopyToAsync(fileStream, ct);
@@ -436,13 +468,20 @@ public class TranscriptionBackgroundService : BackgroundService
     }
 
     /// <summary>
+    /// Stem of a run's local temp files, scoped to its job and attempt so that runs of two attempts of one job never share a file.
+    /// A process runs each attempt at most once (startup recovery resubmits only jobs a previous process queued).
+    /// </summary>
+    private static string RunArtifactStem(TranscriptionRequest request) => $"transcribe-{request.JobId}-a{RunAttempt(request)}";
+
+    /// <summary>
     /// Convert <paramref name="tempInputFile"/> to 16 kHz mono WAV via <see cref="IWavConverter"/>.
     /// Returns the temp WAV path (a failed conversion leaves none behind). Pure local I/O -- no
     /// blob upload (callers do that separately for batch).
     /// </summary>
-    private async Task<string> ConvertToWavAsync(string tempInputFile, string jobId, CancellationToken ct)
+    private async Task<string> ConvertToWavAsync(string tempInputFile, TranscriptionRequest request, CancellationToken ct)
     {
-        var tempWavFile = Path.Combine(GetOrCreateTempDir(), $"transcribe-{jobId}.wav");
+        var jobId = request.JobId;
+        var tempWavFile = Path.Combine(GetOrCreateTempDir(), $"{RunArtifactStem(request)}.wav");
         await _wavConverter.ConvertAsync(tempInputFile, tempWavFile, ct);
 
         _logger.LogInformation("Converted to WAV for transcription job {JobId}: {InputSize} -> {OutputSize} bytes",

@@ -78,11 +78,11 @@ public class NormalizationFunction
         var tableClient = _tableClient.GetTableClient(JobStorageNames.TableName);
         await tableClient.CreateIfNotExistsAsync(cancellationToken);
 
-        // Check if the job was cancelled before we start processing
+        // A delivery for a terminal job (cancelled, or a recorded failure or completion) or for an earlier attempt does nothing
         var currentEntity = await GetJobEntityAsync(tableClient, job.JobId, cancellationToken);
-        if (currentEntity?.GetJobStatus() == JobStatus.Cancelled)
+        if (SkipDeliveryReason(currentEntity, job) is { } skipReason)
         {
-            _logger.LogInformation("Job {JobId} was cancelled before processing started, skipping", job.JobId);
+            _logger.LogInformation("Skipping delivery of job {JobId} (attempt {Attempt}): {Reason}", job.JobId, job.Attempt ?? 1, skipReason);
 
             return;
         }
@@ -213,7 +213,7 @@ public class NormalizationFunction
                         TotalDuration = progress.TotalDuration
                     };
                     _logger.LogDebug("Analyze progress: {Percent}% (mapped to {Mapped}%)", progress.ProgressPercent, mappedProgress.ProgressPercent);
-                    pendingAnalyzeUpdate = UpdateProgressAsync(tableClient, job.JobId, mappedProgress, progressMode, signalRConnection)
+                    pendingAnalyzeUpdate = UpdateProgressAsync(tableClient, job, mappedProgress, progressMode, signalRConnection)
                         .ContinueWith(t => _logger.LogError(t.Exception, "Analysis progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
                 },
                 cancellationToken);
@@ -228,7 +228,7 @@ public class NormalizationFunction
                 try { await pendingAnalyzeUpdate; } catch { /* ignore */ }
             }
 
-            await UpdateProgressAsync(tableClient, job.JobId, new()
+            await UpdateProgressAsync(tableClient, job, new()
             {
                 Stage = Analyzing,
                 ProgressPercent = analyzeEnd,
@@ -266,7 +266,7 @@ public class NormalizationFunction
                         TotalDuration = progress.TotalDuration
                     };
                     _logger.LogDebug("Normalize progress: {Percent}% (mapped to {Mapped}%)", progress.ProgressPercent, mappedProgress.ProgressPercent);
-                    pendingNormalizeUpdate = UpdateProgressAsync(tableClient, job.JobId, mappedProgress, progressMode, signalRConnection)
+                    pendingNormalizeUpdate = UpdateProgressAsync(tableClient, job, mappedProgress, progressMode, signalRConnection)
                         .ContinueWith(t => _logger.LogError(t.Exception, "Normalization progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
                 },
                 cancellationToken);
@@ -281,7 +281,7 @@ public class NormalizationFunction
                 try { await pendingNormalizeUpdate; } catch { /* ignore */ }
             }
 
-            await UpdateProgressAsync(tableClient, job.JobId, new()
+            await UpdateProgressAsync(tableClient, job, new()
             {
                 Stage = Normalizing,
                 ProgressPercent = normalizeStart + normalizeSize,
@@ -294,7 +294,7 @@ public class NormalizationFunction
             var normalizedFileSize = new FileInfo(normalizedFile).Length;
 
             // Upload normalized file
-            await UpdateProgressAsync(tableClient, job.JobId, new()
+            await UpdateProgressAsync(tableClient, job, new()
             {
                 Stage = Finishing,
                 ProgressPercent = 0,
@@ -315,7 +315,7 @@ public class NormalizationFunction
                 uploadLastUpdate = now;
 
                 _logger.LogDebug("Upload progress callback: {Percent}%", percent);
-                _ = UpdateProgressAsync(tableClient, job.JobId, new()
+                _ = UpdateProgressAsync(tableClient, job, new()
                 {
                     Stage = Finishing,
                     ProgressPercent = percent,
@@ -331,7 +331,7 @@ public class NormalizationFunction
                 }, cancellationToken);
             }
 
-            await UpdateProgressAsync(tableClient, job.JobId, new()
+            await UpdateProgressAsync(tableClient, job, new()
             {
                 Stage = Finishing,
                 ProgressPercent = 100,
@@ -343,7 +343,8 @@ public class NormalizationFunction
             {
                 Success = true,
                 NormalizedFileSize = normalizedFileSize,
-                AudioDurationMs = (long)duration.TotalMilliseconds
+                AudioDurationMs = (long)duration.TotalMilliseconds,
+                Attempt = job.Attempt
             }, cancellationToken);
 
             _logger.LogInformation("Normalization job {JobId} completed successfully, signaled App Service", job.JobId);
@@ -356,22 +357,12 @@ public class NormalizationFunction
 
             var sanitizedError = SanitizeErrorMessage(ex);
 
-            // Signal App Service that normalization failed (join logic decides overall job status)
-            try
+            // Signal App Service that normalization failed (join logic decides overall job status). A failure recorded either way is
+            // not rethrown, so the queue does not redeliver it: a user retry replaces the platform's redelivery
+            if (!await RecordNormalizationFailureAsync(tableClient, job, sanitizedError, cancellationToken))
             {
-                await CallNormalizationCompleteAsync(job.JobId, new NormalizationCompleteRequest
-                {
-                    Success = false,
-                    Error = sanitizedError
-                }, cancellationToken);
+                throw;
             }
-            catch (Exception signalEx)
-            {
-                _logger.LogWarning(signalEx, "Failed to signal App Service for job {JobId}, falling back to direct write", job.JobId);
-                await WriteFallbackFailureAsync(tableClient, job.JobId, sanitizedError, cancellationToken);
-            }
-
-            throw;
         }
         finally
         {
@@ -399,7 +390,7 @@ public class NormalizationFunction
         var downloadSize = blobProperties.Value.ContentLength;
         var progressThrottle = job.ProgressIntervalMs.HasValue ? TimeSpan.FromMilliseconds(job.ProgressIntervalMs.Value) : DefaultProgressThrottle;
 
-        await UpdateProgressAsync(tableClient, job.JobId, new()
+        await UpdateProgressAsync(tableClient, job, new()
         {
             Stage = stage,
             ProgressPercent = 0,
@@ -421,7 +412,7 @@ public class NormalizationFunction
             downloadLastUpdate = now;
 
             _logger.LogDebug("Download progress callback: {Percent}%", percent);
-            _ = UpdateProgressAsync(tableClient, job.JobId, new()
+            _ = UpdateProgressAsync(tableClient, job, new()
             {
                 Stage = stage,
                 ProgressPercent = percent,
@@ -462,38 +453,33 @@ public class NormalizationFunction
 
         var tableClient = _tableClient.GetTableClient(JobStorageNames.TableName);
 
-        // Signal normalization failure to App Service (join logic decides overall job status)
+        // Signal normalization failure to App Service (join logic decides overall job status); the signal and the fallback write both
+        // carry the message's attempt, so poison handling of an earlier attempt changes nothing on a retried job
+        // A failure that could not be recorded fails this delivery, as a run's does, so the queue redelivers it rather than
+        // acknowledging a job left active with no result
         var error = "Job failed after maximum retry attempts";
-        try
+        if (!await RecordNormalizationFailureAsync(tableClient, job, error, cancellationToken))
         {
-            await CallNormalizationCompleteAsync(job.JobId, new NormalizationCompleteRequest
-            {
-                Success = false,
-                Error = error
-            }, cancellationToken);
-        }
-        catch (Exception signalEx)
-        {
-            _logger.LogWarning(signalEx, "Failed to signal App Service for poison job {JobId}, falling back to direct write", job.JobId);
-            await WriteFallbackFailureAsync(tableClient, job.JobId, error, cancellationToken);
+            throw new InvalidOperationException($"Could not record the normalization failure of poison job {job.JobId}; leaving it for redelivery");
         }
 
         _logger.LogInformation("Poison job {JobId} handled, signaled normalization failure", job.JobId);
     }
 
-    private async Task UpdateProgressAsync(TableClient tableClient, string jobId, ProgressUpdate progress, string? progressMode = null, HubConnection? signalRConnection = null)
+    private async Task UpdateProgressAsync(TableClient tableClient, NormalizationJob job, ProgressUpdate progress, string? progressMode = null, HubConnection? signalRConnection = null)
     {
+        var jobId = job.JobId;
         try
         {
             // Read existing entity to preserve QueuedAt and other fields
             var existingResponse = await tableClient.GetEntityAsync<JobStatusEntity>(JobStorageNames.JobsPartitionKey, jobId);
             var entity = existingResponse.Value;
 
-            // Don't overwrite terminal states (e.g., user cancelled the job)
-            var currentStatus = entity.GetJobStatus();
-            if (currentStatus.IsTerminal())
+            // Don't overwrite terminal states (e.g., user cancelled the job), and never write progress of an earlier attempt onto a
+            // retried job (the same guard as a delivery's)
+            if (SkipDeliveryReason(entity, job) is { } skipReason)
             {
-                _logger.LogDebug("Skipping progress update for job {JobId} -- already in terminal state {Status}", jobId, currentStatus);
+                _logger.LogDebug("Skipping progress update for job {JobId}: {Reason}", jobId, skipReason);
 
                 return;
             }
@@ -664,19 +650,103 @@ public class NormalizationFunction
         _logger.LogInformation("Signaled normalization-complete for job {JobId} (success={Success})", jobId, request.Success);
     }
 
-    private static async Task WriteFallbackFailureAsync(TableClient tableClient, string jobId, string error, CancellationToken cancellationToken)
+    /// <summary>
+    /// Why a queue delivery must do nothing, or null when it may run: its job is gone or terminal (cancelled, or its result already
+    /// recorded), or the message belongs to an earlier attempt than the job's current one. A delivery that does nothing neither moves
+    /// the job to Processing nor signals completion.
+    /// </summary>
+    internal static string? SkipDeliveryReason(JobStatusEntity? entity, NormalizationJob job)
     {
+        if (entity == null)
+        {
+            return null;
+        }
+
+        if (entity.GetJobStatus().IsTerminal())
+        {
+            return $"job is already {entity.Status}";
+        }
+
+        if (!entity.IsCurrentAttempt(job.Attempt))
+        {
+            return $"job is on attempt {entity.GetAttempt()}";
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Record a normalization failure for the job's attempt: through the App Service's normalization-complete signal, or when that
+    /// fails through a direct table write. Returns whether the failure is recorded (or needs no recording because the job is terminal
+    /// or on a later attempt), in which case the message is not redelivered. Only cancellation of <paramref name="cancellationToken"/>
+    /// (user cancel, host shutdown) propagates; any other OperationCanceledException, such as an elapsed HttpClient timeout on the
+    /// signal, is a failure like the rest and falls through to the direct write.
+    /// </summary>
+    private async Task<bool> RecordNormalizationFailureAsync(TableClient tableClient, NormalizationJob job, string error, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await CallNormalizationCompleteAsync(job.JobId, new NormalizationCompleteRequest
+            {
+                Success = false,
+                Error = error,
+                Attempt = job.Attempt
+            }, cancellationToken);
+
+            return true;
+        }
+        catch (Exception signalEx) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(signalEx, "Failed to signal App Service for job {JobId}, falling back to direct write", job.JobId);
+        }
+
+        try
+        {
+            return await WriteFallbackFailureAsync(tableClient, job, error, cancellationToken);
+        }
+        catch (Exception writeEx) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogError(writeEx, "Failed to record normalization failure for job {JobId}; leaving the message for redelivery", job.JobId);
+
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Write a normalization failure straight to the job, conditional on the read that found the job still on the message's attempt
+    /// and not terminal, so the fallback of an earlier attempt never fails a retried job. Nothing is written when the attempt's
+    /// normalization result is already recorded (a signal the App Service merged but answered too late), so a fallback never
+    /// overwrites it. Returns false on a concurrent change.
+    /// </summary>
+    internal static async Task<bool> WriteFallbackFailureAsync(TableClient tableClient, NormalizationJob job, string error, CancellationToken cancellationToken)
+    {
+        var entity = await GetJobEntityAsync(tableClient, job.JobId, cancellationToken);
+        if (entity == null || SkipDeliveryReason(entity, job) != null || entity.NormalizationComplete == true)
+        {
+            return true;
+        }
+
         var partial = new JobStatusEntity
         {
             PartitionKey = JobStorageNames.JobsPartitionKey,
-            RowKey = jobId,
+            RowKey = job.JobId,
             Status = nameof(JobStatus.Failed),
             NormalizationComplete = true,
             NormalizationError = error,
             Error = error,
             CompletedAt = DateTimeOffset.UtcNow
         };
-        await tableClient.UpdateEntityAsync(partial, Azure.ETag.All, TableUpdateMode.Merge, cancellationToken);
+
+        try
+        {
+            await tableClient.UpdateEntityAsync(partial, entity.ETag, TableUpdateMode.Merge, cancellationToken);
+
+            return true;
+        }
+        catch (RequestFailedException ex) when (ex.Status == 412)
+        {
+            return false;
+        }
     }
 
     private static async Task<JobStatusEntity?> GetJobEntityAsync(TableClient tableClient, string jobId, CancellationToken cancellationToken)
@@ -727,9 +797,9 @@ public class NormalizationFunction
             return false;
         }
 
-        if (refreshed.GetJobStatus().IsTerminal())
+        if (SkipDeliveryReason(refreshed, job) is { } skipReason)
         {
-            _logger.LogInformation("Job {JobId} is in terminal state {Status}, skipping transition to Processing", job.JobId, refreshed.Status);
+            _logger.LogInformation("Skipping transition of job {JobId} to Processing: {Reason}", job.JobId, skipReason);
 
             return false;
         }

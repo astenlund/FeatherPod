@@ -72,4 +72,10 @@ public record NormalizationJob
     /// Progress update throttle interval in milliseconds (null = 500).
     /// </summary>
     public int? ProgressIntervalMs { get; init; }
+
+    /// <summary>
+    /// The job attempt this message was sent for (null for a message sent before attempts existed, which is the first attempt).
+    /// The Function processes a message only while it belongs to its job's current attempt.
+    /// </summary>
+    public int? Attempt { get; init; }
 }

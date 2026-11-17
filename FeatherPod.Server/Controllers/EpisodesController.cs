@@ -25,13 +25,15 @@ public class EpisodesController : ControllerBase
     private readonly IJobProgressChannel _progressChannel;
     private readonly PushNotificationService _pushNotificationService;
     private readonly JobCompletionService _jobCompletionService;
+    private readonly JobRetryService _jobRetryService;
     private readonly ILogger<EpisodesController> _logger;
     private readonly string _baseUrl;
     private readonly string? _progressMode;
     private readonly int _progressIntervalMs;
 
-    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IAiService aiService, ITranscriptionChannel transcriptionChannel, ISpeechTranscriptionService speechService, IJobProgressChannel progressChannel, PushNotificationService pushNotificationService, JobCompletionService jobCompletionService, ILogger<EpisodesController> logger, IConfiguration configuration)
+    public EpisodesController(EpisodeService episodeService, IBlobStorageService blobStorageService, IJobService jobService, IUserService userService, IFeedEventChannel feedEventChannel, IAiService aiService, ITranscriptionChannel transcriptionChannel, ISpeechTranscriptionService speechService, IJobProgressChannel progressChannel, PushNotificationService pushNotificationService, JobCompletionService jobCompletionService, JobRetryService jobRetryService, ILogger<EpisodesController> logger, IConfiguration configuration)
     {
+        _jobRetryService = jobRetryService;
         _episodeService = episodeService;
         _blobStorageService = blobStorageService;
         _jobService = jobService;
@@ -337,6 +339,32 @@ public class EpisodesController : ControllerBase
         return Ok(new { suggestedTitle });
     }
 
+    /// <summary>
+    /// Retry the transcription of an episode whose transcript failed, from its published audio, as a new transcription-only job
+    /// (202 with the job). Refusals carry a <c>reason</c> (RetryResponses.Reasons).
+    /// </summary>
+    [HttpPost("{id}/transcript/retry")]
+    [ProducesResponseType<JobStatusResponse>(StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    [ProducesResponseType(StatusCodes.Status503ServiceUnavailable)]
+    public async Task<IActionResult> RetryTranscript(string feedId, string id)
+    {
+        if (!InputValidation.IsValidFeedId(feedId))
+        {
+            return BadRequest(new { error = InputValidation.GetFeedIdValidationError(feedId) });
+        }
+
+        var result = await _jobRetryService.RetryTranscriptAsync(feedId, id, HttpContext.RequestAborted);
+        if (result.Outcome == JobRetryOutcome.Accepted)
+        {
+            _feedEventChannel.Publish(feedId, "job-added");
+        }
+
+        return RetryResponses.ToActionResult(this, result);
+    }
+
     [HttpPost("{id}/move")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -578,7 +606,8 @@ public class EpisodesController : ControllerBase
         JobStatusEntity? cancelled;
         try
         {
-            cancelled = await _jobService.CancelJobAsync(jobId, CancellationToken.None);
+            // The upload created the job, so its view is always the first attempt: a retry started since is never cancelled by it
+            cancelled = await _jobService.CancelJobAsync(jobId, CancellationToken.None, expectedAttempt: 1);
         }
         catch (RequestFailedException ex)
         {

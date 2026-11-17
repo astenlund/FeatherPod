@@ -5,6 +5,7 @@ using System.Text.Json;
 using FeatherPod.Server.Models;
 using FeatherPod.Server.Services;
 using FeatherPod.Shared.Models;
+using FeatherPod.Tests.Helpers;
 using Lib.Net.Http.WebPush;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -41,7 +42,7 @@ public class PushNotificationServiceTests : IDisposable
         _service = CreateService(_blobStorage);
     }
 
-    private PushNotificationService CreateService(TestBlobStorageService blobStorage)
+    private PushNotificationService CreateService(TestBlobStorageService blobStorage, IJobService? jobService = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -56,7 +57,7 @@ public class PushNotificationServiceTests : IDisposable
         return new PushNotificationService(
             blobStorage,
             _episodeService,
-            new StubJobService(),
+            jobService ?? new StubJobService(),
             config,
             NullLogger<PushNotificationService>.Instance,
             new PushServiceClient(new HttpClient(_pushHandler)));
@@ -165,6 +166,122 @@ public class PushNotificationServiceTests : IDisposable
         };
         var exception = Record.Exception(() => _service.TryNotifyJobTerminal(progress));
         Assert.Null(exception);
+    }
+
+    [Fact]
+    public async Task TranscriptRetry_NotifiedOutsideUploadSession_WhichNeitherWaitsForNorCountsIt()
+    {
+        // Arrange - an upload and a transcript retry both tracked into the feed's session
+        var jobs = new InMemoryJobService();
+        jobs.SetEntity(new JobStatusEntity { RowKey = "upload-1", FeedId = TestFeedId, Status = nameof(JobStatus.Processing), FileName = "upload.m4a" });
+        jobs.SetEntity(new JobStatusEntity { RowKey = "retry-1", FeedId = TestFeedId, Status = nameof(JobStatus.Queued), FileName = "old.m4a", Kind = JobKinds.TranscriptRetry });
+        var service = CreateService(_blobStorage, jobs);
+        var now = DateTime.UtcNow;
+        var (p256dh, auth) = CreateSubscriptionKeys();
+        await _blobStorage.SavePushSubscriptionsAsync(TestFeedId, JsonSerializer.Serialize(new List<PushSubscriptionInfo> { new() { Endpoint = TestEndpoint, P256dh = p256dh, Auth = auth, CreatedAt = now, LastActiveAt = now } }));
+        await service.TrackJobsAsync(TestFeedId, ["upload-1", "retry-1"]);
+
+        // Act - the upload ends while the retry still runs, then the retry ends with a failed transcript
+        service.TryNotifyJobTerminal(new JobStatusResponse { JobId = "upload-1", FeedId = TestFeedId, Status = nameof(JobStatus.Completed), FileName = "upload.m4a" });
+        var uploadNotified = await WaitForRequestCountAsync(1);
+        service.TryNotifyJobTerminal(new JobStatusResponse { JobId = "retry-1", FeedId = TestFeedId, Status = nameof(JobStatus.Completed), FileName = "old.m4a", Kind = JobKinds.TranscriptRetry, TranscriptionStatus = TranscriptionStatuses.Failed });
+        var retryNotified = await WaitForRequestCountAsync(2);
+
+        // Assert
+        Assert.True(uploadNotified, "the upload's session notification waited for the retry");
+        Assert.True(retryNotified, "the retry got no notification of its own");
+    }
+
+    [Fact]
+    public void TranscriptRetry_ReportedTerminalTwice_ClaimsItsNotificationOnce()
+    {
+        // Arrange - the join and a polling progress stream both report the same retry's terminal status
+        var jobs = new InMemoryJobService();
+        var service = CreateService(_blobStorage, jobs);
+        var progress = new JobStatusResponse { JobId = "retry-twice", FeedId = TestFeedId, Status = nameof(JobStatus.Completed), Kind = JobKinds.TranscriptRetry, TranscriptionStatus = TranscriptionStatuses.Completed };
+
+        // Act
+        var first = service.TryClaimTranscriptRetryNotification(progress);
+        var second = service.TryClaimTranscriptRetryNotification(progress);
+
+        // Assert
+        Assert.True(first);
+        Assert.False(second);
+    }
+
+    [Fact]
+    public async Task TrackingOnlyATranscriptRetry_LeavesNoSession_SoAnUntrackedUploadGetsItsFallbackNotification()
+    {
+        // Arrange - a push page registers only a retry job for the feed's session
+        var jobs = new InMemoryJobService();
+        jobs.SetEntity(new JobStatusEntity { RowKey = "retry-only", FeedId = TestFeedId, Status = nameof(JobStatus.Queued), FileName = "old.m4a", Kind = JobKinds.TranscriptRetry });
+        var service = CreateService(_blobStorage, jobs);
+        var now = DateTime.UtcNow;
+        var (p256dh, auth) = CreateSubscriptionKeys();
+        await _blobStorage.SavePushSubscriptionsAsync(TestFeedId, JsonSerializer.Serialize(new List<PushSubscriptionInfo> { new() { Endpoint = TestEndpoint, P256dh = p256dh, Auth = auth, CreatedAt = now, LastActiveAt = now } }));
+        await service.TrackJobsAsync(TestFeedId, ["retry-only"]);
+
+        // Act - a CLI upload the page never tracked ends
+        service.TryNotifyJobTerminal(new JobStatusResponse { JobId = "cli-upload", FeedId = TestFeedId, Status = nameof(JobStatus.Completed), FileName = "cli.m4a" });
+        var notified = await WaitForRequestCountAsync(1);
+
+        // Assert
+        Assert.True(notified, "the untracked upload got no notification while the retry-only session existed");
+    }
+
+    [Fact]
+    public async Task TranscriptRetry_EndingWhileAnUploadSessionIsOpen_NotifiedAtOnceAndOutsideTheSession()
+    {
+        // Arrange - an upload and a transcript retry both tracked into the feed's session
+        var jobs = new InMemoryJobService();
+        jobs.SetEntity(new JobStatusEntity { RowKey = "upload-open", FeedId = TestFeedId, Status = nameof(JobStatus.Processing), FileName = "upload.m4a" });
+        jobs.SetEntity(new JobStatusEntity { RowKey = "retry-first", FeedId = TestFeedId, Status = nameof(JobStatus.Queued), FileName = "old.m4a", Kind = JobKinds.TranscriptRetry });
+        var service = CreateService(_blobStorage, jobs);
+        var now = DateTime.UtcNow;
+        var (p256dh, auth) = CreateSubscriptionKeys();
+        await _blobStorage.SavePushSubscriptionsAsync(TestFeedId, JsonSerializer.Serialize(new List<PushSubscriptionInfo> { new() { Endpoint = TestEndpoint, P256dh = p256dh, Auth = auth, CreatedAt = now, LastActiveAt = now } }));
+        await service.TrackJobsAsync(TestFeedId, ["upload-open", "retry-first"]);
+
+        // Act - the retry ends while the upload is still pending in the session, then the upload ends
+        service.TryNotifyJobTerminal(new JobStatusResponse { JobId = "retry-first", FeedId = TestFeedId, Status = nameof(JobStatus.Completed), FileName = "old.m4a", Kind = JobKinds.TranscriptRetry, TranscriptionStatus = TranscriptionStatuses.Completed });
+        var retryNotified = await WaitForRequestCountAsync(1);
+        service.TryNotifyJobTerminal(new JobStatusResponse { JobId = "upload-open", FeedId = TestFeedId, Status = nameof(JobStatus.Completed), FileName = "upload.m4a" });
+        var sessionNotified = await WaitForRequestCountAsync(2);
+
+        // Assert
+        Assert.True(retryNotified, "the retry waited for the open upload session");
+        Assert.True(sessionNotified, "the upload's session notification never came");
+    }
+
+    [Theory]
+    [InlineData(TranscriptionStatuses.Completed, "Transcript ready")]
+    [InlineData(TranscriptionStatuses.Failed, "Transcript failed")]
+    public void TranscriptRetryNotificationTitle_NamesTranscriptOutcome(string transcriptionStatus, string expected)
+    {
+        // Arrange
+        var progress = new JobStatusResponse { JobId = "r", Status = nameof(JobStatus.Completed), Kind = JobKinds.TranscriptRetry, TranscriptionStatus = transcriptionStatus };
+
+        // Act
+        var title = PushNotificationService.TranscriptRetryNotificationTitle(progress);
+
+        // Assert
+        Assert.Equal(expected, title);
+    }
+
+    private async Task<bool> WaitForRequestCountAsync(int count)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (_pushHandler.RequestedUris.Count >= count)
+            {
+                return true;
+            }
+
+            await Task.Delay(20);
+        }
+
+        return false;
     }
 
     [Fact]
@@ -286,10 +403,12 @@ public class PushNotificationServiceTests : IDisposable
         public Task<List<JobStatusEntity>> GetActiveJobsByFeedAsync(string feedId, CancellationToken cancellationToken = default) => Task.FromResult<List<JobStatusEntity>>([]);
         public Task<List<JobStatusEntity>> GetActiveJobsByTranscriptionStatusAsync(IReadOnlyCollection<string> transcriptionStatuses, CancellationToken cancellationToken = default) => Task.FromResult<List<JobStatusEntity>>([]);
 
+        public Task<List<JobStatusEntity>> GetActiveJobsAsync(CancellationToken cancellationToken = default) => Task.FromResult<List<JobStatusEntity>>([]);
         public Task<List<JobStatusEntity>> GetRecentJobsByFeedAsync(string feedId, TimeSpan since, CancellationToken cancellationToken = default) => Task.FromResult<List<JobStatusEntity>>([]);
-        public Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default) => Task.FromResult<JobStatusEntity?>(null);
+        public Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default, int? expectedAttempt = null) => Task.FromResult<JobStatusEntity?>(null);
+        public Task<bool> TryReplaceAsync(JobStatusEntity entity, CancellationToken cancellationToken = default) => Task.FromResult(false);
         public Task<JobStatusEntity?> UpdateJobStatusAsync(string jobId, Action<JobStatusEntity> mutate, CancellationToken cancellationToken = default) => Task.FromResult<JobStatusEntity?>(null);
-        public Task<JobStatusEntity?> MergeJobFieldsAsync(string jobId, Action<JobStatusEntity> configure, CancellationToken cancellationToken = default) => Task.FromResult<JobStatusEntity?>(null);
+        public Task<JobStatusEntity?> MergeJobFieldsAsync(string jobId, Action<JobStatusEntity> configure, CancellationToken cancellationToken = default, int? expectedAttempt = null, Func<JobStatusEntity, bool>? onlyIf = null) => Task.FromResult<JobStatusEntity?>(null);
         public Task MergeWithETagAsync(string jobId, Action<JobStatusEntity> configure, Azure.ETag etag, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

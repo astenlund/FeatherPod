@@ -111,6 +111,33 @@ public class CleanupFunction
     }
 
     /// <summary>
+    /// Claim a job's pending source for deletion by stamping <see cref="JobStatusEntity.SourceSweptAt"/> with the ETag of the read the
+    /// deletion was decided on (the job terminal, or active but stuck). Every deletion decided from a job row goes through this claim.
+    /// Returns false when the job changed since (a normalization retry reset it, a run recorded its failure, among others).
+    /// </summary>
+    internal static async Task<bool> TryClaimSourceSweepAsync(TableClient tableClient, JobStatusEntity job, CancellationToken cancellationToken)
+    {
+        var claim = new JobStatusEntity
+        {
+            PartitionKey = JobStorageNames.JobsPartitionKey,
+            RowKey = job.RowKey,
+            SourceSweptAt = DateTimeOffset.UtcNow
+        };
+
+        try
+        {
+            var response = await tableClient.UpdateEntityAsync(claim, job.ETag, TableUpdateMode.Merge, cancellationToken);
+            job.ETag = response.Headers.ETag ?? job.ETag;
+
+            return true;
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status is 404 or 412)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Delete pending blobs that have no corresponding active job or whose job is older than retention.
     /// Discovers feed IDs using hierarchical blob listing, then scans each feed's pending/ prefix.
     /// </summary>
@@ -178,15 +205,19 @@ public class CleanupFunction
                         await CallCheckCompletionAsync(job.RowKey, cancellationToken);
                     }
 
-                    // If job is completed, failed, or cancelled, pending blob is orphaned (should have been deleted)
+                    // If job is completed, failed, or cancelled, pending blob is orphaned (should have been deleted). The deletion is claimed
+                    // on the job row first, conditional on the read that found it terminal: a normalization retry resets the job
+                    // conditionally too, so either the reset wins and the claim fails (the source is kept), or the claim wins and the
+                    // reset fails, never a reset job losing its source mid-retry
                     if (job.GetJobStatus().IsTerminal())
                     {
-                        shouldDelete = true;
+                        shouldDelete = await TryClaimSourceSweepAsync(tableClient, job, cancellationToken);
                     }
-                    // If job is still active but very old, it's stuck - clean up
+                    // If job is still active but very old, it's stuck - clean up, through the same claim, so a job that failed and was
+                    // reset by a retry since this read keeps its source
                     else if (job.QueuedAt.HasValue && job.QueuedAt.Value < DateTimeOffset.UtcNow.AddDays(-_settings.JobRetentionDays))
                     {
-                        shouldDelete = true;
+                        shouldDelete = await TryClaimSourceSweepAsync(tableClient, job, cancellationToken);
                     }
                 }
                 catch (Azure.RequestFailedException ex) when (ex.Status == 404)

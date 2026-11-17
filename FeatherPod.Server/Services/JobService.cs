@@ -125,6 +125,39 @@ public class JobService : IJobService
         return results;
     }
 
+    public async Task<List<JobStatusEntity>> GetActiveJobsAsync(CancellationToken cancellationToken = default)
+    {
+        var filter = TableClient.CreateQueryFilter($"PartitionKey eq {JobStorageNames.JobsPartitionKey}");
+        var results = new List<JobStatusEntity>();
+
+        await foreach (var entity in _tableClient.QueryAsync<JobStatusEntity>(filter, cancellationToken: cancellationToken))
+        {
+            if (!entity.GetJobStatus().IsTerminal())
+            {
+                results.Add(entity);
+            }
+        }
+
+        return results;
+    }
+
+    public async Task<bool> TryReplaceAsync(JobStatusEntity entity, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await _tableClient.UpdateEntityAsync(entity, entity.ETag, TableUpdateMode.Replace, cancellationToken);
+            entity.ETag = response.Headers.ETag ?? entity.ETag;
+
+            return true;
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status is 404 or 412)
+        {
+            _logger.LogDebug("Conditional replace of job {JobId} refused ({Status})", entity.RowKey, ex.Status);
+
+            return false;
+        }
+    }
+
     public async Task<List<JobStatusEntity>> GetRecentJobsByFeedAsync(string feedId, TimeSpan since, CancellationToken cancellationToken = default)
     {
         var cutoff = DateTimeOffset.UtcNow - since;
@@ -142,7 +175,7 @@ public class JobService : IJobService
         return results;
     }
 
-    public async Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default)
+    public async Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default, int? expectedAttempt = null)
     {
         const int maxRetries = 3;
         for (var attempt = 1; attempt <= maxRetries; attempt++)
@@ -156,6 +189,24 @@ public class JobService : IJobService
                 // Failed jobs CAN be cancelled (dismiss from push page UI)
                 if (entity.GetJobStatus() is JobStatus.Completed or JobStatus.Cancelled)
                 {
+                    return null;
+                }
+
+                // A transcript retry whose join has claimed it is publishing; the join writes its terminal status, and a cancel now
+                // would report an outcome the publish may contradict. The claim changes the ETag, so a cancel read before it conflicts
+                // and refuses here on its re-read; a join that stopped after claiming is ended by the recurring recovery.
+                if (entity.JoinClaimedAt != null)
+                {
+                    _logger.LogInformation("Not cancelling job {JobId}: its join has claimed it", jobId);
+
+                    return null;
+                }
+
+                // A cancel decided on a view of an earlier attempt (a stale dismissal) never reaches a retried job
+                if (expectedAttempt is { } expected && expected != entity.GetAttempt())
+                {
+                    _logger.LogInformation("Not cancelling job {JobId}: cancel was for attempt {Expected}, job is on attempt {Current}", jobId, expected, entity.GetAttempt());
+
                     return null;
                 }
 
@@ -246,7 +297,7 @@ public class JobService : IJobService
         return null;
     }
 
-    public async Task<JobStatusEntity?> MergeJobFieldsAsync(string jobId, Action<JobStatusEntity> configure, CancellationToken cancellationToken = default)
+    public async Task<JobStatusEntity?> MergeJobFieldsAsync(string jobId, Action<JobStatusEntity> configure, CancellationToken cancellationToken = default, int? expectedAttempt = null, Func<JobStatusEntity, bool>? onlyIf = null)
     {
         const int maxRetries = 3;
         for (var attempt = 1; attempt <= maxRetries; attempt++)
@@ -260,6 +311,21 @@ public class JobService : IJobService
                 if (entity.GetJobStatus().IsTerminal())
                 {
                     _logger.LogDebug("Skipping merge for job {JobId} -- already in terminal state {Status}", jobId, entity.Status);
+
+                    return null;
+                }
+
+                // Don't let work of an earlier attempt write to a retried job
+                if (expectedAttempt is { } expected && expected != entity.GetAttempt())
+                {
+                    _logger.LogInformation("Skipping merge for job {JobId} -- work of attempt {Expected}, job is on attempt {Current}", jobId, expected, entity.GetAttempt());
+
+                    return null;
+                }
+
+                if (onlyIf != null && !onlyIf(entity))
+                {
+                    _logger.LogInformation("Skipping merge for job {JobId} -- its state no longer admits the write", jobId);
 
                     return null;
                 }

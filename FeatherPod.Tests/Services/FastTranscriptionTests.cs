@@ -40,7 +40,7 @@ public class FastTranscriptionTests : IAsyncLifetime
         var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
         Assert.Equal(TranscriptionStatuses.Completed, entity.TranscriptionStatus);
         Assert.Null(entity.TranscriptionError);
-        Assert.StartsWith("WEBVTT", _harness.Blob.UploadedTranscripts[0].Vtt);
+        Assert.StartsWith("WEBVTT", _harness.Blob.StagedTranscripts[0].Vtt);
         Assert.Equal(1, _harness.Speech.FastCallCount);
         Assert.Equal(0, _harness.Speech.SubmitCallCount);
         Assert.Empty(_harness.Speech.DeletedUrls);
@@ -61,7 +61,7 @@ public class FastTranscriptionTests : IAsyncLifetime
         var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
         Assert.Equal(TranscriptionStatuses.Failed, entity.TranscriptionStatus);
         Assert.Equal("Transcription produced no output", entity.TranscriptionError);
-        Assert.Empty(_harness.Blob.UploadedTranscripts);
+        Assert.Empty(_harness.Blob.StagedTranscripts);
         Assert.Equal(1, _harness.Speech.FastCallCount);
         Assert.Equal(0, _harness.Speech.SubmitCallCount);
     }
@@ -104,8 +104,8 @@ public class FastTranscriptionTests : IAsyncLifetime
         var entity = _harness.Jobs.GetEntity(TranscriptionTestHarness.JobId)!;
         Assert.Equal(TranscriptionStatuses.Completed, entity.TranscriptionStatus);
         Assert.Null(entity.TranscriptionError);
-        Assert.StartsWith("WEBVTT", _harness.Blob.UploadedTranscripts[0].Vtt);
-        Assert.Contains("Batch", _harness.Blob.UploadedTranscripts[0].Vtt);
+        Assert.StartsWith("WEBVTT", _harness.Blob.StagedTranscripts[0].Vtt);
+        Assert.Contains("Batch", _harness.Blob.StagedTranscripts[0].Vtt);
         Assert.Equal(1, _harness.Speech.FastCallCount);
         Assert.Contains("https://azure.example/transcriptions/fallback", _harness.Speech.DeletedUrls);
     }
@@ -299,13 +299,13 @@ public class FastTranscriptionTests : IAsyncLifetime
         Assert.Single(_harness.Converter.Conversions);
         Assert.Equal(0, _harness.Speech.FastCallCount);
         Assert.Equal(0, _harness.Speech.SubmitCallCount);
-        Assert.Empty(_harness.Blob.UploadedTranscripts);
+        Assert.Empty(_harness.Blob.StagedTranscripts);
         AssertTempFilesDeleted();
     }
 
     private void AssertBatchSubmittedConvertedWav()
     {
-        var wavBlobName = $"_transcription-{TranscriptionTestHarness.JobId}.wav";
+        var wavBlobName = $"_transcription-{TranscriptionTestHarness.JobId}-a1.wav";
         Assert.Equal([(wavBlobName, true)], _harness.Blob.PendingAudioUploads);
         Assert.Equal([wavBlobName], _harness.Blob.SasRequests);
         Assert.Equal([RecordingBlobService.SasUrlFor(wavBlobName)], _harness.Speech.SubmittedAudioUrls);

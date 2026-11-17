@@ -38,14 +38,26 @@ public interface IJobService
     Task<List<JobStatusEntity>> GetActiveJobsByTranscriptionStatusAsync(IReadOnlyCollection<string> transcriptionStatuses, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Get all active (non-terminal) jobs across feeds.
+    /// </summary>
+    Task<List<JobStatusEntity>> GetActiveJobsAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Get all jobs (including terminal) for a feed within a time window.
     /// </summary>
     Task<List<JobStatusEntity>> GetRecentJobsByFeedAsync(string feedId, TimeSpan since, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Cancel a job. Returns updated entity, or null if the job is already in a terminal state.
+    /// Cancel a job. Returns updated entity, or null if the job is already in a terminal state, or when
+    /// <paramref name="expectedAttempt"/> is given and the job's current attempt differs (a cancel decided on a view of an earlier attempt).
     /// </summary>
-    Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default);
+    Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default, int? expectedAttempt = null);
+
+    /// <summary>
+    /// Replace the whole entity, conditional on its <see cref="JobStatusEntity.ETag"/>, so that fields set to null are cleared (a Merge
+    /// skips them). Returns false when the job changed since it was read or no longer exists; on success the entity carries the new ETag.
+    /// </summary>
+    Task<bool> TryReplaceAsync(JobStatusEntity entity, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Update a job's status fields atomically (read-modify-write with ETag).
@@ -58,9 +70,11 @@ public interface IJobService
     /// Merge specific fields into a job entity without stomping concurrent writes.
     /// The <paramref name="configure"/> action populates a blank entity with only the fields to write.
     /// Reads the entity first for terminal-state guard and ETag, then Merges the partial entity.
-    /// Returns the merged view (read entity with partial applied), or null if not found or already terminal.
+    /// Returns the merged view (read entity with partial applied), or null if not found or already terminal, or when
+    /// <paramref name="expectedAttempt"/> is given and is not the job's current attempt (work of an earlier attempt), or when
+    /// <paramref name="onlyIf"/> is given and rejects the entity as read (checked on the same read the write is conditional on).
     /// </summary>
-    Task<JobStatusEntity?> MergeJobFieldsAsync(string jobId, Action<JobStatusEntity> configure, CancellationToken cancellationToken = default);
+    Task<JobStatusEntity?> MergeJobFieldsAsync(string jobId, Action<JobStatusEntity> configure, CancellationToken cancellationToken = default, int? expectedAttempt = null, Func<JobStatusEntity, bool>? onlyIf = null);
 
     /// <summary>
     /// Merge specific fields using a caller-provided ETag (no re-read).

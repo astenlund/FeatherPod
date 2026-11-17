@@ -75,4 +75,14 @@ public record CreateJobOptions
     /// The ID the uploading client generated for this upload (null when the client sent none).
     /// </summary>
     public string? ClientUploadId { get; init; }
+
+    /// <summary>
+    /// What the job does (a <see cref="JobKinds"/> value); null for an upload job.
+    /// </summary>
+    public string? Kind { get; init; }
+
+    /// <summary>
+    /// For a transcript retry, the upload time of the episode incarnation it is started on.
+    /// </summary>
+    public DateTimeOffset? EpisodeUploadedAt { get; init; }
 }

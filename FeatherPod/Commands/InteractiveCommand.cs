@@ -14,6 +14,7 @@ using EpisodeDeleteCommand = FeatherPod.Commands.Episode.DeleteCommand;
 using EpisodeListCommand = FeatherPod.Commands.Episode.ListCommand;
 using EpisodeNoteCore = FeatherPod.Commands.Episode.NoteCommandCore;
 using EpisodeRenameCommand = FeatherPod.Commands.Episode.RenameCommand;
+using EpisodeRetryTranscriptCommand = FeatherPod.Commands.Episode.RetryTranscriptCommand;
 using FeedUpdateCommand = FeatherPod.Commands.Feed.UpdateCommand;
 using FeedCreateCommand = FeatherPod.Commands.Feed.CreateCommand;
 using FeedDeleteCommand = FeatherPod.Commands.Feed.DeleteCommand;
@@ -1043,6 +1044,33 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
 
                     break;
 
+                case MenuChoice.RetryTranscript:
+                    if (!isConnected || httpClient == null)
+                    {
+                        Out.MarkupLine("[yellow]Not connected. Use Settings to connect.[/]");
+                    }
+                    else if (currentFeed == null)
+                    {
+                        Out.MarkupLine("[yellow]No feed selected. Use 'M: Manage Feeds' to create one.[/]");
+                        Out.BlankLine();
+                    }
+                    else
+                    {
+                        var retryEpisodes = await EpisodeHelpers.GetEpisodesAsync(httpClient, currentFeed.Id);
+                        if (retryEpisodes == null || retryEpisodes.Count == 0)
+                        {
+                            Out.MarkupLine("[yellow]No episodes available.[/]");
+                        }
+                        else if (EpisodeRetryTranscriptCommand.SelectFailedTranscriptEpisode(retryEpisodes, currentFeed.Title) is { } retryEpisode)
+                        {
+                            await EpisodeRetryTranscriptCommand.RetryTranscriptAsync(httpClient, currentFeed.Id, retryEpisode, cancellationToken);
+                        }
+                    }
+
+                    WaitForKeyPress();
+
+                    break;
+
                 case MenuChoice.SwitchFeed:
                     if (!isConnected || httpClient == null)
                     {
@@ -1969,6 +1997,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
             .AddOption("D", "Delete episodes", MenuChoice.Delete)
             .AddOption("R", "Rename episode", MenuChoice.Rename)
             .AddOption("N", "Episode note", MenuChoice.Note)
+            .AddOption("T", "Retry transcript", MenuChoice.RetryTranscript)
             .AddOption("V", "Move/Copy episodes", MenuChoice.MoveCopy);
 
         // Only show User Management and YouTube for Admin users when admin features are enabled
@@ -2001,6 +2030,7 @@ internal sealed class InteractiveCommand : AsyncCommand<InteractiveSettings>
         Delete,
         Rename,
         Note,
+        RetryTranscript,
         MoveCopy,
         UserManagement,
         YouTube,

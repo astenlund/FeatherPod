@@ -43,4 +43,11 @@ public static class BlobPaths
 
     /// <summary>VTT transcript blob keyed by episode id.</summary>
     public static string Transcript(string feedId, string episodeId) => $"{feedId}/transcripts/{episodeId}.vtt";
+
+    /// <summary>
+    /// A transcript staged under a job's pending blobs by a transcription run of <paramref name="attempt"/>, until the job's join of that
+    /// attempt publishes it to <see cref="Transcript"/>. Only joins write the episode's transcript, so a run of an earlier attempt or of
+    /// an ended job never touches a published transcript.
+    /// </summary>
+    public static string PendingTranscript(string feedId, string jobId, int attempt) => Pending(feedId, jobId, $"_transcript-a{attempt}.vtt");
 }

@@ -125,6 +125,17 @@ public record JobStatusResponse
     public string? ClientUploadId { get; init; }
 
     /// <summary>
+    /// The job's current attempt (1 for its first run; a normalization retry starts the next). Clients tie status answers and
+    /// dismissals to the attempt they saw, since a retried job keeps its id.
+    /// </summary>
+    public int Attempt { get; init; } = 1;
+
+    /// <summary>
+    /// What the job does (a <see cref="JobKinds"/> value); null for an upload job.
+    /// </summary>
+    public string? Kind { get; init; }
+
+    /// <summary>
     /// Time taken to process the job, or elapsed time if still processing.
     /// </summary>
     public TimeSpan? Duration => QueuedAt.HasValue
@@ -165,7 +176,9 @@ public record JobStatusResponse
             TranscriptionError = entity.TranscriptionError,
             AuthRequired = string.Equals(entity.Error, YtDlpService.BotDetectionErrorMessage, StringComparison.Ordinal),
             TickMs = entity.QueuedAt.HasValue ? (long)(DateTimeOffset.UtcNow - entity.QueuedAt.Value).TotalMilliseconds : null,
-            ClientUploadId = entity.ClientUploadId
+            ClientUploadId = entity.ClientUploadId,
+            Attempt = entity.GetAttempt(),
+            Kind = entity.Kind
         };
     }
 }

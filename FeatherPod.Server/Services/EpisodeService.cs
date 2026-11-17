@@ -483,13 +483,31 @@ public sealed partial class EpisodeService : IDisposable
     /// <summary>
     /// Add a pre-built episode to the feed cache and save to blob storage.
     /// Used by the join logic when both normalization and transcription tracks are complete.
-    /// The audio blob is already uploaded by the Function; this only updates episodes.json.
+    /// The audio blob is already uploaded by the Function; this updates episodes.json and, when <paramref name="transcriptVtt"/> is
+    /// given, first writes the episode's transcript. The transcript write happens inside the lock, against the usual rule of I/O outside
+    /// it, because every write of an episode's transcript location by a join (here and <see cref="PublishTranscriptIfAsync"/>) must be
+    /// ordered with the others and with the episode's own changes, or one join could replace a transcript another just published.
+    /// A failed transcript write degrades only the transcript: the episode is still added, with a failed transcript the user can
+    /// retry, rather than lost. Returns the episode as stored.
     /// </summary>
-    public async Task AddEpisodeFromEntityAsync(Episode episode, CancellationToken cancellationToken = default)
+    public async Task<Episode> AddEpisodeFromEntityAsync(Episode episode, CancellationToken cancellationToken = default, string? transcriptVtt = null)
     {
         await _lock.WaitAsync(cancellationToken);
         try
         {
+            if (transcriptVtt != null)
+            {
+                try
+                {
+                    await _blobStorage.UploadTranscriptAsync(episode.FeedId, episode.Id, transcriptVtt);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogError(ex, "Failed to write the transcript of episode {Id} in feed {FeedId}; adding it with a failed transcript", episode.Id, episode.FeedId);
+                    episode = episode with { TranscriptStatus = TranscriptStatus.Failed };
+                }
+            }
+
             if (!_episodesByFeed.TryGetValue(episode.FeedId, out var episodes))
             {
                 episodes = [];
@@ -508,6 +526,8 @@ public sealed partial class EpisodeService : IDisposable
             await SaveEpisodesAsync(episode.FeedId);
 
             _logger.LogInformation("Added episode from entity to feed {FeedId}: {Title} ({FileName})", episode.FeedId, episode.Title, episode.FileName);
+
+            return episode;
         }
         finally
         {
@@ -622,6 +642,85 @@ public sealed partial class EpisodeService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Publish a retried transcript: inside the lock, only while the episode exists, is still the incarnation uploaded at
+    /// <paramref name="expectedUploadedAt"/> (a delete and re-upload creates a new one under the same id) and still has a failed
+    /// transcript, run <paramref name="writeTranscript"/> to write its transcript location, then mark it Available and bump the feed
+    /// version so conditional fetches see the change. The write runs inside the lock for the reason given on
+    /// <see cref="AddEpisodeFromEntityAsync"/>. Returns false, writing nothing, when any condition fails.
+    /// </summary>
+    public async Task<bool> PublishTranscriptIfAsync(string feedId, string id, DateTime expectedUploadedAt, Func<Task> writeTranscript)
+    {
+        await _lock.WaitAsync();
+
+        try
+        {
+            if (!_episodesByFeed.TryGetValue(feedId, out var episodes))
+            {
+                return false;
+            }
+
+            var index = episodes.FindIndex(e => e.Id == id);
+            if (index < 0 || episodes[index].TranscriptStatus != TranscriptStatus.Failed || episodes[index].UploadedAt.ToUniversalTime() != expectedUploadedAt.ToUniversalTime())
+            {
+                return false;
+            }
+
+            await writeTranscript();
+            var previous = episodes[index];
+            var previousVersion = _feedVersionByFeed.GetValueOrDefault(feedId);
+            episodes[index] = previous with { TranscriptStatus = TranscriptStatus.Available };
+            BumpFeedModifiedAt(feedId);
+            try
+            {
+                await SaveEpisodesAsync(feedId);
+            }
+            catch
+            {
+                // Not published: the cache must not run ahead of the persisted metadata, which still says Failed, so the episode stays
+                // retryable. The transcript blob just written is a leftover the next retry overwrites.
+                episodes[index] = previous;
+                if (previousVersion == null)
+                {
+                    _feedVersionByFeed.Remove(feedId);
+                }
+                else
+                {
+                    _feedVersionByFeed[feedId] = previousVersion;
+                }
+
+                throw;
+            }
+
+            _logger.LogInformation("Published retried transcript of episode {EpisodeId} in feed {FeedId}", id, feedId);
+
+            return true;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Whether the episode exists as the incarnation uploaded at <paramref name="expectedUploadedAt"/> (the comparison
+    /// <see cref="PublishTranscriptIfAsync"/> makes) with an available transcript.
+    /// </summary>
+    public async Task<bool> HasAvailableTranscriptAsync(string feedId, string id, DateTime expectedUploadedAt)
+    {
+        await _lock.WaitAsync();
+
+        try
+        {
+            return _episodesByFeed.TryGetValue(feedId, out var episodes) &&
+                episodes.Any(e => e.Id == id && e.TranscriptStatus == TranscriptStatus.Available && e.UploadedAt.ToUniversalTime() == expectedUploadedAt.ToUniversalTime());
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
     public async Task<Episode?> UpdateEpisodeMetadataAsync(string feedId, string id, string? title = null, string? note = null)
     {
         await _lock.WaitAsync();
@@ -697,43 +796,77 @@ public sealed partial class EpisodeService : IDisposable
 
         var newId = Episode.GenerateId(targetFeedId, episode.FileName, episode.FileSize);
 
-        // Copy transcript to target feed with new episode ID, then delete source
+        // Copy transcript to target feed with new episode ID; the source copy is deleted in the commit
         await CopyTranscriptAsync(episode, sourceFeedId, targetFeedId, newId);
-        if (episode.TranscriptStatus == TranscriptStatus.Available)
-        {
-            await _blobStorage.DeleteTranscriptAsync(sourceFeedId, episode.Id);
-        }
 
-        var movedEpisode = episode with
-        {
-            Id = newId,
-            FeedId = targetFeedId
-        };
-
-        // Acquire lock for in-memory state mutation
+        // Commit from the episode as it is now, found by id: it may have been renamed, noted or given a retried transcript during the
+        // blob I/O above, and the move must carry that state rather than the snapshot's (check-then-act re-derived at commit)
+        Episode? movedEpisode = null;
         await _lock.WaitAsync();
         try
         {
-            _episodesByFeed[sourceFeedId].Remove(episode);
-            if (!_episodesByFeed.ContainsKey(targetFeedId))
+            var sourceEpisodes = _episodesByFeed[sourceFeedId];
+            var index = sourceEpisodes.FindIndex(e => e.Id == episode.Id);
+            if (index >= 0)
             {
-                _episodesByFeed[targetFeedId] = [];
+                var current = sourceEpisodes[index];
+                if (current.TranscriptStatus == TranscriptStatus.Available && episode.TranscriptStatus != TranscriptStatus.Available)
+                {
+                    // Published meanwhile; copied inside the lock like the joins' transcript writes
+                    await CopyTranscriptAsync(current, sourceFeedId, targetFeedId, newId);
+                }
+
+                movedEpisode = current with
+                {
+                    Id = newId,
+                    FeedId = targetFeedId
+                };
+
+                sourceEpisodes.RemoveAt(index);
+                if (!_episodesByFeed.ContainsKey(targetFeedId))
+                {
+                    _episodesByFeed[targetFeedId] = [];
+                }
+                _episodesByFeed[targetFeedId].Add(movedEpisode);
+                BumpFeedModifiedAt(sourceFeedId);
+                BumpFeedModifiedAt(targetFeedId);
+
+                await SaveEpisodesAsync(sourceFeedId);
+                await SaveEpisodesAsync(targetFeedId);
+
+                // The source transcript is deleted inside the commit, like every other write of an episode's transcript location:
+                // outside the lock, a re-upload re-creating the source id could publish its own transcript before this delete
+                if (movedEpisode.TranscriptStatus == TranscriptStatus.Available)
+                {
+                    try
+                    {
+                        await _blobStorage.DeleteTranscriptAsync(sourceFeedId, episode.Id);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.LogWarning(ex, "Failed to delete the source transcript of moved episode {Id}; it remains as an orphan", episode.Id);
+                    }
+                }
             }
-            _episodesByFeed[targetFeedId].Add(movedEpisode);
-            BumpFeedModifiedAt(sourceFeedId);
-            BumpFeedModifiedAt(targetFeedId);
-
-            await SaveEpisodesAsync(sourceFeedId);
-            await SaveEpisodesAsync(targetFeedId);
-
-            _logger.LogInformation("Moved episode {Id} from feed {Source} to {Target}", episodeId, sourceFeedId, targetFeedId);
-
-            return movedEpisode;
         }
         finally
         {
             _lock.Release();
         }
+
+        if (movedEpisode == null)
+        {
+            // Deleted during the move: the episode is not published to the target. Its copies there are left as orphans rather than
+            // deleted, since no check made here stays true until a delete lands: an upload of the same file can write and publish its
+            // own audio or transcript at those paths at any point (an orphan is the safe failure, a dangling reference is not).
+            _logger.LogWarning("Episode {Id} was deleted while being moved to feed {Target}; its copied audio {File} and any transcript remain there as orphans", episodeId, targetFeedId, episode.FileName);
+
+            throw new InvalidOperationException($"Episode '{episodeId}' was deleted while it was being moved");
+        }
+
+        _logger.LogInformation("Moved episode {Id} from feed {Source} to {Target}", episodeId, sourceFeedId, targetFeedId);
+
+        return movedEpisode;
     }
 
     public async Task<Episode> CopyEpisodeAsync(string episodeId, string sourceFeedId, string targetFeedId)

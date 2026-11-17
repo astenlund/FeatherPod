@@ -45,6 +45,11 @@ internal class Program
                     .WithExample("episode", "push", "*.mp3", "-f", "my-podcast", "--delete-after")
                     .WithExample("episode", "push", "*.mp3", "--delete-after", "--dry-run");
 
+                episode.AddCommand<RetryTranscriptCommand>("retry-transcript")
+                    .WithDescription("Retry the transcription of an episode whose transcript failed")
+                    .WithExample("episode", "retry-transcript", "abc123", "-f", "my-podcast")
+                    .WithExample("episode", "retry-transcript", "-f", "my-podcast");
+
                 episode.AddCommand<DeleteCommand>("delete")
                     .WithDescription("Delete an episode")
                     .WithExample("episode", "delete", "abc123", "-f", "my-podcast")
