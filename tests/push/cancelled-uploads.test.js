@@ -166,6 +166,16 @@ test('a cancelled or completed job settles its cancelled upload without being wi
     assert.deepEqual(settled, ['u1', 'u2']);
 });
 
+test('a job a normalization retry moved past its upload attempt settles the cancelled upload instead of being withheld', () => {
+    // The upload's cancellation was decided on attempt 1; the retry the user started since owns the job
+    const jobs = [{ jobId: 'j1', clientUploadId: 'u1', status: 'Processing', attempt: 2 }];
+
+    const { withheld, settled } = classifyCancelledUploadJobs(jobs, id => id === 'u1');
+
+    assert.deepEqual(withheld, []);
+    assert.deepEqual(settled, ['u1']);
+});
+
 test('jobs without a client upload id, or whose upload was not cancelled, are left alone', () => {
     const jobs = [
         { jobId: 'j1', status: 'Queued' },

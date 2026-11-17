@@ -5,7 +5,8 @@ import { classifyCancelledUploadJobs, createCancelledUploadStore } from './cance
 import { pairInterruptedUploads, selectAddableServerJobs } from './interrupted-uploads.js';
 import { getApiKey } from './auth.js';
 import { keyAttempts } from './key-attempts.js';
-import { getQueue, getActiveUploadId, generateEntryId, addFilesToQueue, monitorEntryNormalizationInBackground, saveQueueState, checkAllComplete, finalizeTerminalEntry } from './queue.js';
+import { ATTEMPT_ORDER, attemptOf, compareJobAttempt, isNormalizationFailure } from './job-attempts.js';
+import { getQueue, getActiveUploadId, addFilesToQueue, adoptJobAttempt, createServerJobEntry, monitorEntryNormalizationInBackground, saveQueueState, checkAllComplete, finalizeTerminalEntry } from './queue.js';
 import { renderQueueList, updateQueueItemInDOM, removeQueueItemFromDOM } from './queue-ui.js';
 import { progressAnimator } from './progress.js';
 import { showState, getCurrentState, refreshQueueActivity } from './state.js';
@@ -177,16 +178,18 @@ export function loadDismissedJobIds() {
 }
 
 /**
- * Record jobs as dismissed in this tab and in localStorage, so recent-jobs merges skip them for JOB_TTL_MS, reloads
- * included. A pending dismissal (options.pending, for a cancel whose request has not settled) is honored at once by
- * this tab, but later loads skip it until confirmDismissedJob saves it as an ordinary one.
- * @param {string[]} jobIds
+ * Record job attempts as dismissed in this tab and in localStorage, so recent-jobs merges skip them for JOB_TTL_MS,
+ * reloads included. A dismissal hides the attempt it names and earlier ones, never a later attempt of the job (a
+ * normalization retry), in this tab or any later load (see dismissal-store.js). A pending dismissal (options.pending,
+ * for a cancel whose request has not settled) is honored at once by this tab, but later loads skip it until
+ * confirmDismissedJob saves it as an ordinary one.
+ * @param {Array<{jobId: string, attempt?: number}>} jobs - Each job with the attempt the dismissal was decided on
  * @param {{pending?: boolean}} [options]
  * @returns {number} The time recorded as their dismissal, which confirmDismissedJob and dropDismissedJob take to
  *     identify it
  */
-export function recordDismissedJobs(jobIds, options) {
-    return dismissedJobs.record(jobIds, options);
+export function recordDismissedJobs(jobs, options) {
+    return dismissedJobs.record(jobs, options);
 }
 
 /**
@@ -210,13 +213,14 @@ export function dropDismissedJob(jobId, dismissedAt) {
 }
 
 /**
- * Whether this tab treats a job as dismissed (dismissed, cleared or cancelled here, or saved as dismissed by another tab
- * before this tab's last loadDismissedJobIds), as recent-jobs merges do.
+ * Whether this tab treats a job attempt as dismissed (dismissed, cleared or cancelled here, or saved as dismissed by
+ * another tab before this tab's last loadDismissedJobIds), as recent-jobs merges do.
  * @param {string} jobId
+ * @param {number} [attempt] - The attempt in question (1 when omitted)
  * @returns {boolean}
  */
-export function isJobDismissed(jobId) {
-    return dismissedJobs.has(jobId);
+export function isJobDismissed(jobId, attempt) {
+    return dismissedJobs.has(jobId, attempt);
 }
 
 /**
@@ -240,12 +244,17 @@ export function recordCancelledUpload(clientUploadId) {
  * Ask the server to cancel a job (POST /api/jobs/{id}/cancel), giving up after CANCEL_REQUEST_TIMEOUT_MS. The cancel
  * has settled when the server cancelled the job or the job is gone (404). Any other status, a timeout or a network
  * error means the job may still be running, may have completed first or may already be cancelled.
+ * With attempt, the server cancels the job only while it is still on that attempt (?attempt=N) and answers 409
+ * otherwise, so a cancel decided on a view of an attempt the job has since left (a dismissal of a failed attempt that
+ * another tab retried) never cancels the later attempt.
  * @param {string} jobId
+ * @param {number} [attempt] - The attempt the cancel was decided on
  * @returns {Promise<boolean>} Whether the cancel settled
  */
-export async function requestJobCancel(jobId) {
+export async function requestJobCancel(jobId, attempt) {
+    const query = attempt == null ? '' : '?attempt=' + attempt;
     try {
-        const response = await fetch('/api/jobs/' + jobId + '/cancel', {
+        const response = await fetch('/api/jobs/' + jobId + '/cancel' + query, {
             method: 'POST',
             headers: { 'X-API-Key': getApiKey() },
             signal: AbortSignal.timeout(CANCEL_REQUEST_TIMEOUT_MS)
@@ -270,8 +279,8 @@ async function cancelCancelledUploadJob(job) {
     }
     cancellingUploadJobIds.add(job.jobId);
     try {
-        if (await requestJobCancel(job.jobId)) {
-            recordDismissedJobs([job.jobId]);
+        if (await requestJobCancel(job.jobId, attemptOf(job))) {
+            recordDismissedJobs([{ jobId: job.jobId, attempt: attemptOf(job) }]);
             cancelledUploads.forget(job.clientUploadId);
         }
     } finally {
@@ -381,7 +390,9 @@ function removeEntry(uploadQueue, entry) {
 /**
  * Remove stale local entries: normalizing/failed entries whose jobId is absent from the
  * server response (job cleaned up or older than one hour). Entries that received their jobId
- * after the snapshot was requested are kept: the snapshot can predate their job. Closes any SSE,
+ * after the snapshot was requested are kept: the snapshot can predate their job. An entry that started following a
+ * later attempt of its job (adoptJobAttempt) counts as having received its jobId then, so a snapshot requested before a
+ * normalization retry, which may lack a job first queued over an hour earlier, cannot remove it. Closes any SSE,
  * clears the animator slot, removes the DOM node, and resolves a pending monitor.
  * @param {Array<Object>} uploadQueue
  * @param {Map<string, Object>} serverJobMap - Server jobs keyed by jobId
@@ -419,15 +430,21 @@ function finalizeFromServerJob(entry, serverJob) {
 
 /**
  * Reconcile existing local entries against fresh server data, mutating each in place.
+ * Each server job is first compared by attempt with the entry that follows it (see job-attempts.js): a job listed at an
+ * earlier attempt than the entry follows (the snapshot was read before a normalization retry reset the job) leaves the
+ * entry alone entirely, so it never finalizes, fails, removes or updates the retried entry; a job listed at a later
+ * attempt (another tab or device retried it) makes a normalizing or failed entry adopt that attempt (adoptJobAttempt)
+ * before the ladder runs, as fresh news that no earlier live answer can outdate.
  * Applies the status ladder: server cancellation removes the entry; a server-terminal
  * status finalizes a still-normalizing entry; ongoing normalization updates stage,
  * progress, title and transcription; and the locally-failed branches recover entries the
- * server reports as active, completed, or cancelled. The ongoing-normalization and
+ * server reports as active, completed, or cancelled, apply a later attempt's failure, and take whether the same attempt's
+ * failure was a normalization failure from the server (QueueEntry.normalizationFailed, which decides its Retry). The ongoing-normalization and
  * active-recovery branches skip an entry whose QueueEntry.lastLiveUpdateAt is later than the
  * snapshot's request, since the snapshot's non-terminal state can be older than the status
- * answer applied then; terminal server statuses still apply, because a terminal job never
- * returns to a non-terminal status (a later terminal change, such as Failed to Cancelled on
- * dismissal, is still news). Ids of entries that changed (but
+ * answer applied then; terminal server statuses still apply, because an attempt that reached a terminal status never
+ * returns to a non-terminal one (a normalization retry starts a new attempt, which the attempt comparison above
+ * handles; a later terminal change, such as Failed to Cancelled on dismissal, is still news). Ids of entries that changed (but
  * were not removed) are added to changedEntryIds for a targeted DOM update.
  * @param {Array<Object>} uploadQueue
  * @param {Array<Object>} serverJobs
@@ -443,10 +460,20 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds, requ
             continue;
         }
 
+        const attemptOrder = compareJobAttempt(existing, serverJob);
+        if (attemptOrder === ATTEMPT_ORDER.EARLIER) {
+            continue;
+        }
+        const adopted = attemptOrder === ATTEMPT_ORDER.LATER && (existing.status === 'normalizing' || existing.status === 'failed');
+        if (adopted) {
+            adoptJobAttempt(existing, serverJob);
+            changedEntryIds.add(existing.id);
+        }
+
         const serverStatus = serverJob.status;
         const isServerTerminal = TERMINAL_JOB_STATUSES.has(serverStatus);
         // Entries with no status answer applied on this page load (restored from storage, or discovered by a merge)
-        // have no lastLiveUpdateAt
+        // have no lastLiveUpdateAt, and adopting a later attempt clears it
         const updatedLiveSinceRequest = (existing.lastLiveUpdateAt ?? -Infinity) > requestedAt;
 
         if (existing.status === 'normalizing' && serverStatus === 'Cancelled') {
@@ -509,6 +536,17 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds, requ
             existing.status = 'cancelled';
             removeEntry(uploadQueue, existing);
             removed = true;
+        } else if (existing.status === 'failed' && serverStatus === 'Failed' && adopted) {
+            // A later attempt (retried elsewhere) failed too: show its failure through the shared terminal handling
+            finalizeFromServerJob(existing, serverJob);
+        } else if (existing.status === 'failed' && serverStatus === 'Failed') {
+            // The same attempt's failure: the server's answer decides whether it was a normalization failure, which an entry
+            // saved before the page recorded that (or failed without the server's reason) learns here, gaining its Retry
+            const normalizationFailed = isNormalizationFailure(serverJob);
+            if (existing.normalizationFailed !== normalizationFailed) {
+                existing.normalizationFailed = normalizationFailed;
+                changedEntryIds.add(existing.id);
+            }
         }
     }
 
@@ -516,9 +554,10 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds, requ
 }
 
 /**
- * Build entries for server jobs not already present in the local queue. Skips, through selectAddableServerJobs, cancelled
- * jobs and jobs in dismissedJobs (dismissed, cleared or cancelled entries, including ones saved
- * by other tabs), and also the job of an upload still in flight, recognized by the clientUploadId it carries (the job
+ * Build entries (createServerJobEntry) for server jobs not already present in the local queue. Skips, through
+ * selectAddableServerJobs, cancelled jobs and jobs whose listed attempt dismissedJobs covers (dismissed, cleared or
+ * cancelled entries, including ones saved by other tabs; a dismissal of an earlier attempt leaves a retried job to be
+ * added), and also the job of an upload still in flight, recognized by the clientUploadId it carries (the job
  * can appear in a snapshot before the XHR 202 response sets the entry's jobId); a job for a file of the same name from
  * another source is added. Entries are returned but not yet pushed onto the queue. Each is stamped
  * with jobIdReceivedAt, so an older snapshot merged later cannot remove it as stale. A job whose upload a reload
@@ -530,37 +569,10 @@ function reconcileExistingEntries(uploadQueue, serverJobs, changedEntryIds, requ
  * @returns {Array<Object>} Newly built queue entries
  */
 function addNewServerEntries(uploadQueue, serverJobs, existingJobIds) {
-    const excludedJobIds = { has: jobId => existingJobIds.has(jobId) || dismissedJobs.has(jobId) };
-    const newEntries = [];
-    for (const serverJob of selectAddableServerJobs(serverJobs, uploadQueue, excludedJobIds, isInUploadPhase)) {
-        const serverStatus = serverJob.status;
-        const isServerTerminal = TERMINAL_JOB_STATUSES.has(serverStatus);
-        newEntries.push({
-            id: generateEntryId(),
-            file: null,
-            status: isServerTerminal ? (serverStatus === 'Completed' ? 'completed' : 'failed') : 'normalizing',
-            progress: serverJob.progressPercent ?? (isServerTerminal ? 100 : 0),
-            stage: serverJob.stage || 'Queued',
-            jobId: serverJob.jobId,
-            jobIdReceivedAt: performance.now(),
-            episodeId: serverJob.episodeId || null,
-            episode: null,
-            error: serverJob.error || null,
-            xhr: null,
-            eventSource: null,
-            fileSize: 0,
-            fileName: serverJob.fileName || 'Unknown',
-            title: serverJob.title || null,
-            validationError: false,
-            startedAt: serverJob.queuedAt ? new Date(serverJob.queuedAt).getTime() : Date.now(),
-            normalizationComplete: serverJob.normalizationComplete || false,
-            transcriptionStatus: serverJob.transcriptionStatus || null,
-            transcriptionError: serverJob.transcriptionError || null,
-            _resolveMonitor: null
-        });
-    }
+    const listedAttempts = new Map(serverJobs.map(j => [j.jobId, attemptOf(j)]));
+    const excludedJobIds = { has: jobId => existingJobIds.has(jobId) || dismissedJobs.has(jobId, listedAttempts.get(jobId)) };
 
-    return newEntries;
+    return selectAddableServerJobs(serverJobs, uploadQueue, excludedJobIds, isInUploadPhase).map(createServerJobEntry);
 }
 
 /**
@@ -624,7 +636,8 @@ function withholdCancelledUploadJobs(jobs) {
  * If the snapshot is null (fetch failed), skips reconciliation entirely. A snapshot requested before
  * the newest one already merged is outdated (responses can arrive out of order) and is ignored, so it
  * cannot roll a job's stage and progress back; a snapshot requested before an entry's QueueEntry.lastLiveUpdateAt
- * leaves that entry's ongoing state alone (see reconcileExistingEntries).
+ * leaves that entry's ongoing state alone, and a job listed at an earlier attempt than its entry follows leaves the
+ * entry alone entirely (see reconcileExistingEntries).
  * @param {RecentJobsSnapshot|null} snapshot
  */
 export function mergeServerJobs(snapshot) {

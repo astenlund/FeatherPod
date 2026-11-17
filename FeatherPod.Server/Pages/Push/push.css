@@ -1068,9 +1068,15 @@ h1 {
     font-weight: 500;
 }
 
-.queue-item-action--retry:hover {
+.queue-item-action--retry:hover:not(:disabled) {
     color: var(--primary-300);
     background: var(--primary-a10);
+}
+
+/* A retry request is in flight */
+.queue-item-action--retry:disabled {
+    color: var(--text-muted);
+    cursor: progress;
 }
 
 /* Thin progress bar at bottom of queue item */
@@ -1707,6 +1713,11 @@ h1 {
     transition: background-color var(--transition-fast), color var(--transition-fast);
     -webkit-user-select: none;
     user-select: none;
+}
+
+/* Items offered only for some episodes (Retry transcript) */
+.context-menu-item[hidden] {
+    display: none;
 }
 
 .context-menu-item:hover,

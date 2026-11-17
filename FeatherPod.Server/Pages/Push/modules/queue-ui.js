@@ -1,5 +1,6 @@
 import { STAGES_WITH_PROGRESS, TRANSCRIPTION_ACTIVE_STATUSES, COLLAPSED_HEIGHT_DEFAULT } from './config.js';
 import { isInUploadPhase } from './utils.js';
+import { offersRetry, transcriptRetryEpisodeId } from './job-attempts.js';
 import { progressAnimator } from './progress.js';
 import { getCollapsedHeight, COLLAPSED_WIDTH } from './state.js';
 
@@ -9,19 +10,23 @@ const Q_MORPH_DURATION = 400;
 let onRemoveFromQueue = null;
 let onCancelEntry = null;
 let onRetryEntry = null;
+let onRetryEntryTranscript = null;
 let onDismissEntry = null;
 let getUploadQueue = null;
+let isTranscriptRetrySettledFor = null;
 
 /**
  * Register callbacks from the orchestrator/queue module.
  * Called once during init to wire up action button handlers.
  */
-export function registerQueueCallbacks({ removeFromQueue, cancelEntry, retryEntry, dismissEntry, getQueue }) {
+export function registerQueueCallbacks({ removeFromQueue, cancelEntry, retryEntry, retryEntryTranscript, dismissEntry, getQueue, hasSettlingTranscriptRetry }) {
     onRemoveFromQueue = removeFromQueue;
     onCancelEntry = cancelEntry;
     onRetryEntry = retryEntry;
+    onRetryEntryTranscript = retryEntryTranscript;
     onDismissEntry = dismissEntry;
     getUploadQueue = getQueue;
+    isTranscriptRetrySettledFor = hasSettlingTranscriptRetry;
 }
 
 /**
@@ -279,32 +284,62 @@ function createActionButton(entry) {
     if (entry.status === 'failed') {
         const dismissBtn = createDismissButton(entry);
 
-        if (!entry.validationError && entry.file) {
-            const wrapper = document.createElement('span');
-            wrapper.className = 'queue-item-actions';
-
-            const retryBtn = document.createElement('button');
-            retryBtn.className = 'queue-item-action queue-item-action--retry';
-            retryBtn.type = 'button';
-            retryBtn.textContent = 'Retry';
-            retryBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                onRetryEntry(entry.id);
-            });
-            wrapper.appendChild(retryBtn);
-            wrapper.appendChild(dismissBtn);
-
-            return wrapper;
+        if (offersRetry(entry)) {
+            return wrapWithDismiss(createRetryButton(entry, 'Retry', 'Retry', () => onRetryEntry(entry.id)), dismissBtn);
         }
 
         return dismissBtn;
     }
 
     if (entry.status === 'completed') {
-        return createDismissButton(entry);
+        const dismissBtn = createDismissButton(entry);
+        const episodeId = transcriptRetryEpisodeId(entry);
+        if (episodeId && !isTranscriptRetrySettledFor?.(episodeId)) {
+            return wrapWithDismiss(createRetryButton(entry, 'Retry transcript', 'Transcribe the episode again', () => onRetryEntryTranscript(entry.id)), dismissBtn);
+        }
+
+        return dismissBtn;
     }
 
     return null;
+}
+
+/**
+ * Build a retry action button, disabled while the entry's retry request is in flight (QueueEntry.retryPending).
+ * @param {import('../push.js').QueueEntry} entry
+ * @param {string} label
+ * @param {string} title
+ * @param {() => void} onClick
+ * @returns {HTMLButtonElement}
+ */
+function createRetryButton(entry, label, title, onClick) {
+    const btn = document.createElement('button');
+    btn.className = 'queue-item-action queue-item-action--retry';
+    btn.type = 'button';
+    btn.title = title;
+    btn.textContent = label;
+    btn.disabled = !!entry.retryPending;
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        onClick();
+    });
+
+    return btn;
+}
+
+/**
+ * Group an action button with the entry's dismiss button.
+ * @param {HTMLButtonElement} actionBtn
+ * @param {HTMLButtonElement} dismissBtn
+ * @returns {HTMLSpanElement}
+ */
+function wrapWithDismiss(actionBtn, dismissBtn) {
+    const wrapper = document.createElement('span');
+    wrapper.className = 'queue-item-actions';
+    wrapper.appendChild(actionBtn);
+    wrapper.appendChild(dismissBtn);
+
+    return wrapper;
 }
 
 function createDismissButton(entry) {

@@ -1,6 +1,7 @@
 import { FEED_ID } from './config.js';
 import { getApiKey } from './auth.js';
 import { removeHistoryEpisode, updateHistoryEpisode, getHistoryData } from './history.js';
+import { offersTranscriptRetry } from './job-attempts.js';
 
 /** @type {string|null} */
 let contextMenuTargetId = null;
@@ -31,7 +32,8 @@ export function isNotePanelOpen() {
 }
 
 /**
- * Show the context menu at the given position, clamped to the viewport.
+ * Show the context menu at the given position, clamped to the viewport. "Retry transcript" is offered only for an
+ * episode whose transcript failed (offersTranscriptRetry); the first offered item takes focus.
  * @param {string} episodeId
  * @param {number} x
  * @param {number} y
@@ -43,6 +45,10 @@ export function showContextMenu(episodeId, x, y) {
     }
 
     contextMenuTargetId = episodeId;
+    const retryTranscriptItem = menu.querySelector('.context-menu-item[data-action="retry-transcript"]');
+    if (retryTranscriptItem) {
+        retryTranscriptItem.hidden = !offersTranscriptRetry(getHistoryData()?.find(e => e.id === episodeId));
+    }
 
     // Make visible but off-screen to measure
     menu.style.left = '-9999px';
@@ -58,7 +64,7 @@ export function showContextMenu(episodeId, x, y) {
     menu.style.top = Math.max(8, top) + 'px';
 
     // Focus first item for keyboard accessibility
-    const firstItem = menu.querySelector('.context-menu-item');
+    const firstItem = menu.querySelector('.context-menu-item:not([hidden])');
     if (firstItem) {
         firstItem.focus();
     }

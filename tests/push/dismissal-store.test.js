@@ -35,7 +35,7 @@ test('a recorded dismissal is kept in memory and saved', () => {
     const clock = { t: T0 };
     const s = store(storage, clock);
 
-    const dismissedAt = s.record(['j1', 'j2']);
+    const dismissedAt = s.record([{ jobId: 'j1' }, { jobId: 'j2' }]);
 
     assert.equal(dismissedAt, T0);
     assert.ok(s.has('j1') && s.has('j2'));
@@ -60,9 +60,9 @@ test('a write keeps dismissals another tab saved after this tab loaded', () => {
     tabB.load();
 
     clock.t = T0 + 1000;
-    tabB.record(['from-b']);
+    tabB.record([{ jobId: 'from-b' }]);
     clock.t = T0 + 2000;
-    tabA.record(['from-a']);
+    tabA.record([{ jobId: 'from-a' }]);
 
     assert.deepEqual(storage.saved().map(e => e.jobId).sort(), ['from-a', 'from-b']);
     assert.ok(!tabA.has('from-b'), 'another tab\'s later dismissal reaches this tab only on its next load');
@@ -94,10 +94,10 @@ test('an expired dismissal is dropped from storage by a later write', () => {
     const storage = memoryStorage();
     const clock = { t: T0 };
     const s = store(storage, clock);
-    s.record(['old']);
+    s.record([{ jobId: 'old' }]);
 
     clock.t = T0 + TTL + 1;
-    s.record(['new']);
+    s.record([{ jobId: 'new' }]);
 
     assert.deepEqual(storage.saved(), [{ jobId: 'new', dismissedAt: T0 + TTL + 1 }]);
 });
@@ -110,7 +110,7 @@ for (const [label, text] of [['unparseable', '{not json'], ['a non-array', '{"jo
 
         s.load();
         const loadedAny = s.has('j1');
-        s.record(['j2']);
+        s.record([{ jobId: 'j2' }]);
 
         assert.ok(!loadedAny);
         assert.deepEqual(storage.saved(), [{ jobId: 'j2', dismissedAt: T0 }]);
@@ -132,7 +132,7 @@ test('malformed saved entries are skipped and the rest kept', () => {
 test('drop removes the dismissal it recorded', () => {
     const storage = memoryStorage();
     const s = store(storage, { t: T0 });
-    const dismissedAt = s.record(['j1']);
+    const dismissedAt = s.record([{ jobId: 'j1' }]);
 
     s.drop('j1', dismissedAt);
 
@@ -144,9 +144,9 @@ test('drop keeps a dismissal whose timestamp another path replaced in this tab',
     const storage = memoryStorage();
     const clock = { t: T0 };
     const s = store(storage, clock);
-    const first = s.record(['j1']);
+    const first = s.record([{ jobId: 'j1' }]);
     clock.t = T0 + 1000;
-    s.record(['j1']);
+    s.record([{ jobId: 'j1' }]);
 
     s.drop('j1', first);
 
@@ -159,9 +159,9 @@ test('drop keeps a saved dismissal another tab replaced, while dropping this tab
     const clock = { t: T0 };
     const tabA = store(storage, clock);
     const tabB = store(storage, clock);
-    const first = tabA.record(['j1']);
+    const first = tabA.record([{ jobId: 'j1' }]);
     clock.t = T0 + 1000;
-    tabB.record(['j1']);
+    tabB.record([{ jobId: 'j1' }]);
 
     tabA.drop('j1', first);
 
@@ -173,7 +173,7 @@ test('a pending dismissal is honored by the tab that recorded it and saved as pe
     const storage = memoryStorage();
     const s = store(storage, { t: T0 });
 
-    s.record(['j1'], { pending: true });
+    s.record([{ jobId: 'j1' }], { pending: true });
 
     assert.ok(s.has('j1'));
     assert.deepEqual(storage.saved(), [{ jobId: 'j1', dismissedAt: T0, pending: true }]);
@@ -182,8 +182,8 @@ test('a pending dismissal is honored by the tab that recorded it and saved as pe
 test('a later load skips a pending dismissal but keeps it in storage', () => {
     const storage = memoryStorage();
     const clock = { t: T0 };
-    store(storage, clock).record(['pending-job'], { pending: true });
-    store(storage, clock).record(['ordinary-job']);
+    store(storage, clock).record([{ jobId: 'pending-job' }], { pending: true });
+    store(storage, clock).record([{ jobId: 'ordinary-job' }]);
 
     const reloaded = store(storage, clock);
     reloaded.load();
@@ -197,7 +197,7 @@ test('a confirmed pending dismissal is honored by later loads', () => {
     const storage = memoryStorage();
     const clock = { t: T0 };
     const s = store(storage, clock);
-    const dismissedAt = s.record(['j1'], { pending: true });
+    const dismissedAt = s.record([{ jobId: 'j1' }], { pending: true });
 
     s.confirm('j1', dismissedAt);
     const reloaded = store(storage, clock);
@@ -212,7 +212,7 @@ test('a pending dismissal can be confirmed after another tab loaded past it', ()
     const storage = memoryStorage();
     const clock = { t: T0 };
     const cancelling = store(storage, clock);
-    const dismissedAt = cancelling.record(['j1'], { pending: true });
+    const dismissedAt = cancelling.record([{ jobId: 'j1' }], { pending: true });
     store(storage, clock).load();
 
     cancelling.confirm('j1', dismissedAt);
@@ -225,9 +225,9 @@ test('confirm leaves a dismissal another path or tab replaced', () => {
     const clock = { t: T0 };
     const tabA = store(storage, clock);
     const tabB = store(storage, clock);
-    const first = tabA.record(['j1'], { pending: true });
+    const first = tabA.record([{ jobId: 'j1' }], { pending: true });
     clock.t = T0 + 1000;
-    tabB.record(['j1'], { pending: true });
+    tabB.record([{ jobId: 'j1' }], { pending: true });
 
     tabA.confirm('j1', first);
 
@@ -238,7 +238,7 @@ test('confirm of a dismissal no longer saved writes nothing back', () => {
     const storage = memoryStorage();
     const clock = { t: T0 };
     const s = store(storage, clock);
-    const dismissedAt = s.record(['j1'], { pending: true });
+    const dismissedAt = s.record([{ jobId: 'j1' }], { pending: true });
     s.drop('j1', dismissedAt);
 
     s.confirm('j1', dismissedAt);
@@ -249,7 +249,7 @@ test('confirm of a dismissal no longer saved writes nothing back', () => {
 test('dropping a pending dismissal removes it from this tab and from storage', () => {
     const storage = memoryStorage();
     const s = store(storage, { t: T0 });
-    const dismissedAt = s.record(['j1'], { pending: true });
+    const dismissedAt = s.record([{ jobId: 'j1' }], { pending: true });
 
     s.drop('j1', dismissedAt);
 
@@ -261,10 +261,10 @@ test('an ordinary dismissal replaces a pending one for the same job', () => {
     const storage = memoryStorage();
     const clock = { t: T0 };
     const s = store(storage, clock);
-    s.record(['j1'], { pending: true });
+    s.record([{ jobId: 'j1' }], { pending: true });
     clock.t = T0 + 1000;
 
-    s.record(['j1']);
+    s.record([{ jobId: 'j1' }]);
     const reloaded = store(storage, clock);
     reloaded.load();
 
@@ -275,7 +275,7 @@ test('an ordinary dismissal replaces a pending one for the same job', () => {
 test('a pending dismissal expires after the TTL like an ordinary one', () => {
     const storage = memoryStorage();
     const clock = { t: T0 };
-    store(storage, clock).record(['j1'], { pending: true });
+    store(storage, clock).record([{ jobId: 'j1' }], { pending: true });
     clock.t = T0 + TTL + 1;
 
     store(storage, clock).load();
@@ -300,7 +300,7 @@ test('storage that throws leaves the in-memory dismissals working', () => {
     const s = createDismissalStore({ getStorage: throwing, key: KEY, ttlMs: TTL, now: () => T0 });
 
     s.load();
-    const dismissedAt = s.record(['j1']);
+    const dismissedAt = s.record([{ jobId: 'j1' }]);
 
     assert.ok(s.has('j1'));
     s.drop('j1', dismissedAt);
@@ -314,8 +314,68 @@ test('a failing write keeps the previous saved list', () => {
     };
     const s = store(storage, { t: T0 });
 
-    s.record(['j1']);
+    s.record([{ jobId: 'j1' }]);
 
     assert.ok(s.has('j1'));
     assert.deepEqual(JSON.parse(storage.getItem(KEY)), [{ jobId: 'j0', dismissedAt: T0 }]);
+});
+
+test('a dismissal of an earlier attempt never hides a later attempt of the job, in this tab or a later load', () => {
+    const storage = memoryStorage();
+    const clock = { t: T0 };
+    const s = store(storage, clock);
+
+    s.record([{ jobId: 'j1', attempt: 1 }]);
+    const reloaded = store(storage, clock);
+    reloaded.load();
+
+    assert.ok(s.has('j1', 1) && reloaded.has('j1', 1));
+    assert.ok(!s.has('j1', 2), 'the dismissing tab still shows the retried attempt');
+    assert.ok(!reloaded.has('j1', 2), 'a later load still shows the retried attempt');
+});
+
+test('a dismissal of a later attempt hides it and the attempts before it, and saves the attempt', () => {
+    const storage = memoryStorage();
+    const s = store(storage, { t: T0 });
+
+    s.record([{ jobId: 'j1', attempt: 3 }]);
+
+    assert.ok(s.has('j1', 2) && s.has('j1', 3) && s.has('j1'));
+    assert.ok(!s.has('j1', 4));
+    assert.deepEqual(storage.saved(), [{ jobId: 'j1', dismissedAt: T0, attempt: 3 }]);
+});
+
+test('a saved dismissal without an attempt dismissed the first attempt only', () => {
+    const storage = memoryStorage({ [KEY]: JSON.stringify([{ jobId: 'j1', dismissedAt: T0 }, { jobId: 'j2', dismissedAt: T0, attempt: 'x' }]) });
+    const s = store(storage, { t: T0 });
+
+    s.load();
+
+    assert.ok(s.has('j1', 1) && s.has('j2', 1));
+    assert.ok(!s.has('j1', 2) && !s.has('j2', 2));
+});
+
+test('recording an earlier attempt again keeps the later attempt dismissed', () => {
+    const storage = memoryStorage();
+    const clock = { t: T0 };
+    const tabA = store(storage, clock);
+    const tabB = store(storage, clock);
+    tabA.record([{ jobId: 'j1', attempt: 2 }]);
+    clock.t = T0 + 1000;
+
+    tabB.record([{ jobId: 'j1', attempt: 1 }]);
+    tabA.record([{ jobId: 'j1', attempt: 1 }]);
+
+    assert.ok(tabA.has('j1', 2));
+    assert.deepEqual(storage.saved(), [{ jobId: 'j1', dismissedAt: T0 + 1000, attempt: 2 }]);
+});
+
+test('confirming a pending dismissal of a later attempt keeps its attempt', () => {
+    const storage = memoryStorage();
+    const s = store(storage, { t: T0 });
+    const dismissedAt = s.record([{ jobId: 'j1', attempt: 2 }], { pending: true });
+
+    s.confirm('j1', dismissedAt);
+
+    assert.deepEqual(storage.saved(), [{ jobId: 'j1', dismissedAt: T0, attempt: 2 }]);
 });

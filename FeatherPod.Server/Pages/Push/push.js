@@ -30,7 +30,7 @@ import { initNotificationToggle } from './modules/notifications.js';
 import { progressAnimator } from './modules/progress.js';
 import { showState, getCurrentState, refreshQueueActivity, showError, showWarningBanner, setNoKeyError, cacheLayoutDimensions } from './modules/state.js';
 import { renderQueueList } from './modules/queue-ui.js';
-import { getQueue, initQueue, registerUploadKeyRejectedCallback, restoreQueueState, addFilesToQueue, clearQueueState, clearTerminalEntries, dismissEntry, monitorEntryNormalizationInBackground, updateQueueTitleForEpisode } from './modules/queue.js';
+import { getQueue, initQueue, registerUploadKeyRejectedCallback, restoreQueueState, addFilesToQueue, clearQueueState, clearTerminalEntries, dismissEntry, monitorEntryNormalizationInBackground, retryTranscript, updateQueueTitleForEpisode } from './modules/queue.js';
 import { registerHistoryContextMenuCallback, initHistorySection, collapseHistoryImmediate, toggleHistorySection, changeHistoryFilter, selectHistoryUpload, updateHistoryListScrollState, getHistoryFilter, getHistoryPanelPushedState, setHistoryPanelPushedState, getHistoryData, getHistorySelectedId, refreshHistoryList } from './modules/history.js';
 import { showContextMenu, getContextMenuTargetId, hideContextMenu, showRenameModal, hideRenameModal, showDeleteConfirm, hideDeleteConfirm, deleteEpisode, saveEpisodeChanges, updateRenameSaveState, toggleNotePanel, closeNotePanel, commitNoteAndRefreshSuggestion, handleNoteInput, isNotePanelOpen, registerEpisodeRenamedCallback } from './modules/editing.js';
 import { loadDismissedJobIds, loadCancelledUploads, connectFeedEvents, fetchRecentJobs, mergeServerJobs, connectLocalSource, consumeSharedFiles, getLocalSourceConfig, setLocalSourceConfig, getFeedEventsSource, getLocalSourceEvents, setLocalSourceEvents } from './modules/server-sync.js';
@@ -118,20 +118,32 @@ if (navigator.serviceWorker) {
  * @property {number} progress - Progress percentage (0-100)
  * @property {string|null} stage - Normalization stage (Queued, Analyzing, Normalizing, Finishing, Completed)
  * @property {string|null} jobId - Server normalization job ID
+ * @property {number|null} [attempt] - The attempt of the job this entry follows (persisted; absent or null means the
+ *     first, see job-attempts.js). A normalization retry keeps the job id and starts the next attempt: status answers
+ *     for an earlier attempt never change the entry, a later one is adopted (adoptJobAttempt in queue.js), and
+ *     dismissals and cancels name the attempt they were decided on
+ * @property {string|null} [kind] - The job's kind (persisted): null for an upload job, 'TranscriptRetry' for a
+ *     transcript retry job
+ * @property {boolean} [normalizationFailed] - Whether the entry's job failed in normalization (persisted), so Retry
+ *     asks the server to retry the job before any re-upload, also for an entry without its file
+ * @property {boolean} [retryPending] - Whether a retry request for this entry (normalization or transcript) is in
+ *     flight (not persisted); its retry button is disabled meanwhile
  * @property {string|null} [clientUploadId] - Id this entry's latest upload sent, which the server stores on the job it
  *     creates (set when the upload starts, cleared on retry, persisted); a cancel before the response arrived remembers
  *     it so recent-jobs merges withhold and cancel that job (see cancelled-uploads.js), and recent-jobs merges recognize
  *     by it the job of an upload still in flight or interrupted by a reload (see interrupted-uploads.js)
  * @property {number|null} [jobIdReceivedAt] - performance.now() when this page received jobId, from a 202 response or
- *     from the snapshot merge that discovered the job (not persisted); a recent-jobs snapshot requested earlier can lack
- *     the job, so mergeServerJobs does not treat it as stale
+ *     from the snapshot merge that discovered the job, or when the entry started following a later attempt of its job
+ *     (not persisted); a recent-jobs snapshot requested earlier can lack the job, so mergeServerJobs does not treat it
+ *     as stale
  * @property {number|null} [lastLiveUpdateAt] - performance.now() when this page last applied a status answer for the
  *     entry's job: an SSE event or a poll answer, or a terminal finalization, a recent-jobs merge's included (not
- *     persisted, cleared on retry); a snapshot requested before it that still lists the job as active leaves the entry's
- *     stage, progress, title and transcription alone and does not revive it from failed, while a terminal status in such
- *     a snapshot still applies
- * @property {string|null} [terminalJobId] - jobId whose terminal status finalizeTerminalEntry already applied (not
- *     persisted); a later terminal answer for the same job is ignored while the entry is not active work again
+ *     persisted, cleared on retry and when a later attempt is adopted); a snapshot requested before it that still lists
+ *     the job as active leaves the entry's stage, progress, title and transcription alone and does not revive it from
+ *     failed, while a terminal status in such a snapshot still applies
+ * @property {string|null} [terminalClaim] - The job and attempt ('jobId#attempt') whose terminal status
+ *     finalizeTerminalEntry already applied (not persisted); a later terminal answer for the same attempt is ignored
+ *     while the entry is not active work again
  * @property {string|null} episodeId - Episode ID after completion
  * @property {Episode|null} episode - Full episode data after completion
  * @property {string|null} error - Error message if failed
@@ -144,7 +156,8 @@ if (navigator.serviceWorker) {
  * @property {string|null} [shareCacheUrl] - share-target cache entry the file was claimed from (null for other files;
  *     not persisted); a 401/403 upload puts the file back there
  * @property {boolean} validationError - Whether failure is due to validation (no retry)
- * @property {number} startedAt - Epoch ms when entry was created (for 1-hour localStorage filtering)
+ * @property {number} startedAt - Epoch ms when the entry was created, or when the job attempt it follows started (for
+ *     1-hour localStorage filtering and clearTerminalEntries)
  * @property {Function|null} _resolveMonitor - Internal: resolve function for normalization promise
  */
 
@@ -1127,7 +1140,7 @@ document.addEventListener('click', (e) => {
 document.getElementById('history-list')?.addEventListener('scroll', hideContextMenu);
 
 document.getElementById('context-menu')?.addEventListener('keydown', (e) => {
-    const items = document.querySelectorAll('#context-menu .context-menu-item');
+    const items = document.querySelectorAll('#context-menu .context-menu-item:not([hidden])');
     const current = Array.from(items).indexOf(document.activeElement);
 
     if (e.key === 'ArrowDown') {
@@ -1154,6 +1167,8 @@ document.querySelectorAll('#context-menu .context-menu-item').forEach(item => {
         }
         if (action === 'rename') {
             showRenameModal(episodeId);
+        } else if (action === 'retry-transcript') {
+            void retryTranscript(episodeId);
         } else if (action === 'delete') {
             showDeleteConfirm(episodeId);
         }

@@ -15,6 +15,21 @@ test('an entry whose job another tab dismissed is not restored', () => {
     assert.deepEqual(restored.map(e => e.id), ['q2']);
 });
 
+test('an entry following a later attempt of a job whose earlier attempt was dismissed is restored', () => {
+    const entries = [{ id: 'retried', jobId: 'j1', attempt: 2, status: 'normalizing', startedAt: NOW - 1000 }, { id: 'legacy', jobId: 'j2', status: 'failed', startedAt: NOW - 1000 }];
+    const asked = [];
+    const isDismissedJob = (jobId, attempt) => {
+        asked.push([jobId, attempt]);
+
+        return attempt <= 1;
+    };
+
+    const restored = selectRestorableEntries(entries, { now: NOW, ttlMs: TTL, isDismissedJob });
+
+    assert.deepEqual(restored.map(e => e.id), ['retried']);
+    assert.deepEqual(asked, [['j1', 2], ['j2', 1]], 'an entry saved without an attempt follows the first');
+});
+
 test('an entry without a job is restored whatever is dismissed', () => {
     const entries = [{ id: 'q1', jobId: null, status: 'failed', startedAt: NOW - 1000 }, { id: 'q2', status: 'uploading', startedAt: NOW - 1000 }];
 

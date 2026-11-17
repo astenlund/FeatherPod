@@ -12,19 +12,28 @@
  * next recent-jobs snapshot, which the merge skips anyway. Confirming the dismissal once the request succeeds saves it
  * as an ordinary one. Saved entries without the pending field (all of them before pending dismissals existed) are
  * ordinary dismissals.
+ *
+ * A dismissal applies to the job attempt it was decided on (see job-attempts.js): a normalization retry keeps the job id
+ * and starts the next attempt, and a dismissal recorded on a view of an earlier attempt hides only that attempt and the
+ * ones before it, never a later one, in this tab and in every later load. Saved entries without the attempt field (all of
+ * them before attempts existed) dismissed the first attempt, and the field is saved only for a later attempt. Recording a
+ * job again keeps the later of the two attempts, so a stale view cannot un-hide an attempt already dismissed.
  * The saved-list mechanics (TTL, entry-by-entry writes, storage failures) live in createSavedEntryList, which the
  * cancelled-upload store (cancelled-uploads.js) shares.
  * Kept separate so it can be unit-tested under Node (tests/push/dismissal-store.test.js, run via `npm test`).
  */
 
+import { attemptOf } from './job-attempts.js';
+
 /**
  * @typedef {Object} DismissalStore
- * @property {(jobId: string) => boolean} has - Whether this tab treats the job as dismissed
+ * @property {(jobId: string, attempt?: number) => boolean} has - Whether this tab treats the job's attempt (1 when
+ *     omitted) as dismissed: a dismissal of that attempt or a later one
  * @property {() => void} load - Load the saved ordinary dismissals into this tab's map, skipping pending ones (which
  *     stay in storage) and dropping expired ones from storage
- * @property {(jobIds: string[], options?: {pending?: boolean}) => number} record - Record jobs as dismissed in this
- *     tab's map and in storage, as pending dismissals when options.pending is true; returns the time recorded as their
- *     dismissal, which confirm and drop take to identify it
+ * @property {(jobs: Array<DismissedJob>, options?: {pending?: boolean}) => number} record - Record job attempts as
+ *     dismissed in this tab's map and in storage, as pending dismissals when options.pending is true; returns the time
+ *     recorded as their dismissal, which confirm and drop take to identify it
  * @property {(jobId: string, dismissedAt: number) => void} confirm - Save a pending dismissal as an ordinary one, only
  *     while the saved entry still holds dismissedAt, so a dismissal another path or tab recorded since is left as it is
  * @property {(jobId: string, dismissedAt: number) => void} drop - Drop a job's dismissal from this tab's map and from
@@ -37,6 +46,13 @@
  * @property {number} dismissedAt - Epoch milliseconds
  * @property {true} [pending] - Present only for a dismissal recorded for a cancel whose request had not settled when it
  *     was saved
+ * @property {number} [attempt] - The job attempt dismissed; present only for an attempt after the first
+ */
+
+/**
+ * @typedef {Object} DismissedJob
+ * @property {string} jobId
+ * @property {number} [attempt] - The attempt the dismissal was decided on (1 when omitted or not a positive integer)
  */
 
 /**
@@ -110,13 +126,24 @@ export function createSavedEntryList({ getStorage, key, ttlMs, now, idField, tim
 }
 
 /**
- * Build a saved dismissal entry, carrying the pending field only for a pending dismissal.
+ * Build a saved dismissal entry, carrying the pending field only for a pending dismissal and the attempt field only for
+ * an attempt after the first.
  * @param {string} jobId
  * @param {number} dismissedAt
  * @param {boolean} pending
+ * @param {number} attempt
+ * @returns {SavedDismissal}
  */
-function savedDismissal(jobId, dismissedAt, pending) {
-    return pending ? { jobId, dismissedAt, pending: true } : { jobId, dismissedAt };
+function savedDismissal(jobId, dismissedAt, pending, attempt) {
+    const entry = { jobId, dismissedAt };
+    if (pending) {
+        entry.pending = true;
+    }
+    if (attempt > 1) {
+        entry.attempt = attempt;
+    }
+
+    return entry;
 }
 
 /**
@@ -130,7 +157,7 @@ function savedDismissal(jobId, dismissedAt, pending) {
  * @returns {DismissalStore}
  */
 export function createDismissalStore({ getStorage, key, ttlMs, now = Date.now }) {
-    /** @type {Map<string, number>} dismissedAt by jobId */
+    /** @type {Map<string, {dismissedAt: number, attempt: number}>} The dismissal and the attempt it covers, by jobId */
     const dismissed = new Map();
     const savedList = createSavedEntryList({
         getStorage,
@@ -139,31 +166,32 @@ export function createDismissalStore({ getStorage, key, ttlMs, now = Date.now })
         now,
         idField: 'jobId',
         timeField: 'dismissedAt',
-        toEntry: entry => savedDismissal(entry.jobId, entry.dismissedAt, entry.pending === true)
+        toEntry: entry => savedDismissal(entry.jobId, entry.dismissedAt, entry.pending === true, attemptOf(entry))
     });
 
     return {
-        has: jobId => dismissed.has(jobId),
+        has: (jobId, attempt = 1) => (dismissed.get(jobId)?.attempt ?? 0) >= attempt,
 
         load() {
             savedList.update(saved => {
-                for (const [jobId, { dismissedAt, pending }] of saved) {
-                    if (!pending) {
-                        dismissed.set(jobId, dismissedAt);
+                for (const [jobId, entry] of saved) {
+                    if (!entry.pending) {
+                        dismissed.set(jobId, { dismissedAt: entry.dismissedAt, attempt: Math.max(attemptOf(entry), dismissed.get(jobId)?.attempt ?? 1) });
                     }
                 }
             });
         },
 
-        record(jobIds, { pending = false } = {}) {
+        record(jobs, { pending = false } = {}) {
             const dismissedAt = now();
-            if (jobIds.length > 0) {
-                for (const jobId of jobIds) {
-                    dismissed.set(jobId, dismissedAt);
+            if (jobs.length > 0) {
+                for (const job of jobs) {
+                    dismissed.set(job.jobId, { dismissedAt, attempt: Math.max(attemptOf(job), dismissed.get(job.jobId)?.attempt ?? 1) });
                 }
                 savedList.update(saved => {
-                    for (const jobId of jobIds) {
-                        saved.set(jobId, savedDismissal(jobId, dismissedAt, pending));
+                    for (const job of jobs) {
+                        const attempt = Math.max(attemptOf(job), attemptOf(saved.get(job.jobId)));
+                        saved.set(job.jobId, savedDismissal(job.jobId, dismissedAt, pending, attempt));
                     }
                 });
             }
@@ -173,14 +201,15 @@ export function createDismissalStore({ getStorage, key, ttlMs, now = Date.now })
 
         confirm(jobId, dismissedAt) {
             savedList.update(saved => {
-                if (saved.get(jobId)?.dismissedAt === dismissedAt) {
-                    saved.set(jobId, savedDismissal(jobId, dismissedAt, false));
+                const entry = saved.get(jobId);
+                if (entry?.dismissedAt === dismissedAt) {
+                    saved.set(jobId, savedDismissal(jobId, dismissedAt, false, attemptOf(entry)));
                 }
             });
         },
 
         drop(jobId, dismissedAt) {
-            if (dismissed.get(jobId) === dismissedAt) {
+            if (dismissed.get(jobId)?.dismissedAt === dismissedAt) {
                 dismissed.delete(jobId);
             }
             savedList.update(saved => {

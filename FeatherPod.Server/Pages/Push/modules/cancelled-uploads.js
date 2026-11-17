@@ -13,6 +13,7 @@
  */
 
 import { createSavedEntryList } from './dismissal-store.js';
+import { attemptOf } from './job-attempts.js';
 
 /**
  * @typedef {Object} CancelledUploadStore
@@ -88,8 +89,10 @@ export function createCancelledUploadStore({ getStorage, key, ttlMs, now = Date.
  * - withheld: jobs still running, queued or failed. The merge does not add them, cancels them on the server and, once
  *   the cancel settles, records them as dismissed and forgets the id.
  * - settled: ids whose job the server has already cancelled, which the merge skips anyway, or completed, which the merge
- *   adds as a completed entry, since the episode is already published and the page never deletes it. The merge forgets
- *   these ids.
+ *   adds as a completed entry, since the episode is already published and the page never deletes it, or moved past its
+ *   upload's attempt by a normalization retry the user started since, which now owns the job and which a cancellation
+ *   decided on the upload must not reach. The merge forgets these ids.
+ * Every withheld job is therefore on its upload's own attempt, the first, which its server cancel names.
  * Jobs without a client upload id, or with one that was not cancelled, are in neither list.
  * @param {Array<Object>} jobs - Server jobs from a recent-jobs snapshot
  * @param {(clientUploadId: string) => boolean} isCancelledUpload
@@ -102,7 +105,7 @@ export function classifyCancelledUploadJobs(jobs, isCancelledUpload) {
         if (!job.clientUploadId || !isCancelledUpload(job.clientUploadId)) {
             continue;
         }
-        if (job.status === 'Cancelled' || job.status === 'Completed') {
+        if (job.status === 'Cancelled' || job.status === 'Completed' || attemptOf(job) > 1) {
             settled.push(job.clientUploadId);
         } else {
             withheld.push(job);
