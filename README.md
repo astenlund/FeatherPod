@@ -19,6 +19,7 @@ A cloud-native .NET podcast feed server for Azure with Blob Storage integration.
 - **Windows context menu** - Right-click audio files in Explorer to push to a feed
 - **Real-time progress** - SSE and SignalR-based progress streaming for normalization jobs
 - **Episode rename** - Rename episodes via CLI (with `--suggest` for AI titles) or push page context menu
+- **Retry without re-upload** - Retry a failed transcript (from the published audio) or a failed normalization (from the kept upload, which the daily cleanup keeps for at least a day) via the push page, the API, or for transcripts the CLI
 - **Delete after upload** - `--delete-after` flag with cross-platform trash support
 - **Hash-based episode IDs** - Preserves play progress; re-uploading same file updates metadata
 - **Cross-feed operations** - Move or copy episodes between feeds
@@ -182,6 +183,7 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 | `/api/feeds/{feedId}/episodes/{id}` | DELETE | Admin/Owner | Delete episode |
 | `/api/feeds/{feedId}/episodes/{id}` | PATCH | Admin/Owner | Update episode metadata (title, note) |
 | `/api/feeds/{feedId}/episodes/{id}/suggest-title` | POST | Admin/Owner | AI-suggested title for episode |
+| `/api/feeds/{feedId}/episodes/{id}/transcript/retry` | POST | Admin/Owner | Retry a failed transcript from the published audio as a new transcription-only job (202 with job; refusals carry `reason`) |
 | `/api/feeds/{feedId}/episodes/{id}/move` | POST | Admin/Owner | Move episode between feeds |
 | `/api/feeds/{feedId}/episodes/{id}/copy` | POST | Admin/Owner | Copy episode between feeds |
 
@@ -192,7 +194,8 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 | `/api/feeds/{feedId}/jobs` | GET | Admin/Owner | Active jobs, or all jobs within `?since=1h` window |
 | `/api/feeds/{feedId}/events` | GET | Public | SSE stream for feed events (job/episode changes, cross-device sync) |
 | `/api/jobs/{jobId}` | GET | Public | Get normalization job status |
-| `/api/jobs/{jobId}/cancel` | POST | Admin/Owner | Cancel a normalization job |
+| `/api/jobs/{jobId}/cancel` | POST | Admin/Owner | Cancel a normalization job; with `?attempt=N`, only while the job is still on that attempt |
+| `/api/jobs/{jobId}/retry` | POST | Admin/Owner | Retry a job whose normalization failed, in place under a new attempt, while its upload is kept (202 with job; 410 `source-gone` means re-upload); with `?attempt=N`, only while the job is still on that attempt |
 | `/api/jobs/{jobId}/progress` | GET | Public | SSE stream for real-time job progress |
 
 ### YouTube Import
@@ -280,6 +283,7 @@ FeatherPod episode rename -f my-podcast --suggest  # AI-suggested title with inl
 FeatherPod episode rename -f my-podcast --suggest --note "two hosts, ep 12"  # Extra context for the AI
 FeatherPod episode note set abc123 -f my-podcast -n "Context for AI title suggestions"
 FeatherPod episode note get / clear abc123 -f my-podcast
+FeatherPod episode retry-transcript -f my-podcast  # Pick an episode whose transcript failed and transcribe it again
 FeatherPod episode move --from feed1 --to feed2 --episode "Episode*"
 FeatherPod episode copy --from feed1 --to feed2
 
