@@ -1247,38 +1247,29 @@ public sealed partial class EpisodeService : IDisposable
         try
         {
             using var file = TagLib.File.Create(filePath);
-
-            // Try DateTagged first (user-editable metadata)
             if (file.Tag.DateTagged.HasValue)
             {
                 date = file.Tag.DateTagged.Value.ToUniversalTime();
 
                 return true;
             }
-
-            // For M4A/MP4 files, try to read container creation time
-            var extension = Path.GetExtension(filePath).ToLowerInvariant();
-            if (extension == ".m4a" || extension == ".mp4")
-            {
-                var creationTime = Mp4Parser.GetCreationTime(filePath);
-                if (creationTime.HasValue)
-                {
-                    date = creationTime.Value;
-
-                    return true;
-                }
-            }
-
-            date = null;
-
-            return false;
         }
         catch
         {
-            date = null;
-
-            return false;
+            // Unreadable date tags do not prevent independent container-date extraction.
         }
+
+        var extension = Path.GetExtension(filePath);
+        if (string.Equals(extension, ".m4a", StringComparison.OrdinalIgnoreCase) || string.Equals(extension, ".mp4", StringComparison.OrdinalIgnoreCase))
+        {
+            date = Mp4Parser.GetCreationTime(filePath);
+
+            return date.HasValue;
+        }
+
+        date = null;
+
+        return false;
     }
 
     public static async Task<string> GenerateTitleAsync(string fileName, IAiService aiService, CancellationToken cancellationToken = default)

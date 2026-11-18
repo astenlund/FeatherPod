@@ -124,6 +124,8 @@ curl -X POST https://<your-app>.azurewebsites.net/api/feeds/{feedId}/episodes \
 - `normalize=true` (query param) - Async server-side audio normalization to -16 LUFS (returns 202 with job ID)
 - `clientUploadId` - With `normalize=true`, an ID the client picks for this upload (1-64 characters, letters, digits and hyphens). The job stores it and job listings return it, so a client whose upload response never arrived can still recognize the job; the push page sends one with every upload
 
+When `publishedDate` is omitted and the feed enables `UseFileMetadataForPublishDate`, the server first uses TagLib `DateTagged` metadata. For M4A/MP4 files it then tries the movie-header creation time, treating zero as missing, followed by the embedded C2PA layout observed in a NotebookLM export. The C2PA fallback requires an explicit creation record, reached through an unambiguous parent chain when needed, and uses the RFC 3161 `genTime` associated with that record's claim signature. This is the time recorded in the timestamp token, which can be later than signature generation. The reader checks the local reference hashes used for date selection and the timestamp message imprint. It extracts metadata only; it does not validate C2PA compliance, certificates, signatures or the audio content binding. Other provenance layouts may fall back to upload time. When no usable date can be extracted, the server uses the current UTC time during upload.
+
 ### Removing Episodes
 
 ```bash
