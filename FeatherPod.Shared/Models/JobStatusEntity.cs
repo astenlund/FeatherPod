@@ -78,6 +78,11 @@ public class JobStatusEntity : ITableEntity
     public long? NormalizedFileSize { get; set; }
 
     /// <summary>
+    /// ETag of the normalized audio blob the Function uploaded (set with the other normalization results on success).
+    /// </summary>
+    public string? AudioETag { get; set; }
+
+    /// <summary>
     /// Audio duration in milliseconds (from FFprobe, set by Function on success).
     /// </summary>
     public long? AudioDurationMs { get; set; }

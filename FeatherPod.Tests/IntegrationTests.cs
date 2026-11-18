@@ -850,6 +850,62 @@ public sealed class IntegrationTests : IDisposable
     }
 
     [AzuriteFact]
+    public Task MoveEpisode_TargetHasEpisodeWithTheFileName_Returns409AndChangesNothing() => AssertTransferConflictAsync("move");
+
+    [AzuriteFact]
+    public Task CopyEpisode_TargetHasEpisodeWithTheFileName_Returns409AndChangesNothing() => AssertTransferConflictAsync("copy");
+
+    private async Task AssertTransferConflictAsync(string operation)
+    {
+        // Arrange: both feeds hold an episode uploaded under the same file name, with different audio
+        await CreateTestFeedAsync("source-feed");
+        await CreateTestFeedAsync("target-feed");
+        var episodeId = await UploadEpisodeAsync("source-feed", "same-name.mp3", "source audio", "Source Episode");
+        await UploadEpisodeAsync("target-feed", "same-name.mp3", "target audio!", "Target Episode");
+
+        // Act
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/source-feed/episodes/{episodeId}/{operation}");
+        request.Content = new StringContent("""{"targetFeedId": "target-feed"}""", System.Text.Encoding.UTF8, "application/json");
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var response = await _client.SendAsync(request);
+
+        // Assert: a conflict naming the file, the source episode kept and the target holding only its own episode
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("same-name.mp3", await response.Content.ReadAsStringAsync());
+        var sourceJson = await GetEpisodesJsonAsync("source-feed");
+        var targetJson = await GetEpisodesJsonAsync("target-feed");
+        Assert.Contains("Source Episode", sourceJson);
+        Assert.DoesNotContain("Source Episode", targetJson);
+        Assert.Contains("Target Episode", targetJson);
+    }
+
+    private async Task<string> UploadEpisodeAsync(string feedId, string fileName, string audio, string title)
+    {
+        var content = new MultipartFormDataContent();
+        var fileContent = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes(audio));
+        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("audio/mpeg");
+        content.Add(fileContent, "file", fileName);
+        content.Add(new StringContent(title), "title");
+
+        var request = new HttpRequestMessage(HttpMethod.Post, $"/api/feeds/{feedId}/episodes") { Content = content };
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var response = await _client.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        var json = await response.Content.ReadAsStringAsync();
+
+        return System.Text.RegularExpressions.Regex.Match(json, @"""id"":""([^""]+)""").Groups[1].Value;
+    }
+
+    private async Task<string> GetEpisodesJsonAsync(string feedId)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, $"/api/feeds/{feedId}/episodes");
+        request.Headers.Add("X-API-Key", FeatherPodWebApplicationFactory.ApiKey);
+        var response = await _client.SendAsync(request);
+
+        return await response.Content.ReadAsStringAsync();
+    }
+
+    [AzuriteFact]
     public async Task Episode_WithBothDescriptionAndSummary_ShouldUseCorrectFieldsInRSS()
     {
         // Arrange

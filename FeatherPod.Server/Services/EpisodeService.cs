@@ -149,8 +149,8 @@ public sealed partial class EpisodeService : IDisposable
             _lock.Release();
         }
 
-        // Rename in blob storage first so a failure aborts before any in-memory change.
-        await _blobStorage.RenameFeedAsync(oldFeedId, newFeedId);
+        // Rename in blob storage first so a failure aborts before any in-memory change. Moved audio blobs are new blob versions.
+        var renamedAudioETags = await _blobStorage.RenameFeedAsync(oldFeedId, newFeedId);
 
         string? commitConflict = null;
 
@@ -178,8 +178,8 @@ public sealed partial class EpisodeService : IDisposable
                 // Update episodes in memory
                 if (_episodesByFeed.TryGetValue(oldFeedId, out var episodes))
                 {
-                    // Update each episode's FeedId
-                    var updatedEpisodes = episodes.Select(e => e with { FeedId = newFeedId }).ToList();
+                    // Update each episode's FeedId, and its audio ownership to the moved blob
+                    var updatedEpisodes = episodes.Select(e => WithRenamedAudioETag(e, renamedAudioETags) with { FeedId = newFeedId }).ToList();
                     _episodesByFeed.Remove(oldFeedId);
                     _episodesByFeed[newFeedId] = updatedEpisodes;
                 }
@@ -188,6 +188,10 @@ public sealed partial class EpisodeService : IDisposable
                 BumpFeedModifiedAt(newFeedId);
 
                 await SaveFeedsAsync();
+
+                // The blob rename copied the old episodes.json byte for byte; persist the new feed id and audio ETags over it, or the
+                // next sync or restart reloads the stale copy
+                await SaveEpisodesAsync(newFeedId);
 
                 _logger.LogInformation("Renamed feed: {OldId} -> {NewId}", oldFeedId, newFeedId);
             }
@@ -201,9 +205,58 @@ public sealed partial class EpisodeService : IDisposable
         {
             // The blobs were already renamed; rename them back so storage matches the
             // unchanged metadata before surfacing the conflict.
-            await _blobStorage.RenameFeedAsync(newFeedId, oldFeedId);
+            var restoredAudioETags = await _blobStorage.RenameFeedAsync(newFeedId, oldFeedId);
+            await RecordRestoredAudioETagsAsync(oldFeedId, restoredAudioETags);
 
             throw new InvalidOperationException(commitConflict);
+        }
+    }
+
+    /// <summary>
+    /// The episode with its audio ownership moved to the ETag its audio blob got in a feed rename. An episode whose blob the rename
+    /// did not move keeps its ETag, which then matches no blob, so a later delete leaves whatever is at the path alone.
+    /// </summary>
+    private static Episode WithRenamedAudioETag(Episode episode, IReadOnlyDictionary<string, string> renamedAudioETags) =>
+        renamedAudioETags.TryGetValue(episode.FileName, out var eTag) ? episode with { AudioETag = eTag } : episode;
+
+    /// <summary>
+    /// After a conflicting feed rename was rolled back, record the ETags the rolled-back audio blobs got on the feed's episodes.
+    /// </summary>
+    private async Task RecordRestoredAudioETagsAsync(string feedId, IReadOnlyDictionary<string, string> restoredAudioETags)
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            if (_episodesByFeed.TryGetValue(feedId, out var episodes) && episodes.Count > 0)
+            {
+                _episodesByFeed[feedId] = episodes.Select(e => WithRenamedAudioETag(e, restoredAudioETags)).ToList();
+                await SaveEpisodesAsync(feedId);
+            }
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Record that the audio blob at <paramref name="fileName"/> now has <paramref name="eTag"/> on every episode of the feed that
+    /// serves it (episodes sharing a file name share its blob). Caller holds the lock. A null ETag (a writer that did not report
+    /// one) records nothing.
+    /// </summary>
+    private static void RecordAudioWrite(List<Episode> episodes, string fileName, string? eTag)
+    {
+        if (eTag == null)
+        {
+            return;
+        }
+
+        for (var i = 0; i < episodes.Count; i++)
+        {
+            if (episodes[i].FileName == fileName && episodes[i].AudioETag != eTag)
+            {
+                episodes[i] = episodes[i] with { AudioETag = eTag };
+            }
         }
     }
 
@@ -431,7 +484,7 @@ public sealed partial class EpisodeService : IDisposable
             _logger.LogDebug("Using current time for published date for {File}: {Date}", fileName, finalPublishedDate);
         }
 
-        await _blobStorage.UploadAudioAsync(feedId, fileName, filePath);
+        var audioETag = await _blobStorage.UploadAudioAsync(feedId, fileName, filePath);
 
         var episode = new Episode
         {
@@ -446,7 +499,8 @@ public sealed partial class EpisodeService : IDisposable
             PublishedDate = finalPublishedDate,
             Source = source,
             MediaSource = mediaSource,
-            UploadedAt = DateTime.UtcNow
+            UploadedAt = DateTime.UtcNow,
+            AudioETag = audioETag
         };
 
         // Acquire lock only for in-memory state mutation
@@ -466,6 +520,7 @@ public sealed partial class EpisodeService : IDisposable
                 episodes.Remove(existingEpisode);
             }
 
+            RecordAudioWrite(episodes, fileName, audioETag);
             episodes.Add(episode);
             BumpFeedModifiedAt(feedId);
             await SaveEpisodesAsync(feedId);
@@ -521,6 +576,7 @@ public sealed partial class EpisodeService : IDisposable
                 episodes.Remove(existing);
             }
 
+            RecordAudioWrite(episodes, episode.FileName, episode.AudioETag);
             episodes.Add(episode);
             BumpFeedModifiedAt(episode.FeedId);
             await SaveEpisodesAsync(episode.FeedId);
@@ -566,34 +622,36 @@ public sealed partial class EpisodeService : IDisposable
 
             BumpFeedModifiedAt(feedId);
             await SaveEpisodesAsync(feedId);
+
+            // The transcript is deleted inside the commit, like every other write of an episode's transcript location: outside the
+            // lock, a re-upload re-creating this id could publish its own transcript before the delete lands
+            if (episode.TranscriptStatus == TranscriptStatus.Available)
+            {
+                try
+                {
+                    await _blobStorage.DeleteTranscriptAsync(feedId, episode.Id);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.LogWarning(ex, "Episode {Id} removed but its transcript delete failed; it remains as an orphan", episode.Id);
+                }
+            }
         }
         finally
         {
             _lock.Release();
         }
 
-        // Blob deletes run after the commit so readers never observe an episode whose
-        // enclosure points at an already-deleted blob. A blob failure therefore leaves
-        // an orphaned blob rather than a broken feed entry.
-        try
+        // The audio delete runs after the commit so readers never observe an episode whose enclosure points at an already-deleted
+        // blob, and only while the blob is still the one this episode owns: a re-upload's normalization writes the same path outside
+        // this lock at any time, before its join publishes it. A failure or a replaced blob therefore leaves at most an orphan.
+        if (deleteAudioBlob)
         {
-            if (deleteAudioBlob)
-            {
-                await _blobStorage.DeleteAudioAsync(feedId, episode.FileName);
-            }
-            else
-            {
-                _logger.LogInformation("Skipping blob deletion - another episode references {FileName}", episode.FileName);
-            }
-
-            if (episode.TranscriptStatus == TranscriptStatus.Available)
-            {
-                await _blobStorage.DeleteTranscriptAsync(feedId, episode.Id);
-            }
+            await DeleteOwnedAudioAsync(feedId, episode.FileName, episode.AudioETag);
         }
-        catch (Exception ex)
+        else
         {
-            _logger.LogWarning(ex, "Episode removed but blob cleanup failed for {FeedId}/{FileName}; blob may be orphaned", feedId, episode.FileName);
+            _logger.LogInformation("Skipping blob deletion - another episode references {FileName}", episode.FileName);
         }
 
         _logger.LogInformation("Deleted episode from feed {FeedId}: {Title}", feedId, episode.Title);
@@ -766,68 +824,49 @@ public sealed partial class EpisodeService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Move an episode to another feed. Refused with <see cref="EpisodeConflictException"/>, changing neither feed, when the target
+    /// already has an episode or an audio blob with the file name. The commit moves only the incarnation the move started on (found
+    /// by id and upload time), carrying its state as it is at the commit; when that incarnation was deleted or replaced the move
+    /// publishes nothing. The source audio is deleted after the commit, only while it is still the version the episode owns (its
+    /// <see cref="Episode.AudioETag"/>, or for an episode stored before ownership was recorded the version the move copied), so a
+    /// blob a same-name upload wrote is left for that upload's join.
+    /// </summary>
     public async Task<Episode> MoveEpisodeAsync(string episodeId, string sourceFeedId, string targetFeedId)
     {
-        // Snapshot episode info under lock for blob I/O
-        Episode episode;
-        await _lock.WaitAsync();
-        try
-        {
-            var sourceFeed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == sourceFeedId);
-            var targetFeed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == targetFeedId);
-            if (sourceFeed == null || targetFeed == null)
-            {
-                throw new InvalidOperationException("Source or target feed not found");
-            }
-
-            episode = _episodesByFeed[sourceFeedId].FirstOrDefault(e => e.Id == episodeId)
-                ?? throw new InvalidOperationException($"Episode '{episodeId}' not found in feed '{sourceFeedId}'");
-        }
-        finally
-        {
-            _lock.Release();
-        }
-
-        // Do blob I/O outside the lock
-        var tempPath = await _blobStorage.DownloadAudioToTempAsync(sourceFeedId, episode.FileName);
-        await _blobStorage.UploadAudioAsync(targetFeedId, episode.FileName, tempPath);
-        await _blobStorage.DeleteAudioAsync(sourceFeedId, episode.FileName);
-        File.Delete(tempPath);
-
+        var episode = await SnapshotForTransferAsync(episodeId, sourceFeedId, targetFeedId);
+        var (sourceETag, targetETag) = await CopyAudioToTargetAsync(episode, sourceFeedId, targetFeedId);
         var newId = Episode.GenerateId(targetFeedId, episode.FileName, episode.FileSize);
 
-        // Copy transcript to target feed with new episode ID; the source copy is deleted in the commit
-        await CopyTranscriptAsync(episode, sourceFeedId, targetFeedId, newId);
-
-        // Commit from the episode as it is now, found by id: it may have been renamed, noted or given a retried transcript during the
-        // blob I/O above, and the move must carry that state rather than the snapshot's (check-then-act re-derived at commit)
         Episode? movedEpisode = null;
+        var deleteSourceAudio = false;
+        string? ownedSourceETag = null;
         await _lock.WaitAsync();
         try
         {
-            var sourceEpisodes = _episodesByFeed[sourceFeedId];
-            var index = sourceEpisodes.FindIndex(e => e.Id == episode.Id);
-            if (index >= 0)
+            var current = FindIncarnation(sourceFeedId, episode);
+            if (current != null)
             {
-                var current = sourceEpisodes[index];
-                if (current.TranscriptStatus == TranscriptStatus.Available && episode.TranscriptStatus != TranscriptStatus.Available)
-                {
-                    // Published meanwhile; copied inside the lock like the joins' transcript writes
-                    await CopyTranscriptAsync(current, sourceFeedId, targetFeedId, newId);
-                }
+                var targetEpisodes = TargetEpisodesFor(targetFeedId, episode.FileName);
+
+                // Copied inside the lock like the joins' transcript writes, from the state at commit: the transcript may have been
+                // published during the blob I/O above
+                await CopyTranscriptAsync(current, sourceFeedId, targetFeedId, newId);
 
                 movedEpisode = current with
                 {
                     Id = newId,
-                    FeedId = targetFeedId
+                    FeedId = targetFeedId,
+                    AudioETag = targetETag
                 };
 
-                sourceEpisodes.RemoveAt(index);
-                if (!_episodesByFeed.ContainsKey(targetFeedId))
-                {
-                    _episodesByFeed[targetFeedId] = [];
-                }
-                _episodesByFeed[targetFeedId].Add(movedEpisode);
+                var sourceEpisodes = _episodesByFeed[sourceFeedId];
+                sourceEpisodes.Remove(current);
+                deleteSourceAudio = !sourceEpisodes.Any(e => e.FileName == episode.FileName);
+
+                // The blob version the episode owns; one stored before ownership was recorded owns the version the move copied
+                ownedSourceETag = current.AudioETag ?? sourceETag;
+                targetEpisodes.Add(movedEpisode);
                 BumpFeedModifiedAt(sourceFeedId);
                 BumpFeedModifiedAt(targetFeedId);
 
@@ -849,6 +888,13 @@ public sealed partial class EpisodeService : IDisposable
                 }
             }
         }
+        catch (InvalidOperationException)
+        {
+            // Refused at commit (a target conflict, or the target feed renamed or deleted meanwhile): nothing published
+            LogTargetCopyOrphaned(episodeId, targetFeedId, episode.FileName);
+
+            throw;
+        }
         finally
         {
             _lock.Release();
@@ -856,12 +902,15 @@ public sealed partial class EpisodeService : IDisposable
 
         if (movedEpisode == null)
         {
-            // Deleted during the move: the episode is not published to the target. Its copies there are left as orphans rather than
-            // deleted, since no check made here stays true until a delete lands: an upload of the same file can write and publish its
-            // own audio or transcript at those paths at any point (an orphan is the safe failure, a dangling reference is not).
-            _logger.LogWarning("Episode {Id} was deleted while being moved to feed {Target}; its copied audio {File} and any transcript remain there as orphans", episodeId, targetFeedId, episode.FileName);
+            // Deleted or replaced during the move: nothing is published to the target, and a re-upload at the source is left alone
+            LogTargetCopyOrphaned(episodeId, targetFeedId, episode.FileName);
 
-            throw new InvalidOperationException($"Episode '{episodeId}' was deleted while it was being moved");
+            throw new InvalidOperationException($"Episode '{episodeId}' was deleted or replaced while it was being moved");
+        }
+
+        if (deleteSourceAudio)
+        {
+            await DeleteOwnedAudioAsync(sourceFeedId, episode.FileName, ownedSourceETag);
         }
 
         _logger.LogInformation("Moved episode {Id} from feed {Source} to {Target}", episodeId, sourceFeedId, targetFeedId);
@@ -869,64 +918,169 @@ public sealed partial class EpisodeService : IDisposable
         return movedEpisode;
     }
 
+    /// <summary>
+    /// Copy an episode to another feed, with the refusals of <see cref="MoveEpisodeAsync"/>. The commit copies the incarnation the
+    /// copy started on, carrying its state as it is at the commit; when that incarnation was deleted or replaced nothing is published.
+    /// </summary>
     public async Task<Episode> CopyEpisodeAsync(string episodeId, string sourceFeedId, string targetFeedId)
     {
-        // Snapshot episode info under lock for blob I/O
-        Episode episode;
-        await _lock.WaitAsync();
-        try
-        {
-            var sourceFeed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == sourceFeedId);
-            var targetFeed = _feedsMetadata.Feeds.FirstOrDefault(f => f.Id == targetFeedId);
-            if (sourceFeed == null || targetFeed == null)
-            {
-                throw new InvalidOperationException("Source or target feed not found");
-            }
-
-            episode = _episodesByFeed[sourceFeedId].FirstOrDefault(e => e.Id == episodeId)
-                ?? throw new InvalidOperationException($"Episode '{episodeId}' not found in feed '{sourceFeedId}'");
-        }
-        finally
-        {
-            _lock.Release();
-        }
-
-        // Do blob I/O outside the lock
-        var tempPath = await _blobStorage.DownloadAudioToTempAsync(sourceFeedId, episode.FileName);
-        await _blobStorage.UploadAudioAsync(targetFeedId, episode.FileName, tempPath);
-        File.Delete(tempPath);
-
+        var episode = await SnapshotForTransferAsync(episodeId, sourceFeedId, targetFeedId);
+        var (_, targetETag) = await CopyAudioToTargetAsync(episode, sourceFeedId, targetFeedId);
         var newId = Episode.GenerateId(targetFeedId, episode.FileName, episode.FileSize);
 
-        // Copy transcript to target feed with new episode ID
-        await CopyTranscriptAsync(episode, sourceFeedId, targetFeedId, newId);
-
-        var copiedEpisode = episode with
-        {
-            Id = newId,
-            FeedId = targetFeedId
-        };
-
-        // Acquire lock for in-memory state mutation
+        Episode? copiedEpisode = null;
         await _lock.WaitAsync();
         try
         {
-            if (!_episodesByFeed.ContainsKey(targetFeedId))
+            var current = FindIncarnation(sourceFeedId, episode);
+            if (current != null)
             {
-                _episodesByFeed[targetFeedId] = [];
+                var targetEpisodes = TargetEpisodesFor(targetFeedId, episode.FileName);
+                await CopyTranscriptAsync(current, sourceFeedId, targetFeedId, newId);
+
+                copiedEpisode = current with
+                {
+                    Id = newId,
+                    FeedId = targetFeedId,
+                    AudioETag = targetETag
+                };
+
+                targetEpisodes.Add(copiedEpisode);
+                BumpFeedModifiedAt(targetFeedId);
+
+                await SaveEpisodesAsync(targetFeedId);
             }
-            _episodesByFeed[targetFeedId].Add(copiedEpisode);
-            BumpFeedModifiedAt(targetFeedId);
+        }
+        catch (InvalidOperationException)
+        {
+            // Refused at commit (a target conflict, or the target feed renamed or deleted meanwhile): nothing published
+            LogTargetCopyOrphaned(episodeId, targetFeedId, episode.FileName);
 
-            await SaveEpisodesAsync(targetFeedId);
-
-            _logger.LogInformation("Copied episode {Id} from feed {Source} to {Target}", episodeId, sourceFeedId, targetFeedId);
-
-            return copiedEpisode;
+            throw;
         }
         finally
         {
             _lock.Release();
+        }
+
+        if (copiedEpisode == null)
+        {
+            LogTargetCopyOrphaned(episodeId, targetFeedId, episode.FileName);
+
+            throw new InvalidOperationException($"Episode '{episodeId}' was deleted or replaced while it was being copied");
+        }
+
+        _logger.LogInformation("Copied episode {Id} from feed {Source} to {Target}", episodeId, sourceFeedId, targetFeedId);
+
+        return copiedEpisode;
+    }
+
+    /// <summary>
+    /// The episode a move or copy starts from, after checking both feeds exist and the target has no episode with its file name.
+    /// </summary>
+    private async Task<Episode> SnapshotForTransferAsync(string episodeId, string sourceFeedId, string targetFeedId)
+    {
+        await _lock.WaitAsync();
+        try
+        {
+            if (_feedsMetadata.Feeds.All(f => f.Id != sourceFeedId))
+            {
+                throw new InvalidOperationException($"Source feed '{sourceFeedId}' not found");
+            }
+
+            var episode = _episodesByFeed[sourceFeedId].FirstOrDefault(e => e.Id == episodeId)
+                ?? throw new InvalidOperationException($"Episode '{episodeId}' not found in feed '{sourceFeedId}'");
+            TargetEpisodesFor(targetFeedId, episode.FileName);
+
+            return episode;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Copy the episode's audio, the bytes now at its path, to the target feed, create-only, so an existing blob there (an orphan, or
+    /// an upload's normalization that has not been joined yet) is never overwritten. Refused with
+    /// <see cref="EpisodeConflictException"/> when the target path is taken. Returns the ETags of the source version copied and of
+    /// the new target blob.
+    /// </summary>
+    private async Task<(string SourceETag, string TargetETag)> CopyAudioToTargetAsync(Episode episode, string sourceFeedId, string targetFeedId)
+    {
+        var download = await _blobStorage.DownloadAudioToTempAsync(sourceFeedId, episode.FileName);
+        try
+        {
+            var targetETag = await _blobStorage.CreateAudioAsync(targetFeedId, episode.FileName, download.Path)
+                ?? throw new EpisodeConflictException(EpisodeConflictReason.TargetPathTaken, $"Feed '{targetFeedId}' already has a file named '{episode.FileName}'");
+
+            return (download.ETag, targetETag);
+        }
+        finally
+        {
+            File.Delete(download.Path);
+        }
+    }
+
+    /// <summary>
+    /// The source episode as it is now, when it is still the incarnation <paramref name="snapshot"/> was taken from (same id and
+    /// upload time; a delete and re-upload creates a new one under the same id), or null. Caller holds the lock.
+    /// </summary>
+    private Episode? FindIncarnation(string feedId, Episode snapshot) =>
+        _episodesByFeed.TryGetValue(feedId, out var episodes)
+            ? episodes.FirstOrDefault(e => e.Id == snapshot.Id && e.UploadedAt.ToUniversalTime() == snapshot.UploadedAt.ToUniversalTime())
+            : null;
+
+    /// <summary>
+    /// The target feed's episode list for a move or copy of <paramref name="fileName"/>, checked before the copy and again at commit:
+    /// refused when the feed no longer exists (renamed or deleted meanwhile) and, with <see cref="EpisodeConflictException"/>, when it
+    /// already has an episode with the file name. Caller holds the lock.
+    /// </summary>
+    private List<Episode> TargetEpisodesFor(string targetFeedId, string fileName)
+    {
+        if (_feedsMetadata.Feeds.All(f => f.Id != targetFeedId))
+        {
+            throw new InvalidOperationException($"Target feed '{targetFeedId}' not found");
+        }
+
+        if (!_episodesByFeed.TryGetValue(targetFeedId, out var episodes))
+        {
+            episodes = [];
+            _episodesByFeed[targetFeedId] = episodes;
+        }
+
+        if (episodes.Any(e => e.FileName == fileName))
+        {
+            throw new EpisodeConflictException(EpisodeConflictReason.TargetHasEpisode, $"Feed '{targetFeedId}' already has an episode with the file '{fileName}'");
+        }
+
+        return episodes;
+    }
+
+    /// <summary>
+    /// A move or copy that published nothing after copying its audio leaves the copy, and any transcript, as orphans rather than
+    /// deleting them: an upload of the same file can write and publish its own audio or transcript at those paths at any point (an
+    /// orphan is the safe failure, a dangling reference is not).
+    /// </summary>
+    private void LogTargetCopyOrphaned(string episodeId, string targetFeedId, string fileName) =>
+        _logger.LogWarning("Episode {Id} was not published to feed {Target}; its copied audio {File} and any transcript remain there as orphans", episodeId, targetFeedId, fileName);
+
+    /// <summary>
+    /// Delete an episode's audio after its commit, only while the blob still has <paramref name="ownedETag"/> (unconditionally when
+    /// the episode predates ownership tracking). A replaced blob or a failure leaves an orphan, never a dangling reference.
+    /// </summary>
+    private async Task DeleteOwnedAudioAsync(string feedId, string fileName, string? ownedETag)
+    {
+        try
+        {
+            if (!await _blobStorage.DeleteAudioAsync(feedId, fileName, ownedETag))
+            {
+                _logger.LogInformation("Kept audio {FeedId}/{FileName}: another writer replaced it after it was released", feedId, fileName);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Episode removed but blob cleanup failed for {FeedId}/{FileName}; blob may be orphaned", feedId, fileName);
         }
     }
 

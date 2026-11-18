@@ -395,6 +395,7 @@ public sealed class JobRetryService
         job.NormalizationComplete = null;
         job.NormalizationError = null;
         job.NormalizedFileSize = null;
+        job.AudioETag = null;
         job.AudioDurationMs = null;
         job.CurrentPositionMs = null;
         job.TotalDurationMs = null;

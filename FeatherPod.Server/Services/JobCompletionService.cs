@@ -75,6 +75,7 @@ public class JobCompletionService
                     if (request.Success)
                     {
                         e.NormalizedFileSize = request.NormalizedFileSize;
+                        e.AudioETag = request.AudioETag;
                         e.AudioDurationMs = request.AudioDurationMs;
                     }
                     else
@@ -203,7 +204,8 @@ public class JobCompletionService
                 PublishedDate = publishedDate,
                 Source = source,
                 UploadedAt = DateTime.UtcNow,
-                TranscriptStatus = transcriptStatus
+                TranscriptStatus = transcriptStatus,
+                AudioETag = entity.AudioETag
             };
 
             episode = await _episodeService.AddEpisodeFromEntityAsync(episode, ct, transcriptVtt);

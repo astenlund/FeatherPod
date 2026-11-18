@@ -55,13 +55,78 @@ public class TestBlobStorageService : IBlobStorageService
         await File.WriteAllTextAsync(_usersConfigPath, usersJson);
     }
 
-    public async Task UploadAudioAsync(string feedId, string fileName, string filePath)
+    public virtual Task<string> UploadAudioAsync(string feedId, string fileName, string filePath)
     {
-        var feedAudioPath = Path.Combine(_rootPath, feedId, "audio");
-        Directory.CreateDirectory(feedAudioPath);
-        var destPath = Path.Combine(feedAudioPath, fileName);
+        var destPath = AudioPath(feedId, fileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
         File.Copy(filePath, destPath, overwrite: true);
-        await Task.CompletedTask;
+
+        return Task.FromResult(MintAudioETag(destPath));
+    }
+
+    public virtual Task<string?> CreateAudioAsync(string feedId, string fileName, string filePath)
+    {
+        var destPath = AudioPath(feedId, fileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+        try
+        {
+            File.Copy(filePath, destPath, overwrite: false);
+        }
+        catch (IOException) when (File.Exists(destPath))
+        {
+            // Path taken, as a create-only blob upload refuses it
+            return Task.FromResult<string?>(null);
+        }
+
+        return Task.FromResult<string?>(MintAudioETag(destPath));
+    }
+
+    /// <summary>
+    /// The current ETag of an audio file, as blob storage would report it. Every write through this service mints a new one; a file
+    /// written directly by a test (simulating the Function's upload) gets a new one the first time it is observed after the write.
+    /// </summary>
+    public string? GetAudioETag(string feedId, string fileName) => CurrentAudioETag(AudioPath(feedId, fileName));
+
+    private string AudioPath(string feedId, string fileName) => Path.Combine(_rootPath, feedId, "audio", fileName);
+
+    // A minted version stamps its file with a unique sentinel write time far in the past. Any direct write sets the real current time,
+    // which no sentinel equals, so a rewrite is a new version even when it lands in the same timestamp tick with the same length
+    private static readonly DateTime SentinelEpoch = new(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
+    private readonly Dictionary<string, (string ETag, DateTime Sentinel)> _audioETags = new(StringComparer.OrdinalIgnoreCase);
+
+    // Shared by every instance, so two doubles over the same directory never stamp the same sentinel
+    private static long _audioVersions;
+
+    private string MintAudioETag(string path)
+    {
+        var eTag = $"\"{Guid.NewGuid():N}\"";
+        var sentinel = SentinelEpoch.AddTicks(Interlocked.Increment(ref _audioVersions));
+        lock (_audioETags)
+        {
+            File.SetLastWriteTimeUtc(path, sentinel);
+            _audioETags[path] = (eTag, sentinel);
+        }
+
+        return eTag;
+    }
+
+    private string? CurrentAudioETag(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        lock (_audioETags)
+        {
+            if (_audioETags.TryGetValue(path, out var known) && known.Sentinel == File.GetLastWriteTimeUtc(path))
+            {
+                return known.ETag;
+            }
+        }
+
+        return MintAudioETag(path);
     }
 
     public async Task UploadPendingAudioAsync(string feedId, string jobId, string fileName, string filePath, CancellationToken cancellationToken = default)
@@ -87,14 +152,22 @@ public class TestBlobStorageService : IBlobStorageService
         return await Task.FromResult(File.Exists(filePath));
     }
 
-    public virtual async Task DeleteAudioAsync(string feedId, string fileName)
+    public virtual Task<bool> DeleteAudioAsync(string feedId, string fileName, string? ifMatchETag = null)
     {
-        var filePath = Path.Combine(_rootPath, feedId, "audio", fileName);
-        if (File.Exists(filePath))
+        var filePath = AudioPath(feedId, fileName);
+        if (!File.Exists(filePath))
         {
-            File.Delete(filePath);
+            return Task.FromResult(true);
         }
-        await Task.CompletedTask;
+
+        if (ifMatchETag != null && CurrentAudioETag(filePath) != ifMatchETag)
+        {
+            return Task.FromResult(false);
+        }
+
+        File.Delete(filePath);
+
+        return Task.FromResult(true);
     }
 
     public async Task<List<string>> ListAudioFilesAsync(string feedId)
@@ -121,14 +194,16 @@ public class TestBlobStorageService : IBlobStorageService
         return await Task.FromResult(fileInfo.Length);
     }
 
-    public virtual async Task<string> DownloadAudioToTempAsync(string feedId, string fileName)
+    public virtual Task<AudioDownload> DownloadAudioToTempAsync(string feedId, string fileName)
     {
-        var sourcePath = Path.Combine(_rootPath, feedId, "audio", fileName);
+        var sourcePath = AudioPath(feedId, fileName);
         var tempDir = Path.Combine(Path.GetTempPath(), "FeatherPod");
         Directory.CreateDirectory(tempDir);
-        var tempPath = Path.Combine(tempDir, fileName);
+        var tempPath = Path.Combine(tempDir, $"{Guid.NewGuid()}_{fileName}");
+        var eTag = CurrentAudioETag(sourcePath) ?? throw new FileNotFoundException("Audio blob not found", sourcePath);
         File.Copy(sourcePath, tempPath, overwrite: true);
-        return await Task.FromResult(tempPath);
+
+        return Task.FromResult(new AudioDownload(tempPath, eTag));
     }
 
     public async Task<Stream> DownloadAudioRangeAsync(string feedId, string fileName, long offset, long length)
@@ -305,17 +380,28 @@ public class TestBlobStorageService : IBlobStorageService
         await Task.CompletedTask;
     }
 
-    public virtual async Task RenameFeedAsync(string oldFeedId, string newFeedId)
+    public virtual Task<IReadOnlyDictionary<string, string>> RenameFeedAsync(string oldFeedId, string newFeedId)
     {
         var oldPath = Path.Combine(_rootPath, oldFeedId);
         var newPath = Path.Combine(_rootPath, newFeedId);
+        var audioETags = new Dictionary<string, string>(StringComparer.Ordinal);
 
         if (Directory.Exists(oldPath))
         {
             Directory.Move(oldPath, newPath);
+
+            // A moved blob is a new blob version, with a new ETag
+            var audioDir = Path.Combine(newPath, "audio");
+            if (Directory.Exists(audioDir))
+            {
+                foreach (var file in Directory.GetFiles(audioDir))
+                {
+                    audioETags[Path.GetFileName(file)] = MintAudioETag(file);
+                }
+            }
         }
 
-        await Task.CompletedTask;
+        return Task.FromResult<IReadOnlyDictionary<string, string>>(audioETags);
     }
 
     public async Task DeleteFeedAsync(string feedId)

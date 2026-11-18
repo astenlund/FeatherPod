@@ -908,7 +908,7 @@ public sealed class JobRetryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task MoveEpisode_SourceDeletedMidMove_KeepsAnExistingTargetEpisodesFiles()
+    public async Task MoveEpisode_TargetHasEpisodeWithTheFileName_IsRefusedAndKeepsTheTargetEpisodesFiles()
     {
         // Arrange: the target feed already has a published episode at the same file and id the move would create
         var hooked = new HookedBlobService(_root);
@@ -919,16 +919,18 @@ public sealed class JobRetryServiceTests : IDisposable
         await episodes.AddEpisodeFromEntityAsync(NewEpisode(TranscriptStatus.Available) with { Id = targetId, FeedId = "retry-target" }, CancellationToken.None, "WEBVTT\n\ntarget");
         Directory.CreateDirectory(Path.Combine(_root, "retry-target", "audio"));
         await File.WriteAllBytesAsync(Path.Combine(_root, "retry-target", "audio", FileName), [9, 9, 9]);
-        hooked.OnDownloadAudioToTemp = () => episodes.DeleteEpisodeAsync(FeedId, EpisodeId).GetAwaiter().GetResult();
 
         // Act
         var exception = await Record.ExceptionAsync(() => episodes.MoveEpisodeAsync(EpisodeId, FeedId, "retry-target"));
 
-        // Assert
-        Assert.IsType<InvalidOperationException>(exception);
-        Assert.True(File.Exists(Path.Combine(_root, "retry-target", "audio", FileName)));
+        // Assert: refused as a conflict, both feeds unchanged, the target episode's audio and transcript untouched
+        Assert.Equal(EpisodeConflictReason.TargetHasEpisode, Assert.IsType<EpisodeConflictException>(exception).Reason);
+        Assert.NotNull(await episodes.GetEpisodeByIdAsync(FeedId, EpisodeId));
+        Assert.Single(await episodes.GetAllEpisodesAsync("retry-target"));
+        Assert.Equal([9, 9, 9], await File.ReadAllBytesAsync(Path.Combine(_root, "retry-target", "audio", FileName)));
+        Assert.Equal([1, 2, 3], await File.ReadAllBytesAsync(Path.Combine(_root, FeedId, "audio", FileName)));
         await using var transcript = await hooked.DownloadTranscriptAsync("retry-target", targetId);
-        Assert.NotNull(transcript);
+        Assert.Equal("WEBVTT\n\ntarget", await new StreamReader(transcript!).ReadToEndAsync());
         episodes.Dispose();
     }
 
@@ -1003,11 +1005,11 @@ public sealed class JobRetryServiceTests : IDisposable
             pending?.Hook();
         }
 
-        public override Task DeleteAudioAsync(string feedId, string fileName)
+        public override Task<bool> DeleteAudioAsync(string feedId, string fileName, string? ifMatchETag = null)
         {
             RunTargetCleanupHook(feedId);
 
-            return base.DeleteAudioAsync(feedId, fileName);
+            return base.DeleteAudioAsync(feedId, fileName, ifMatchETag);
         }
 
         /// <summary>
@@ -1040,14 +1042,14 @@ public sealed class JobRetryServiceTests : IDisposable
             return base.UploadTranscriptAsync(feedId, episodeId, vttContent);
         }
 
-        public override async Task<string> DownloadAudioToTempAsync(string feedId, string fileName)
+        public override async Task<AudioDownload> DownloadAudioToTempAsync(string feedId, string fileName)
         {
-            var path = await base.DownloadAudioToTempAsync(feedId, fileName);
+            var download = await base.DownloadAudioToTempAsync(feedId, fileName);
             var hook = OnDownloadAudioToTemp;
             OnDownloadAudioToTemp = null;
             hook?.Invoke();
 
-            return path;
+            return download;
         }
     }
 

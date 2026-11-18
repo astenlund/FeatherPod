@@ -368,6 +368,7 @@ public class EpisodesController : ControllerBase
     [HttpPost("{id}/move")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> MoveEpisode(
         string feedId,
         string id,
@@ -405,6 +406,10 @@ public class EpisodesController : ControllerBase
                 episode = episodeWithUrl
             });
         }
+        catch (EpisodeConflictException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
         catch (InvalidOperationException ex)
         {
             return BadRequest(new { error = ex.Message });
@@ -414,6 +419,7 @@ public class EpisodesController : ControllerBase
     [HttpPost("{id}/copy")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> CopyEpisode(
         string feedId,
         string id,
@@ -450,6 +456,10 @@ public class EpisodesController : ControllerBase
                 message = $"Episode '{id}' copied from '{feedId}' to '{targetFeedId}'",
                 episode = episodeWithUrl
             });
+        }
+        catch (EpisodeConflictException ex)
+        {
+            return Conflict(new { error = ex.Message });
         }
         catch (InvalidOperationException ex)
         {

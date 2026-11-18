@@ -14,6 +14,11 @@ public record NormalizationCompleteRequest
     public string? Error { get; init; }
 
     /// <summary>
+    /// ETag of the normalized audio blob the Function uploaded (success only), recorded on the episode the join publishes.
+    /// </summary>
+    public string? AudioETag { get; init; }
+
+    /// <summary>
     /// The job attempt the signalling run belonged to (null for the first attempt). A signal for an attempt that is no longer
     /// current is ignored.
     /// </summary>

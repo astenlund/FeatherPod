@@ -184,8 +184,8 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 | `/api/feeds/{feedId}/episodes/{id}` | PATCH | Admin/Owner | Update episode metadata (title, note) |
 | `/api/feeds/{feedId}/episodes/{id}/suggest-title` | POST | Admin/Owner | AI-suggested title for episode |
 | `/api/feeds/{feedId}/episodes/{id}/transcript/retry` | POST | Admin/Owner | Retry a failed transcript from the published audio as a new transcription-only job (202 with job; refusals carry `reason`) |
-| `/api/feeds/{feedId}/episodes/{id}/move` | POST | Admin/Owner | Move episode between feeds |
-| `/api/feeds/{feedId}/episodes/{id}/copy` | POST | Admin/Owner | Copy episode between feeds |
+| `/api/feeds/{feedId}/episodes/{id}/move` | POST | Admin/Owner | Move episode between feeds (409 when the target feed already has an episode or audio file with that file name) |
+| `/api/feeds/{feedId}/episodes/{id}/copy` | POST | Admin/Owner | Copy episode between feeds (409 as for move) |
 
 ### Jobs & Events
 

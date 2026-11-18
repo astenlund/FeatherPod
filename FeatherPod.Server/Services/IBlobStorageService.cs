@@ -13,14 +13,36 @@ public interface IBlobStorageService
     Task SaveUsersConfigAsync(string usersJson);
 
     // Audio file operations (feed-aware)
-    Task UploadAudioAsync(string feedId, string fileName, string filePath);
+
+    /// <summary>
+    /// Upload an episode's audio, replacing any blob at its path. Returns the new blob's ETag.
+    /// </summary>
+    Task<string> UploadAudioAsync(string feedId, string fileName, string filePath);
+
+    /// <summary>
+    /// Upload an episode's audio only when no blob exists at its path. Returns the new blob's ETag, or null when a blob already
+    /// exists there (it is left untouched).
+    /// </summary>
+    Task<string?> CreateAudioAsync(string feedId, string fileName, string filePath);
+
     Task UploadPendingAudioAsync(string feedId, string jobId, string fileName, string filePath, CancellationToken cancellationToken = default);
     Task<Stream> DownloadAudioAsync(string feedId, string fileName);
     Task<bool> AudioExistsAsync(string feedId, string fileName);
-    Task DeleteAudioAsync(string feedId, string fileName);
+
+    /// <summary>
+    /// Delete an episode's audio blob. With <paramref name="ifMatchETag"/>, only while the blob still has that ETag: returns false,
+    /// deleting nothing, when another writer has replaced it. Returns true when the blob was deleted or did not exist.
+    /// </summary>
+    Task<bool> DeleteAudioAsync(string feedId, string fileName, string? ifMatchETag = null);
+
     Task<List<string>> ListAudioFilesAsync(string feedId);
     Task<long> GetAudioFileSizeAsync(string feedId, string fileName);
-    Task<string> DownloadAudioToTempAsync(string feedId, string fileName);
+
+    /// <summary>
+    /// Download an episode's audio to a new temp file. Returns the file's path and the ETag of the blob version downloaded.
+    /// </summary>
+    Task<AudioDownload> DownloadAudioToTempAsync(string feedId, string fileName);
+
     Task<Stream> DownloadAudioRangeAsync(string feedId, string fileName, long offset, long length);
 
     // Icon operations
@@ -65,6 +87,17 @@ public interface IBlobStorageService
     Task DeleteTranscriptAsync(string feedId, string episodeId);
 
     // Feed management operations
-    Task RenameFeedAsync(string oldFeedId, string newFeedId);
+
+    /// <summary>
+    /// Move every blob of a feed under the new feed id. Returns the ETag of each moved audio blob, keyed by its file name, since
+    /// a moved blob is a new blob version.
+    /// </summary>
+    Task<IReadOnlyDictionary<string, string>> RenameFeedAsync(string oldFeedId, string newFeedId);
+
     Task DeleteFeedAsync(string feedId);
 }
+
+/// <summary>
+/// An episode audio blob downloaded to a temp file: the file and the ETag of the blob version it holds.
+/// </summary>
+public record AudioDownload(string Path, string ETag);

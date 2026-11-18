@@ -323,12 +323,14 @@ public class NormalizationFunction
                 }, progressMode, signalRConnection).ContinueWith(t => _logger.LogError(t.Exception, "Upload progress update failed"), TaskContinuationOptions.OnlyOnFaulted);
             });
 
+            ETag uploadedETag;
             await using (var stream = File.OpenRead(normalizedFile))
             {
-                await finalBlob.UploadAsync(stream, new Azure.Storage.Blobs.Models.BlobUploadOptions
+                var uploaded = await finalBlob.UploadAsync(stream, new Azure.Storage.Blobs.Models.BlobUploadOptions
                 {
                     ProgressHandler = uploadProgress
                 }, cancellationToken);
+                uploadedETag = uploaded.Value.ETag;
             }
 
             await UpdateProgressAsync(tableClient, job, new()
@@ -339,13 +341,7 @@ public class NormalizationFunction
             }, progressMode, signalRConnection);
 
             // Signal App Service that normalization succeeded (join logic creates the episode)
-            await CallNormalizationCompleteAsync(job.JobId, new NormalizationCompleteRequest
-            {
-                Success = true,
-                NormalizedFileSize = normalizedFileSize,
-                AudioDurationMs = (long)duration.TotalMilliseconds,
-                Attempt = job.Attempt
-            }, cancellationToken);
+            await CallNormalizationCompleteAsync(job.JobId, SuccessSignal(job, normalizedFileSize, duration, uploadedETag), cancellationToken);
 
             _logger.LogInformation("Normalization job {JobId} completed successfully, signaled App Service", job.JobId);
         }
@@ -649,6 +645,19 @@ public class NormalizationFunction
 
         _logger.LogInformation("Signaled normalization-complete for job {JobId} (success={Success})", jobId, request.Success);
     }
+
+    /// <summary>
+    /// The normalization-complete signal of a successful run: the normalized file's size and duration, and the ETag of the audio
+    /// blob it uploaded, which the join records as the episode's audio ownership.
+    /// </summary>
+    internal static NormalizationCompleteRequest SuccessSignal(NormalizationJob job, long normalizedFileSize, TimeSpan duration, ETag uploadedETag) => new()
+    {
+        Success = true,
+        NormalizedFileSize = normalizedFileSize,
+        AudioETag = AudioETags.Format(uploadedETag),
+        AudioDurationMs = (long)duration.TotalMilliseconds,
+        Attempt = job.Attempt
+    };
 
     /// <summary>
     /// Why a queue delivery must do nothing, or null when it may run: its job is gone or terminal (cancelled, or its result already

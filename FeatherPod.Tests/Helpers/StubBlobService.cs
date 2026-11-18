@@ -19,7 +19,9 @@ public class StubBlobService : IBlobStorageService
 
     public virtual Task SaveUsersConfigAsync(string usersJson) => Task.CompletedTask;
 
-    public virtual Task UploadAudioAsync(string feedId, string fileName, string filePath) => Task.CompletedTask;
+    public virtual Task<string> UploadAudioAsync(string feedId, string fileName, string filePath) => Task.FromResult("\"stub\"");
+
+    public virtual Task<string?> CreateAudioAsync(string feedId, string fileName, string filePath) => Task.FromResult<string?>("\"stub\"");
 
     public virtual Task UploadPendingAudioAsync(string feedId, string jobId, string fileName, string filePath, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
@@ -27,13 +29,13 @@ public class StubBlobService : IBlobStorageService
 
     public virtual Task<bool> AudioExistsAsync(string feedId, string fileName) => Task.FromResult(false);
 
-    public virtual Task DeleteAudioAsync(string feedId, string fileName) => Task.CompletedTask;
+    public virtual Task<bool> DeleteAudioAsync(string feedId, string fileName, string? ifMatchETag = null) => Task.FromResult(true);
 
     public virtual Task<List<string>> ListAudioFilesAsync(string feedId) => Task.FromResult<List<string>>([]);
 
     public virtual Task<long> GetAudioFileSizeAsync(string feedId, string fileName) => Task.FromResult(0L);
 
-    public virtual Task<string> DownloadAudioToTempAsync(string feedId, string fileName) => Task.FromResult(string.Empty);
+    public virtual Task<AudioDownload> DownloadAudioToTempAsync(string feedId, string fileName) => Task.FromResult(new AudioDownload(string.Empty, "\"stub\""));
 
     public virtual Task<Stream> DownloadAudioRangeAsync(string feedId, string fileName, long offset, long length) => Task.FromResult<Stream>(Stream.Null);
 
@@ -73,7 +75,8 @@ public class StubBlobService : IBlobStorageService
 
     public virtual Task DeleteTranscriptAsync(string feedId, string episodeId) => Task.CompletedTask;
 
-    public virtual Task RenameFeedAsync(string oldFeedId, string newFeedId) => Task.CompletedTask;
+    public virtual Task<IReadOnlyDictionary<string, string>> RenameFeedAsync(string oldFeedId, string newFeedId) =>
+        Task.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>());
 
     public virtual Task DeleteFeedAsync(string feedId) => Task.CompletedTask;
 }

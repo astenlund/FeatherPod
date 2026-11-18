@@ -33,7 +33,7 @@ public class EpisodeServiceTests : IDisposable
 
     private sealed class ThrowingDeleteBlobStorageService(string testDirectory) : TestBlobStorageService(testDirectory)
     {
-        public override Task DeleteAudioAsync(string feedId, string fileName)
+        public override Task<bool> DeleteAudioAsync(string feedId, string fileName, string? ifMatchETag = null)
             => throw new InvalidOperationException("Simulated blob delete failure");
     }
 
@@ -43,15 +43,17 @@ public class EpisodeServiceTests : IDisposable
 
         public Func<Task>? OnFirstRename { get; set; }
 
-        public override async Task RenameFeedAsync(string oldFeedId, string newFeedId)
+        public override async Task<IReadOnlyDictionary<string, string>> RenameFeedAsync(string oldFeedId, string newFeedId)
         {
             RenameCalls.Add((oldFeedId, newFeedId));
-            await base.RenameFeedAsync(oldFeedId, newFeedId);
+            var audioETags = await base.RenameFeedAsync(oldFeedId, newFeedId);
 
             if (RenameCalls.Count == 1 && OnFirstRename != null)
             {
                 await OnFirstRename();
             }
+
+            return audioETags;
         }
     }
 
@@ -316,6 +318,30 @@ public class EpisodeServiceTests : IDisposable
         var feeds = await service.GetFeedsAsync();
         Assert.Single(feeds, f => f.Id == TestFeedId);
         Assert.Single(feeds, f => f.Id == "taken-id");
+    }
+
+    [Fact]
+    public async Task RenameFeedAsync_RolledBack_RecordsTheRestoredBlobsOwnership_SoADeleteAfterAReloadRemovesTheAudio()
+    {
+        // Arrange - a direct upload records its blob's ETag; the rename and its rollback each move the blob to a new version
+        var blobStorage = new ConflictInjectingBlobStorageService(_testDirectory);
+        _blobServicesToDispose.Add(blobStorage);
+        var service = new EpisodeService(blobStorage, _logger);
+        _servicesToDispose.Add(service);
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+        var file = Path.Combine(_testDirectory, "rollback.mp3");
+        await File.WriteAllTextAsync(file, "audio");
+        var uploaded = await service.AddEpisodeAsync(TestFeedId, file);
+        blobStorage.OnFirstRename = () => CreateTestFeedAsync(service, "taken-id");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.RenameFeedAsync(TestFeedId, "taken-id"));
+
+        // Act - the hourly sync reloads the feed from storage before the delete
+        await service.SyncWithBlobStorageAsync(TestFeedId);
+        await service.DeleteEpisodeAsync(TestFeedId, uploaded.Id);
+
+        // Assert
+        Assert.False(File.Exists(Path.Combine(_testDirectory, TestFeedId, "audio", "rollback.mp3")));
     }
 
     [Fact]

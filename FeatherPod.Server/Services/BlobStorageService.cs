@@ -84,14 +84,36 @@ public class BlobStorageService : IBlobStorageService
         _logger.LogInformation("Saved users configuration to blob storage");
     }
 
-    public async Task UploadAudioAsync(string feedId, string fileName, string filePath)
+    public async Task<string> UploadAudioAsync(string feedId, string fileName, string filePath)
     {
         var blobClient = _container.GetBlobClient(BlobPaths.Audio(feedId, fileName));
 
         await using var fileStream = File.OpenRead(filePath);
-        await blobClient.UploadAsync(fileStream, overwrite: true);
+        var uploaded = await blobClient.UploadAsync(fileStream, overwrite: true);
 
         _logger.LogInformation("Uploaded audio file to blob storage: {FeedId}/{FileName}", feedId, fileName);
+
+        return AudioETags.Format(uploaded.Value.ETag);
+    }
+
+    public async Task<string?> CreateAudioAsync(string feedId, string fileName, string filePath)
+    {
+        var blobClient = _container.GetBlobClient(BlobPaths.Audio(feedId, fileName));
+
+        try
+        {
+            await using var fileStream = File.OpenRead(filePath);
+            var uploaded = await blobClient.UploadAsync(fileStream, overwrite: false);
+
+            _logger.LogInformation("Created audio file in blob storage: {FeedId}/{FileName}", feedId, fileName);
+
+            return AudioETags.Format(uploaded.Value.ETag);
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 409)
+        {
+            // overwrite: false sends If-None-Match: *, which the service refuses with BlobAlreadyExists when the path is taken
+            return null;
+        }
     }
 
     public async Task UploadPendingAudioAsync(string feedId, string jobId, string fileName, string filePath, CancellationToken cancellationToken = default)
@@ -120,12 +142,31 @@ public class BlobStorageService : IBlobStorageService
         return await blobClient.ExistsAsync();
     }
 
-    public async Task DeleteAudioAsync(string feedId, string fileName)
+    public async Task<bool> DeleteAudioAsync(string feedId, string fileName, string? ifMatchETag = null)
     {
         var blobClient = _container.GetBlobClient(BlobPaths.Audio(feedId, fileName));
+        var conditions = ifMatchETag == null ? null : new BlobRequestConditions { IfMatch = new Azure.ETag(ifMatchETag) };
 
-        await blobClient.DeleteIfExistsAsync();
+        try
+        {
+            await blobClient.DeleteIfExistsAsync(conditions: conditions);
+        }
+        catch (Azure.RequestFailedException ex) when (ex.Status == 412)
+        {
+            // A conditional delete of a missing blob also fails its precondition: nothing is left to delete then
+            if (!await blobClient.ExistsAsync())
+            {
+                return true;
+            }
+
+            _logger.LogInformation("Kept audio file {FeedId}/{FileName}: another writer replaced it", feedId, fileName);
+
+            return false;
+        }
+
         _logger.LogInformation("Deleted audio file from blob storage: {FeedId}/{FileName}", feedId, fileName);
+
+        return true;
     }
 
     public async Task<List<string>> ListAudioFilesAsync(string feedId)
@@ -151,7 +192,7 @@ public class BlobStorageService : IBlobStorageService
         return properties.Value.ContentLength;
     }
 
-    public async Task<string> DownloadAudioToTempAsync(string feedId, string fileName)
+    public async Task<AudioDownload> DownloadAudioToTempAsync(string feedId, string fileName)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), "FeatherPod");
         Directory.CreateDirectory(tempDir);
@@ -159,9 +200,11 @@ public class BlobStorageService : IBlobStorageService
 
         var blobClient = _container.GetBlobClient(BlobPaths.Audio(feedId, fileName));
 
-        await blobClient.DownloadToAsync(tempPath);
+        // A chunked download pins every range to the first response's ETag, so the file holds exactly the version this ETag names
+        var response = await blobClient.DownloadToAsync(tempPath);
+        var eTag = response.Headers.ETag ?? throw new InvalidOperationException($"Download of {feedId}/{fileName} returned no ETag");
 
-        return tempPath;
+        return new(tempPath, AudioETags.Format(eTag));
     }
 
     public async Task<Stream> DownloadAudioRangeAsync(string feedId, string fileName, long offset, long length)
@@ -412,10 +455,12 @@ public class BlobStorageService : IBlobStorageService
         _logger.LogInformation("Deleted transcript from blob storage: {FeedId}/{EpisodeId}", feedId, episodeId);
     }
 
-    public async Task RenameFeedAsync(string oldFeedId, string newFeedId)
+    public async Task<IReadOnlyDictionary<string, string>> RenameFeedAsync(string oldFeedId, string newFeedId)
     {
         var oldPrefix = BlobPaths.FeedPrefix(oldFeedId);
         var newPrefix = BlobPaths.FeedPrefix(newFeedId);
+        var newAudioPrefix = BlobPaths.AudioPrefix(newFeedId);
+        var audioETags = new Dictionary<string, string>(StringComparer.Ordinal);
 
         // List all blobs with the old prefix
         var blobsToMove = new List<string>();
@@ -437,7 +482,11 @@ public class BlobStorageService : IBlobStorageService
             using var stream = new MemoryStream();
             await sourceBlobClient.DownloadToAsync(stream);
             stream.Position = 0;
-            await destBlobClient.UploadAsync(stream, overwrite: true);
+            var uploaded = await destBlobClient.UploadAsync(stream, overwrite: true);
+            if (newBlobPath.StartsWith(newAudioPrefix, StringComparison.Ordinal))
+            {
+                audioETags[newBlobPath[newAudioPrefix.Length..]] = AudioETags.Format(uploaded.Value.ETag);
+            }
 
             await sourceBlobClient.DeleteAsync();
 
@@ -445,6 +494,8 @@ public class BlobStorageService : IBlobStorageService
         }
 
         _logger.LogInformation("Renamed feed: {OldId} -> {NewId}", oldFeedId, newFeedId);
+
+        return audioETags;
     }
 
     public async Task DeleteFeedAsync(string feedId)

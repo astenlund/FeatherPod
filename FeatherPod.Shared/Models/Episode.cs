@@ -21,6 +21,14 @@ public record Episode
     public string? Note { get; init; }
     public TranscriptStatus? TranscriptStatus { get; init; }
 
+    /// <summary>
+    /// ETag of the audio blob at this episode's file name as its last known writer left it (the upload's normalization, a direct
+    /// upload, a move or copy, a feed rename). An audio delete on behalf of the episode is conditional on it, so a blob a later
+    /// writer replaced is never removed. Null for episodes stored before ownership was recorded: deleting one is unconditional, and
+    /// moving one deletes its source audio only while it is the version the move copied.
+    /// </summary>
+    public string? AudioETag { get; init; }
+
     public static string GenerateId(string feedId, string fileName, long fileSize)
     {
         var input = $"{feedId}:{fileName}:{fileSize}";
