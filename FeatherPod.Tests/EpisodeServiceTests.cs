@@ -57,6 +57,63 @@ public class EpisodeServiceTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// Runs <see cref="AfterMetadataLoad"/> once, after a metadata read returns and before its caller continues, and fails the saves
+    /// it is told to fail.
+    /// </summary>
+    private sealed class MetadataReadHookBlobStorageService(string testDirectory) : TestBlobStorageService(testDirectory)
+    {
+        public Func<Task>? AfterMetadataLoad { get; set; }
+
+        public string? FailNextMetadataSaveFor { get; set; }
+
+        public bool FailNextFeedsSave { get; set; }
+
+        public override Task SaveEpisodeMetadataAsync(string feedId, string metadataJson)
+        {
+            if (FailNextMetadataSaveFor == feedId)
+            {
+                FailNextMetadataSaveFor = null;
+                throw new IOException("Simulated episode metadata save failure");
+            }
+
+            return base.SaveEpisodeMetadataAsync(feedId, metadataJson);
+        }
+
+        public override Task SaveFeedsConfigAsync(string feedsJson)
+        {
+            if (FailNextFeedsSave)
+            {
+                FailNextFeedsSave = false;
+                throw new IOException("Simulated feeds config save failure");
+            }
+
+            return base.SaveFeedsConfigAsync(feedsJson);
+        }
+
+        public override async Task<string?> LoadEpisodeMetadataAsync(string feedId)
+        {
+            var json = await base.LoadEpisodeMetadataAsync(feedId);
+            if (AfterMetadataLoad is { } hook)
+            {
+                AfterMetadataLoad = null;
+                await hook();
+            }
+
+            return json;
+        }
+    }
+
+    private (EpisodeService Service, MetadataReadHookBlobStorageService BlobStorage) CreateServiceWithMetadataReadHook()
+    {
+        var blobStorage = new MetadataReadHookBlobStorageService(_testDirectory);
+        _blobServicesToDispose.Add(blobStorage);
+        var service = new EpisodeService(blobStorage, _logger);
+        _servicesToDispose.Add(service);
+
+        return (service, blobStorage);
+    }
+
     private EpisodeService CreateService()
     {
         var blobStorage = new TestBlobStorageService(_testDirectory);
@@ -423,6 +480,128 @@ public class EpisodeServiceTests : IDisposable
         // Assert - episode should still exist (sync warns but doesn't delete to prevent silent data loss)
         Assert.Single(episodes);
         Assert.Equal(episode.Id, episodes[0].Id);
+    }
+
+    [Fact]
+    public async Task SyncWithBlobStorageAsync_CommitDuringItsRead_SurvivesInMemoryAndInTheSavedMetadata()
+    {
+        // Arrange - an upload commits after the sync has read episodes.json but before it installs what it read
+        var (service, blobStorage) = CreateServiceWithMetadataReadHook();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+        var first = Path.Combine(_testDirectory, "first.mp3");
+        var second = Path.Combine(_testDirectory, "second.mp3");
+        await File.WriteAllTextAsync(first, "audio one");
+        await File.WriteAllTextAsync(second, "audio two");
+        var kept = await service.AddEpisodeAsync(TestFeedId, first, "Kept");
+        Episode? committed = null;
+        blobStorage.AfterMetadataLoad = async () => committed = await service.AddEpisodeAsync(TestFeedId, second, "Committed during sync");
+
+        // Act - the sync, then a later save of the feed, then a reload from storage
+        await service.SyncWithBlobStorageAsync(TestFeedId);
+        var inMemory = await service.GetAllEpisodesAsync(TestFeedId);
+        await service.UpdateEpisodeMetadataAsync(TestFeedId, kept.Id, title: "Kept, renamed");
+        var reloaded = CreateService();
+        await reloaded.InitializeAsync();
+        var persisted = await reloaded.GetAllEpisodesAsync(TestFeedId);
+
+        // Assert
+        Assert.NotNull(committed);
+        Assert.Contains(inMemory, e => e.Id == committed.Id);
+        Assert.Contains(persisted, e => e.Id == committed.Id);
+        Assert.Contains(persisted, e => e.Id == kept.Id && e.Title == "Kept, renamed");
+    }
+
+    [Fact]
+    public async Task SyncWithBlobStorageAsync_WithoutAConcurrentChange_InstallsTheStoredMetadataAndBumpsTheFeedVersion()
+    {
+        // Arrange - another writer changed episodes.json in storage
+        var service = CreateService();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+        var file = Path.Combine(_testDirectory, "external.mp3");
+        await File.WriteAllTextAsync(file, "audio");
+        var episode = await service.AddEpisodeAsync(TestFeedId, file, "Before");
+        var before = await service.GetFeedSnapshotAsync(TestFeedId);
+        var blobStorage = _blobServicesToDispose[0];
+        var stored = await blobStorage.LoadEpisodeMetadataAsync(TestFeedId);
+        await blobStorage.SaveEpisodeMetadataAsync(TestFeedId, stored!.Replace("\"Before\"", "\"Changed in storage\""));
+        await Task.Delay(10);
+
+        // Act
+        await service.SyncWithBlobStorageAsync(TestFeedId);
+        var after = await service.GetFeedSnapshotAsync(TestFeedId);
+
+        // Assert
+        Assert.Equal("Changed in storage", Assert.Single(after!.Value.Episodes, e => e.Id == episode.Id).Title);
+        Assert.True(after.Value.LastModified > before!.Value.LastModified);
+    }
+
+    [Fact]
+    public async Task SyncWithBlobStorageAsync_FeedDeletedDuringItsRead_IsNotBroughtBack()
+    {
+        // Arrange - the feed is deleted after the sync has read its episodes.json
+        var (service, blobStorage) = CreateServiceWithMetadataReadHook();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service);
+        var file = Path.Combine(_testDirectory, "gone.mp3");
+        await File.WriteAllTextAsync(file, "audio");
+        await service.AddEpisodeAsync(TestFeedId, file, "Gone");
+        blobStorage.AfterMetadataLoad = () => service.DeleteFeedAsync(TestFeedId);
+
+        // Act
+        await service.SyncWithBlobStorageAsync(TestFeedId);
+
+        // Assert
+        Assert.Empty(await service.GetAllEpisodesAsync(TestFeedId));
+        Assert.Null(await service.GetFeedSnapshotAsync(TestFeedId));
+    }
+
+    [Fact]
+    public async Task SyncWithBlobStorageAsync_MoveIntoTheFeedWhoseSourceSaveFailsDuringItsRead_KeepsTheMovedEpisode()
+    {
+        // Arrange - a move into the synced feed changes both lists, then its source save throws before the target is saved
+        var (service, blobStorage) = CreateServiceWithMetadataReadHook();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service, "move-source");
+        await CreateTestFeedAsync(service, "move-target");
+        var file = Path.Combine(_testDirectory, "moved.mp3");
+        await File.WriteAllTextAsync(file, "audio");
+        var episode = await service.AddEpisodeAsync("move-source", file, "Moved");
+        blobStorage.AfterMetadataLoad = async () =>
+        {
+            blobStorage.FailNextMetadataSaveFor = "move-source";
+            await Assert.ThrowsAsync<IOException>(() => service.MoveEpisodeAsync(episode.Id, "move-source", "move-target"));
+        };
+
+        // Act
+        await service.SyncWithBlobStorageAsync("move-target");
+
+        // Assert
+        Assert.Contains(await service.GetAllEpisodesAsync("move-target"), e => e.FileName == "moved.mp3");
+    }
+
+    [Fact]
+    public async Task SyncWithBlobStorageAsync_FeedRenamedIntoItsIdDuringItsRead_KeepsTheRenamedEpisodes()
+    {
+        // Arrange - the sync starts for an id no feed has; a rename to that id commits in memory, then its feeds save throws
+        var (service, blobStorage) = CreateServiceWithMetadataReadHook();
+        await service.InitializeAsync();
+        await CreateTestFeedAsync(service, "rename-from");
+        var file = Path.Combine(_testDirectory, "renamed.mp3");
+        await File.WriteAllTextAsync(file, "audio");
+        await service.AddEpisodeAsync("rename-from", file, "Renamed");
+        blobStorage.AfterMetadataLoad = async () =>
+        {
+            blobStorage.FailNextFeedsSave = true;
+            await Assert.ThrowsAsync<IOException>(() => service.RenameFeedAsync("rename-from", "rename-to"));
+        };
+
+        // Act
+        await service.SyncWithBlobStorageAsync("rename-to");
+
+        // Assert
+        Assert.Contains(await service.GetAllEpisodesAsync("rename-to"), e => e.FileName == "renamed.mp3");
     }
 
     [Fact]

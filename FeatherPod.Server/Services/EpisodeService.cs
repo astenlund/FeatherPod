@@ -15,6 +15,11 @@ public sealed partial class EpisodeService : IDisposable
     // Feed ID → List of Episodes
     private readonly Dictionary<string, List<Episode>> _episodesByFeed = new();
     private readonly Dictionary<string, FeedVersionState> _feedVersionByFeed = new();
+
+    // Feed ID -> id of the latest change to its in-memory episode list, drawn from one counter so an id never repeats for a feed
+    // that is deleted and created again. A blob sync installs what it read only while the id it saw before reading is unchanged.
+    private readonly Dictionary<string, long> _episodeChangeIdByFeed = new();
+    private long _lastEpisodeChangeId;
     private static readonly DateTime ServerStartTime = DateTime.UtcNow;
 
     private record FeedVersionState(DateTime ModifiedAt, string? LastSyncJson);
@@ -81,6 +86,7 @@ public sealed partial class EpisodeService : IDisposable
             };
 
             _episodesByFeed[feedConfig.Id] = new List<Episode>();
+            MarkEpisodesChanged(feedConfig.Id);
             BumpFeedModifiedAt(feedConfig.Id);
 
             await SaveFeedsAsync();
@@ -184,7 +190,8 @@ public sealed partial class EpisodeService : IDisposable
                     _episodesByFeed[newFeedId] = updatedEpisodes;
                 }
 
-                RemoveFeedVersionTracking(oldFeedId);
+                RemoveFeedTracking(oldFeedId);
+                MarkEpisodesChanged(newFeedId);
                 BumpFeedModifiedAt(newFeedId);
 
                 await SaveFeedsAsync();
@@ -290,7 +297,7 @@ public sealed partial class EpisodeService : IDisposable
 
             // Remove episodes from memory
             _episodesByFeed.Remove(feedId);
-            RemoveFeedVersionTracking(feedId);
+            RemoveFeedTracking(feedId);
 
             await SaveFeedsAsync();
 
@@ -867,6 +874,10 @@ public sealed partial class EpisodeService : IDisposable
                 // The blob version the episode owns; one stored before ownership was recorded owns the version the move copied
                 ownedSourceETag = current.AudioETag ?? sourceETag;
                 targetEpisodes.Add(movedEpisode);
+
+                // Both lists changed; mark both now, since a failed source save below never reaches the target's save
+                MarkEpisodesChanged(sourceFeedId);
+                MarkEpisodesChanged(targetFeedId);
                 BumpFeedModifiedAt(sourceFeedId);
                 BumpFeedModifiedAt(targetFeedId);
 
@@ -1103,8 +1114,27 @@ public sealed partial class EpisodeService : IDisposable
         }
     }
 
+    /// <summary>
+    /// Reload a feed's episodes from its stored metadata. The blob I/O runs with the lock released, so a change committed meanwhile
+    /// (which saves newer metadata than this read saw) or a delete or rename of the feed would be undone by installing the snapshot;
+    /// the sync then skips the feed. A feed still listed is reloaded by the next sync; a feed deleted or renamed away has nothing left
+    /// to reload.
+    /// </summary>
     public async Task SyncWithBlobStorageAsync(string feedId)
     {
+        long changeIdBeforeRead;
+        bool listedBeforeRead;
+        await _lock.WaitAsync();
+        try
+        {
+            changeIdBeforeRead = _episodeChangeIdByFeed.GetValueOrDefault(feedId);
+            listedBeforeRead = _feedsMetadata.Feeds.Any(f => f.Id == feedId);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+
         // Fetch data outside the lock to avoid blocking reads during blob I/O
         var metadataJson = await _blobStorage.LoadEpisodeMetadataAsync(feedId);
         var episodes = metadataJson != null
@@ -1116,7 +1146,24 @@ public sealed partial class EpisodeService : IDisposable
         await _lock.WaitAsync();
         try
         {
+            // A feed listed only after the read began was created or renamed in meanwhile, so the read can never be installed
+            var listedNow = _feedsMetadata.Feeds.Any(f => f.Id == feedId);
+            if (!listedNow)
+            {
+                _logger.LogInformation("Skipped sync of feed {FeedId}: it is no longer listed (deleted or renamed away)", feedId);
+
+                return;
+            }
+
+            if (!listedBeforeRead || _episodeChangeIdByFeed.GetValueOrDefault(feedId) != changeIdBeforeRead)
+            {
+                _logger.LogInformation("Skipped sync of feed {FeedId}: its episodes changed, or it was created or renamed into this id, while its metadata was read; the next sync reloads it", feedId);
+
+                return;
+            }
+
             _episodesByFeed[feedId] = episodes;
+            MarkEpisodesChanged(feedId);
 
             var currentState = _feedVersionByFeed.GetValueOrDefault(feedId);
             if (!string.Equals(metadataJson, currentState?.LastSyncJson, StringComparison.Ordinal))
@@ -1201,13 +1248,26 @@ public sealed partial class EpisodeService : IDisposable
         _feedVersionByFeed[feedId] = new FeedVersionState(DateTime.UtcNow, lastSyncJson);
     }
 
-    private void RemoveFeedVersionTracking(string feedId)
+    /// <summary>Drop the per-feed tracking of a feed id that no longer exists (deleted, or renamed away). Caller holds the lock.</summary>
+    private void RemoveFeedTracking(string feedId)
     {
         _feedVersionByFeed.Remove(feedId);
+        _episodeChangeIdByFeed.Remove(feedId);
     }
 
+    /// <summary>
+    /// Record a change to the feed's in-memory episode list, so a blob sync reading meanwhile does not install over it. Caller holds
+    /// the lock, and marks before any await that can throw after the list changed.
+    /// </summary>
+    private void MarkEpisodesChanged(string feedId) => _episodeChangeIdByFeed[feedId] = ++_lastEpisodeChangeId;
+
+    /// <summary>
+    /// Persist the feed's episode list, marking it changed first. That covers a commit that changes only this feed's list and then
+    /// saves it, even when the save throws; a commit changing several lists marks each itself before its first save.
+    /// </summary>
     private async Task SaveEpisodesAsync(string feedId)
     {
+        MarkEpisodesChanged(feedId);
         if (!_episodesByFeed.TryGetValue(feedId, out var value))
         {
             return;

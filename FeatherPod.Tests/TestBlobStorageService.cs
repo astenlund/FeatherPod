@@ -36,7 +36,7 @@ public class TestBlobStorageService : IBlobStorageService
         return await File.ReadAllTextAsync(_feedsConfigPath);
     }
 
-    public async Task SaveFeedsConfigAsync(string feedsJson)
+    public virtual async Task SaveFeedsConfigAsync(string feedsJson)
     {
         await File.WriteAllTextAsync(_feedsConfigPath, feedsJson);
     }
@@ -232,7 +232,7 @@ public class TestBlobStorageService : IBlobStorageService
         return memoryStream;
     }
 
-    public async Task SaveEpisodeMetadataAsync(string feedId, string metadataJson)
+    public virtual async Task SaveEpisodeMetadataAsync(string feedId, string metadataJson)
     {
         var feedMetadataPath = Path.Combine(_rootPath, feedId, "episodes.json");
         var feedDir = Path.Combine(_rootPath, feedId);
@@ -240,7 +240,7 @@ public class TestBlobStorageService : IBlobStorageService
         await File.WriteAllTextAsync(feedMetadataPath, metadataJson);
     }
 
-    public async Task<string?> LoadEpisodeMetadataAsync(string feedId)
+    public virtual async Task<string?> LoadEpisodeMetadataAsync(string feedId)
     {
         var feedMetadataPath = Path.Combine(_rootPath, feedId, "episodes.json");
         if (!File.Exists(feedMetadataPath))

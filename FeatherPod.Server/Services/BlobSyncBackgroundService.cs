@@ -38,12 +38,12 @@ public class BlobSyncBackgroundService : BackgroundService
 
                 // Get all feeds and sync each one
                 var feeds = await episodeService.GetFeedsAsync();
+                // EpisodeService logs each feed's outcome (reloaded, or skipped because it changed during the read)
                 foreach (var feed in feeds)
                 {
                     try
                     {
                         await episodeService.SyncWithBlobStorageAsync(feed.Id);
-                        _logger.LogInformation("Synced feed: {FeedId}", feed.Id);
                     }
                     catch (Exception feedEx)
                     {
@@ -51,7 +51,7 @@ public class BlobSyncBackgroundService : BackgroundService
                     }
                 }
 
-                _logger.LogInformation("Blob storage sync completed successfully for {Count} feeds", feeds.Count);
+                _logger.LogInformation("Blob storage sync pass finished over {Count} feeds", feeds.Count);
             }
             catch (Exception ex)
             {
