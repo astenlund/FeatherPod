@@ -196,7 +196,7 @@ curl -X POST https://<your-app>.azurewebsites.net/api/users/{userId}/feeds \
 | `/api/feeds/{feedId}/jobs` | GET | Admin/Owner | Active jobs, or all jobs within `?since=1h` window |
 | `/api/feeds/{feedId}/events` | GET | Public | SSE stream for feed events (job/episode changes, cross-device sync) |
 | `/api/jobs/{jobId}` | GET | Public | Get normalization job status |
-| `/api/jobs/{jobId}/cancel` | POST | Admin/Owner | Cancel a normalization job; with `?attempt=N`, only while the job is still on that attempt |
+| `/api/jobs/{jobId}/cancel` | POST | Admin/Owner | Cancel a normalization job; with `?attempt=N`, only while the job is still on that attempt; refused (409) for a completed or cancelled job, and for an active job whose join has claimed it (the join, or the recurring recovery for a join that stopped, ends it); a failed job can be cancelled to dismiss it |
 | `/api/jobs/{jobId}/retry` | POST | Admin/Owner | Retry a job whose normalization failed, in place under a new attempt, while its upload is kept (202 with job; 410 `source-gone` means re-upload); with `?attempt=N`, only while the job is still on that attempt |
 | `/api/jobs/{jobId}/progress` | GET | Public | SSE stream for real-time job progress |
 
