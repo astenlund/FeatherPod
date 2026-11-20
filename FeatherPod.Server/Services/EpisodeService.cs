@@ -1191,9 +1191,7 @@ public sealed partial class EpisodeService : IDisposable
 
         // Fetch data outside the lock to avoid blocking reads during blob I/O
         var metadataJson = await _blobStorage.LoadEpisodeMetadataAsync(feedId);
-        var episodes = metadataJson != null
-            ? JsonSerializer.Deserialize<List<Episode>>(metadataJson) ?? []
-            : [];
+        var episodes = metadataJson != null ? DeserializeEpisodes(metadataJson, feedId) : [];
         var blobFiles = await _blobStorage.ListAudioFilesAsync(feedId);
 
         // Acquire lock only for in-memory state update
@@ -1282,7 +1280,7 @@ public sealed partial class EpisodeService : IDisposable
             var metadataJson = await _blobStorage.LoadEpisodeMetadataAsync(feed.Id);
             if (metadataJson != null)
             {
-                var episodes = JsonSerializer.Deserialize<List<Episode>>(metadataJson) ?? [];
+                var episodes = DeserializeEpisodes(metadataJson, feed.Id);
                 _episodesByFeed[feed.Id] = episodes;
                 _logger.LogInformation("Loaded {Count} episodes for feed {FeedId}", episodes.Count, feed.Id);
             }
@@ -1293,6 +1291,22 @@ public sealed partial class EpisodeService : IDisposable
 
             _feedVersionByFeed[feed.Id] = new FeedVersionState(ServerStartTime, metadataJson);
         }
+    }
+
+    /// <summary>
+    /// A feed's stored episode list, without the null entries a malformed episodes.json can hold (logged), so the cache only ever
+    /// holds episodes: every reader of the cache, recovery's lookup across feeds included, dereferences each entry.
+    /// </summary>
+    private List<Episode> DeserializeEpisodes(string metadataJson, string feedId)
+    {
+        var stored = JsonSerializer.Deserialize<List<Episode?>>(metadataJson) ?? [];
+        var episodes = stored.OfType<Episode>().ToList();
+        if (episodes.Count != stored.Count)
+        {
+            _logger.LogWarning("Ignored {Count} null entries in the stored episode metadata of feed {FeedId}", stored.Count - episodes.Count, feedId);
+        }
+
+        return episodes;
     }
 
     private void BumpFeedModifiedAt(string feedId)

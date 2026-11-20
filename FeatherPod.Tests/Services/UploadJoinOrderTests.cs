@@ -602,6 +602,32 @@ public sealed class UploadJoinOrderTests : IDisposable
         Assert.Null(write.EpisodeId);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Recovery_AnotherFeedsMetadataHoldsANullEpisode_StillEndsTheStoppedJoin(bool movedElsewhere)
+    {
+        // Arrange - a join stopped after claiming; another feed's stored metadata holds a null entry that a blob sync reads
+        var incarnation = DateTime.UtcNow.AddMinutes(-5);
+        await SeedJobAsync(TranscriptionStatuses.Completed, stagedTranscript: null, claimedFor: incarnation);
+        await _episodes.CreateFeedAsync(new FeedConfig { Id = "join-broken", Title = "Broken", Description = "d", Author = "a", Email = "a@example.com", Language = "en", Category = "Technology" });
+        _blob.StoredMetadata["join-broken"] = "[null]";
+        await Record.ExceptionAsync(() => _episodes.SyncWithBlobStorageAsync("join-broken"));
+        if (movedElsewhere)
+        {
+            await _episodes.CreateFeedAsync(new FeedConfig { Id = "join-other", Title = "Other", Description = "d", Author = "a", Email = "a@example.com", Language = "en", Category = "Technology" });
+            await _episodes.AddEpisodeFromEntityAsync(NewEpisode(incarnation) with { Id = "moved-episode", FeedId = "join-other" });
+        }
+
+        // Act
+        await _retry.RecoverStalledRetriesAsync(movedElsewhere ? PastTheClaimBound : PastTheUnlandedBound, CancellationToken.None);
+
+        // Assert
+        Assert.DoesNotContain(await _episodes.GetAllEpisodesAsync("join-broken"), e => e is null);
+        var job = _storage.GetEntity(JobId)!;
+        Assert.Equal(movedElsewhere ? nameof(JobStatus.Completed) : nameof(JobStatus.Failed), job.Status);
+    }
+
     [Fact]
     public async Task Recovery_StoppedUploadJoinNotFoundBeforeTheUnlandedBound_LeavesTheJobClaimed()
     {
@@ -691,6 +717,11 @@ public sealed class UploadJoinOrderTests : IDisposable
         public bool PendingTranscriptThrows { get; set; }
 
         public override Task<bool> AudioExistsAsync(string feedId, string fileName) => Task.FromResult(true);
+
+        /// <summary>Episode metadata a blob sync reads, by feed id.</summary>
+        public Dictionary<string, string> StoredMetadata { get; } = new();
+
+        public override Task<string?> LoadEpisodeMetadataAsync(string feedId) => Task.FromResult(StoredMetadata.GetValueOrDefault(feedId));
 
         public List<string> PendingDeletes { get; } = [];
 
