@@ -192,10 +192,11 @@ public class JobService : IJobService
                     return null;
                 }
 
-                // A transcript retry whose join has claimed it is publishing; the join writes its terminal status, and a cancel now
-                // would report an outcome the publish may contradict. The claim changes the ETag, so a cancel read before it conflicts
-                // and refuses here on its re-read; a join that stopped after claiming is ended by the recurring recovery.
-                if (entity.JoinClaimedAt != null)
+                // A job whose join has claimed it (an upload's or a transcript retry's) and is still active is publishing; the join
+                // writes its terminal status, and a cancel now would report an outcome the publish may contradict. The claim changes the
+                // ETag, so a cancel read before it conflicts and refuses here on its re-read; a join that stopped after claiming is
+                // ended by the recurring recovery. A claimed job the join ended Failed is dismissed like any other failed job.
+                if (entity.JoinClaimedAt != null && !entity.GetJobStatus().IsTerminal())
                 {
                     _logger.LogInformation("Not cancelling job {JobId}: its join has claimed it", jobId);
 

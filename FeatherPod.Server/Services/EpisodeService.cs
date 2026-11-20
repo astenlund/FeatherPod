@@ -550,7 +550,8 @@ public sealed partial class EpisodeService : IDisposable
     /// it, because every write of an episode's transcript location by a join (here and <see cref="PublishTranscriptIfAsync"/>) must be
     /// ordered with the others and with the episode's own changes, or one join could replace a transcript another just published.
     /// A failed transcript write degrades only the transcript: the episode is still added, with a failed transcript the user can
-    /// retry, rather than lost. Returns the episode as stored.
+    /// retry, rather than lost. A failed metadata save throws and leaves the cache as it was, so no reader sees an episode that was not
+    /// persisted. Returns the episode as stored.
     /// </summary>
     public async Task<Episode> AddEpisodeFromEntityAsync(Episode episode, CancellationToken cancellationToken = default, string? transcriptVtt = null)
     {
@@ -563,19 +564,23 @@ public sealed partial class EpisodeService : IDisposable
                 {
                     await _blobStorage.UploadTranscriptAsync(episode.FeedId, episode.Id, transcriptVtt);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
+                    // An OperationCanceledException not from the caller's token is a storage timeout, which degrades only the transcript
                     _logger.LogError(ex, "Failed to write the transcript of episode {Id} in feed {FeedId}; adding it with a failed transcript", episode.Id, episode.FeedId);
                     episode = episode with { TranscriptStatus = TranscriptStatus.Failed };
                 }
             }
 
-            if (!_episodesByFeed.TryGetValue(episode.FeedId, out var episodes))
+            var hadList = _episodesByFeed.TryGetValue(episode.FeedId, out var existingList);
+            List<Episode> episodes = existingList ?? [];
+            if (!hadList)
             {
-                episodes = [];
                 _episodesByFeed[episode.FeedId] = episodes;
             }
 
+            var previousEpisodes = episodes.ToList();
+            var previousVersion = _feedVersionByFeed.GetValueOrDefault(episode.FeedId);
             var existing = episodes.FirstOrDefault(e => e.Id == episode.Id);
             if (existing != null)
             {
@@ -586,7 +591,27 @@ public sealed partial class EpisodeService : IDisposable
             RecordAudioWrite(episodes, episode.FileName, episode.AudioETag);
             episodes.Add(episode);
             BumpFeedModifiedAt(episode.FeedId);
-            await SaveEpisodesAsync(episode.FeedId);
+            try
+            {
+                await SaveEpisodesAsync(episode.FeedId);
+            }
+            catch
+            {
+                // Not added: the cache must not run ahead of the persisted metadata, as in PublishTranscriptIfAsync. A transcript written
+                // above stays at the episode's id-keyed transcript location, which for a replaced episode the restored one points at. Every
+                // client derives a same-id upload from the same file name, whose audio normalization already replaced, so the transcript
+                // matches the audio served; an API caller reusing an id under another file name is left with the new upload's transcript.
+                episodes.Clear();
+                episodes.AddRange(previousEpisodes);
+                if (!hadList)
+                {
+                    _episodesByFeed.Remove(episode.FeedId);
+                }
+
+                RestoreFeedVersion(episode.FeedId, previousVersion);
+
+                throw;
+            }
 
             _logger.LogInformation("Added episode from entity to feed {FeedId}: {Title} ({FileName})", episode.FeedId, episode.Title, episode.FileName);
 
@@ -672,11 +697,12 @@ public sealed partial class EpisodeService : IDisposable
     }
 
     /// <summary>
-    /// Renames an episode only while its title is still <paramref name="expectedTitle"/>, comparing inside the lock so a
-    /// rename made in the meantime is never overwritten. Returns the renamed episode, or null when the episode does not
-    /// exist or its title has changed.
+    /// Renames an episode only while its title is still <paramref name="expectedTitle"/> and, when <paramref name="expectedUploadedAt"/>
+    /// is given, while it is still that incarnation, comparing inside the lock so a rename made in the meantime, or an episode re-created
+    /// under the same id, is never overwritten. Returns the renamed episode, or null when the episode does not exist, is another
+    /// incarnation or its title has changed. A failed metadata save throws and leaves the cache as it was.
     /// </summary>
-    public async Task<Episode?> RenameEpisodeIfTitleIsAsync(string feedId, string id, string expectedTitle, string newTitle)
+    public async Task<Episode?> RenameEpisodeIfTitleIsAsync(string feedId, string id, string expectedTitle, string newTitle, DateTime? expectedUploadedAt = null)
     {
         await _lock.WaitAsync();
 
@@ -688,18 +714,53 @@ public sealed partial class EpisodeService : IDisposable
             }
 
             var index = episodes.FindIndex(e => e.Id == id);
-            if (index < 0 || !string.Equals(episodes[index].Title, expectedTitle, StringComparison.Ordinal))
+            if (index < 0 || !string.Equals(episodes[index].Title, expectedTitle, StringComparison.Ordinal) ||
+                (expectedUploadedAt is { } uploadedAt && episodes[index].UploadedAt.ToUniversalTime() != uploadedAt.ToUniversalTime()))
             {
                 return null;
             }
 
-            var updated = episodes[index] with { Title = newTitle };
+            var previous = episodes[index];
+            var previousVersion = _feedVersionByFeed.GetValueOrDefault(feedId);
+            var updated = previous with { Title = newTitle };
             episodes[index] = updated;
             BumpFeedModifiedAt(feedId);
-            await SaveEpisodesAsync(feedId);
+            try
+            {
+                await SaveEpisodesAsync(feedId);
+            }
+            catch
+            {
+                // Not renamed: the cache must not run ahead of the persisted metadata
+                episodes[index] = previous;
+                RestoreFeedVersion(feedId, previousVersion);
+
+                throw;
+            }
+
             _logger.LogInformation("Updated episode title in feed {FeedId}: {OldTitle} -> {NewTitle}", feedId, expectedTitle, newTitle);
 
             return updated;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>
+    /// The episode incarnation uploaded at <paramref name="uploadedAt"/> with <paramref name="fileName"/>, in whichever feed it is now:
+    /// a move or copy keeps both. Null when no feed holds it.
+    /// </summary>
+    public async Task<Episode?> FindIncarnationAsync(DateTime uploadedAt, string fileName)
+    {
+        await _lock.WaitAsync();
+
+        try
+        {
+            var utc = uploadedAt.ToUniversalTime();
+
+            return _episodesByFeed.Values.SelectMany(e => e).FirstOrDefault(e => e.FileName == fileName && e.UploadedAt.ToUniversalTime() == utc);
         }
         finally
         {
@@ -745,14 +806,7 @@ public sealed partial class EpisodeService : IDisposable
                 // Not published: the cache must not run ahead of the persisted metadata, which still says Failed, so the episode stays
                 // retryable. The transcript blob just written is a leftover the next retry overwrites.
                 episodes[index] = previous;
-                if (previousVersion == null)
-                {
-                    _feedVersionByFeed.Remove(feedId);
-                }
-                else
-                {
-                    _feedVersionByFeed[feedId] = previousVersion;
-                }
+                RestoreFeedVersion(feedId, previousVersion);
 
                 throw;
             }
@@ -1246,6 +1300,19 @@ public sealed partial class EpisodeService : IDisposable
         var lastSyncJson = _feedVersionByFeed.GetValueOrDefault(feedId)?.LastSyncJson;
 
         _feedVersionByFeed[feedId] = new FeedVersionState(DateTime.UtcNow, lastSyncJson);
+    }
+
+    /// <summary>Put back the feed version a commit replaced, when its save failed. Caller holds the lock.</summary>
+    private void RestoreFeedVersion(string feedId, FeedVersionState? previousVersion)
+    {
+        if (previousVersion == null)
+        {
+            _feedVersionByFeed.Remove(feedId);
+        }
+        else
+        {
+            _feedVersionByFeed[feedId] = previousVersion;
+        }
     }
 
     /// <summary>Drop the per-feed tracking of a feed id that no longer exists (deleted, or renamed away). Caller holds the lock.</summary>

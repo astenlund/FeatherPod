@@ -118,6 +118,64 @@ public class JobServiceRetryIntegrationTests : IDisposable
     }
 
     [AzuriteFact]
+    public async Task CancelJob_UploadWhoseJoinClaimedIt_Refused()
+    {
+        // Arrange: an upload job whose join has claimed it and is publishing its episode
+        var jobs = await GetJobsAsync();
+        var jobId = "rq-" + Guid.NewGuid().ToString("N")[..8];
+        await jobs.CreateJobStatusAsync(new CreateJobOptions { JobId = jobId, FeedId = "rq-feed", FileName = "f.mp3", EpisodeId = "ep-" + jobId, TranscriptionStatus = TranscriptionStatuses.Completed });
+        await jobs.MergeJobFieldsAsync(jobId, e =>
+        {
+            // The row as the writers leave it: the Function moved it to Processing and signalled, the join's claim recorded its incarnation
+            var claimedAt = DateTimeOffset.UtcNow;
+            e.Status = nameof(JobStatus.Processing);
+            e.NormalizationComplete = true;
+            e.JoinClaimedAt = claimedAt;
+            e.EpisodeUploadedAt = claimedAt;
+            e.PublishedTitle = "f";
+        });
+
+        // Act
+        var cancelled = await jobs.CancelJobAsync(jobId);
+
+        // Assert
+        Assert.Null(cancelled);
+        Assert.NotEqual(nameof(JobStatus.Cancelled), (await jobs.GetJobStatusAsync(jobId))!.Status);
+    }
+
+    [AzuriteFact]
+    public async Task CancelJob_UploadWhoseClaimedJoinEndedItFailed_IsCancelled()
+    {
+        // Arrange: a join claimed the upload and could not publish its episode, so it ended the job Failed with the claim on record
+        var jobs = await GetJobsAsync();
+        var jobId = "rq-" + Guid.NewGuid().ToString("N")[..8];
+        await jobs.CreateJobStatusAsync(new CreateJobOptions { JobId = jobId, FeedId = "rq-feed", FileName = "f.mp3", EpisodeId = "ep-" + jobId, TranscriptionStatus = TranscriptionStatuses.Completed });
+        await jobs.MergeJobFieldsAsync(jobId, e =>
+        {
+            var claimedAt = DateTimeOffset.UtcNow;
+            e.Status = nameof(JobStatus.Processing);
+            e.NormalizationComplete = true;
+            e.JoinClaimedAt = claimedAt;
+            e.EpisodeUploadedAt = claimedAt;
+            e.PublishedTitle = "f";
+        });
+        var claimed = (await jobs.GetJobStatusAsync(jobId))!;
+        claimed.Status = nameof(JobStatus.Failed);
+        claimed.Error = JobCompletionService.EpisodeNotPublishedError;
+        claimed.CompletedAt = DateTimeOffset.UtcNow;
+        claimed.EpisodeId = null;
+        Assert.True(await jobs.TryReplaceAsync(claimed));
+        Assert.Null((await jobs.GetJobStatusAsync(jobId))!.EpisodeId);
+
+        // Act
+        var cancelled = await jobs.CancelJobAsync(jobId);
+
+        // Assert
+        Assert.NotNull(cancelled);
+        Assert.Equal(nameof(JobStatus.Cancelled), (await jobs.GetJobStatusAsync(jobId))!.Status);
+    }
+
+    [AzuriteFact]
     public async Task GetActiveJobs_ReturnsNonTerminalJobsAcrossFeeds()
     {
         // Arrange

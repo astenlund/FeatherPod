@@ -14,8 +14,9 @@ public static class NormalizationProgressRenderer
     /// <summary>
     /// Result of a normalization operation with optional metadata.
     /// </summary>
-    /// <param name="JobFailed">Whether the job itself ended Failed, as opposed to cancelled or a stream that closed early.</param>
-    public record NormalizationResult(bool Success, string? Error = null, string? EpisodeId = null, bool JobFailed = false);
+    /// <param name="NormalizationFailed">Whether the job ended Failed in its normalization (the one failure the retry endpoint accepts), as
+    /// opposed to a failed publication, a cancellation or a stream that closed early.</param>
+    public record NormalizationResult(bool Success, string? Error = null, string? EpisodeId = null, bool NormalizationFailed = false);
 
     /// <summary>
     /// Run an async operation with progress bar display.
@@ -129,7 +130,9 @@ public static class NormalizationProgressRenderer
         }
         else
         {
-            Out.Error($"Normalization failed: {Markup.Escape(result.Error ?? "Unknown error")}");
+            // Only a failure in normalization itself is labelled one; a failed publication, a cancellation or a dropped stream is not
+            var label = result.NormalizationFailed ? "Normalization failed" : "Upload failed";
+            Out.Error($"{label}: {Markup.Escape(result.Error ?? "Unknown error")}");
         }
     }
 }

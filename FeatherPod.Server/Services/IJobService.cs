@@ -48,8 +48,10 @@ public interface IJobService
     Task<List<JobStatusEntity>> GetRecentJobsByFeedAsync(string feedId, TimeSpan since, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Cancel a job. Returns updated entity, or null if the job is already in a terminal state, or when
-    /// <paramref name="expectedAttempt"/> is given and the job's current attempt differs (a cancel decided on a view of an earlier attempt).
+    /// Cancel a job. Returns updated entity, or null if the job is already Completed or Cancelled (a Failed job is cancelled, which
+    /// dismisses it), while its join has claimed it and it is still active (the join is publishing, or stopped and awaits the recovery),
+    /// or when <paramref name="expectedAttempt"/> is given and differs from the job's current attempt (a cancel decided on a view of
+    /// another attempt).
     /// </summary>
     Task<JobStatusEntity?> CancelJobAsync(string jobId, CancellationToken cancellationToken = default, int? expectedAttempt = null);
 

@@ -220,7 +220,7 @@ public class JobsController : ControllerBase
         var cancelled = await _jobService.CancelJobAsync(jobId, HttpContext.RequestAborted, attempt);
         if (cancelled == null)
         {
-            return Conflict(new { error = "Job is already in a terminal state or on a later attempt" });
+            return Conflict(new { error = "Job cannot be cancelled in its current state" });
         }
 
         // Publish cancellation to channel for instant SSE notification

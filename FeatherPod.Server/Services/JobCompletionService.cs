@@ -16,7 +16,7 @@ public class JobCompletionService
     private readonly IFeedEventChannel _feedEventChannel;
     private readonly PushNotificationService _pushNotificationService;
     private readonly ILogger<JobCompletionService> _logger;
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _liveTranscriptRetryJoins = new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _liveJoins = new(StringComparer.Ordinal);
 
     public JobCompletionService(
         IJobService jobService,
@@ -138,40 +138,185 @@ public class JobCompletionService
             return;
         }
 
-        _logger.LogInformation("Both tracks terminal for job {JobId}, creating episode", jobId);
-
-        var normFailed = !string.IsNullOrEmpty(entity.NormalizationError);
-        var finalStatus = normFailed ? nameof(JobStatus.Failed) : nameof(JobStatus.Completed);
-        if (await TrySetTerminalStatusAsync(entity, finalStatus, normFailed ? entity.NormalizationError : null, ct) is not { } claimed)
-        {
-            return;
-        }
-
-        entity = claimed;
-
         // Normalization failed: no episode created, job is Failed
-        if (normFailed)
+        if (!string.IsNullOrEmpty(entity.NormalizationError))
         {
+            if (await TrySetTerminalStatusAsync(entity, nameof(JobStatus.Failed), entity.NormalizationError, ct) is null)
+            {
+                return;
+            }
+
             _logger.LogWarning("Normalization failed for job {JobId}, no episode created", jobId);
             PublishTerminalProgress(jobId, await _jobService.GetJobStatusAsync(jobId, ct));
 
             return;
         }
 
-        // Create episode from entity metadata
-        Episode? published = null;
+        await CompleteUploadAsync(entity, ct);
+    }
+
+    /// <summary>
+    /// Join of an upload job whose normalization succeeded, written so that no reader sees a terminal state that does not match what
+    /// was published (the transcript retry join's sequence): it claims the job with <see cref="JobStatusEntity.JoinClaimedAt"/>, a
+    /// conditional write that leaves the job active and records the episode incarnation it will publish
+    /// (<see cref="JobStatusEntity.EpisodeUploadedAt"/>), publishes the episode with its transcript, and only then writes the single
+    /// terminal status: Completed, its transcription Failed when the completed transcript could not be published, or Failed
+    /// (<see cref="EpisodeNotPublishedError"/>, the planned episode id removed) when the episode could not be created. A join that finds
+    /// the claim returns; one that stops after claiming leaves an active claimed job that the recurring recovery ends
+    /// (<see cref="EndStoppedUploadJoinAsync"/>). From its claim write on, the join runs to its terminal write whatever the caller's
+    /// cancellation (an aborted signal request), since a join stopped before publishing would end an upload whose tracks both succeeded
+    /// as Failed; <paramref name="ct"/> is not used past the decision to join.
+    /// </summary>
+    private async Task CompleteUploadAsync(JobStatusEntity entity, CancellationToken ct)
+    {
+        var jobId = entity.RowKey;
+        if (entity.JoinClaimedAt != null)
+        {
+            return;
+        }
+
+        // Registered before the claim write, so recovery never sees the claim without the live mark; removed once this join has ended
+        if (!_liveJoins.TryAdd(jobId, 0))
+        {
+            return;
+        }
+
         try
         {
-            var latestTitle = entity.Title ?? entity.FileName ?? "Untitled";
-            var source = Enum.TryParse<UploadSource>(entity.Source, out var src) ? src : UploadSource.CLI;
-            var publishedDate = entity.PublishedDate?.UtcDateTime ?? DateTime.UtcNow;
-            var fileSize = entity.NormalizedFileSize ?? entity.OriginalFileSize ?? 0;
-            var duration = entity.AudioDurationMs.HasValue
-                ? TimeSpan.FromMilliseconds(entity.AudioDurationMs.Value)
-                : TimeSpan.Zero;
+            // The claim is the first step that cannot be undone, so it ignores the caller's cancellation too: a claim the table committed
+            // while the caller observed a cancellation would leave a claimed job no join publishes
+            if (await TryClaimUploadJoinAsync(entity, CancellationToken.None) is not { } claimed)
+            {
+                return;
+            }
 
-            // The run staged its transcript for this attempt; the episode's transcript location is written only here, with the episode.
-            // A failed read degrades only the transcript (a Completed run without a transcript publishes a failed one), never the episode.
+            _logger.LogInformation("Both tracks terminal for job {JobId}, creating episode", jobId);
+            var published = await PublishUploadedEpisodeAsync(claimed, CancellationToken.None);
+            if (await TryEndUploadJoinAsync(jobId, claimed.GetAttempt(), published, claimed.PublishedTitle, CancellationToken.None) is not { } ended)
+            {
+                return;
+            }
+
+            await FinishUploadJoinAsync(claimed, ended);
+        }
+        finally
+        {
+            _liveJoins.TryRemove(jobId, out _);
+        }
+    }
+
+    /// <summary>
+    /// Claim an upload job for its join: a conditional write of <see cref="JobStatusEntity.JoinClaimedAt"/>, the episode id, the upload
+    /// time and the title the episode will be published with, leaving the job active. After any failure of the write the job is re-read:
+    /// a row carrying a write token this invocation issued means one of its writes committed although its outcome was lost (an SDK
+    /// replay of a committed write answers 412, and an earlier write can commit after a retry began), and the claim stands; otherwise a
+    /// conflicting write (a deferred title, say) is retried while the job is still unclaimed, active and on the same attempt. Returns
+    /// the claimed job, or null when another join claimed it, it moved on or the write kept failing.
+    /// </summary>
+    private async Task<JobStatusEntity?> TryClaimUploadJoinAsync(JobStatusEntity entity, CancellationToken ct)
+    {
+        var jobId = entity.RowKey;
+        var decidedAttempt = entity.GetAttempt();
+
+        // Every write token this invocation issued: a failed write can still be pending and commit after a retry began, and a random
+        // token is never issued by another join, in this process or another
+        var issued = new List<string>();
+        const int maxRetries = 3;
+        for (var attempt = 1; attempt <= maxRetries; attempt++)
+        {
+            var fileSize = entity.NormalizedFileSize ?? entity.OriginalFileSize ?? 0;
+            var episodeId = entity.EpisodeId ?? Episode.GenerateId(entity.FeedId!, entity.FileName!, fileSize);
+            var title = entity.Title ?? entity.FileName ?? "Untitled";
+            var claimedAt = NextClaimStamp();
+            var token = NewJoinWriteToken();
+            issued.Add(token);
+            try
+            {
+                await _jobService.MergeWithETagAsync(jobId, e =>
+                {
+                    e.JoinClaimedAt = claimedAt;
+                    e.EpisodeId = episodeId;
+                    e.EpisodeUploadedAt = claimedAt;
+                    e.PublishedTitle = title;
+                    e.JoinWriteToken = token;
+                }, entity.ETag, ct);
+
+                entity.JoinClaimedAt = claimedAt;
+                entity.EpisodeId = episodeId;
+                entity.EpisodeUploadedAt = claimedAt;
+                entity.PublishedTitle = title;
+                entity.JoinWriteToken = token;
+
+                return entity;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                var reread = await _jobService.GetJobStatusAsync(jobId, ct);
+                if (reread is { JoinClaimedAt: not null, JoinWriteToken: { } written } && issued.Contains(written) && !reread.GetJobStatus().IsTerminal() && reread.GetAttempt() == decidedAttempt)
+                {
+                    _logger.LogInformation(ex, "The claim write of job {JobId} failed after it committed; the join goes on", jobId);
+
+                    return reread;
+                }
+
+                if (reread == null || reread.JoinClaimedAt != null || reread.GetJobStatus().IsTerminal() || reread.GetAttempt() != decidedAttempt)
+                {
+                    _logger.LogDebug("Job {JobId} was claimed by another join, ended or moved to another attempt", jobId);
+
+                    return null;
+                }
+
+                if (attempt >= maxRetries)
+                {
+                    _logger.LogWarning("Failed to claim job {JobId} for its join after {MaxRetries} attempts; the recurring recovery joins it", jobId, maxRetries);
+
+                    return null;
+                }
+
+                entity = reread;
+            }
+        }
+
+        return null;
+    }
+
+    private static long _lastClaimStampTicks;
+
+    /// <summary>A new <see cref="JobStatusEntity.JoinWriteToken"/>: random, so no other join, in this process or another, issues it.</summary>
+    private static string NewJoinWriteToken() => Guid.NewGuid().ToString("N");
+
+    /// <summary>
+    /// A claim's incarnation stamp: the current time in whole milliseconds (so it survives the table and JSON round trips unchanged), and
+    /// later than every stamp issued before it in this process, so two jobs bound to the same episode id claimed by this process never
+    /// record the same incarnation. Across processes only the clock separates stamps. A join recognizes its own writes by their
+    /// <see cref="JobStatusEntity.JoinWriteToken"/>, never by this stamp.
+    /// </summary>
+    internal static DateTimeOffset NextClaimStamp()
+    {
+        while (true)
+        {
+            var nowTicks = DateTimeOffset.UtcNow.UtcTicks;
+            nowTicks -= nowTicks % TimeSpan.TicksPerMillisecond;
+            var last = Interlocked.Read(ref _lastClaimStampTicks);
+            var next = Math.Max(nowTicks, last + TimeSpan.TicksPerMillisecond);
+            if (Interlocked.CompareExchange(ref _lastClaimStampTicks, next, last) == last)
+            {
+                return new DateTimeOffset(next, TimeSpan.Zero);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Publish a claimed upload job's episode, with its staged transcript when its transcription completed. Returns the episode as
+    /// stored, or null when it could not be created (EpisodeService then keeps nothing of it). A failed transcript read degrades only the
+    /// transcript, never the episode.
+    /// </summary>
+    private async Task<Episode?> PublishUploadedEpisodeAsync(JobStatusEntity entity, CancellationToken ct)
+    {
+        var jobId = entity.RowKey;
+        try
+        {
+            // The run staged its transcript for this attempt; the episode's transcript location is written only here, with the episode
             string? transcriptVtt = null;
             if (entity.TranscriptionStatus == TranscriptionStatuses.Completed)
             {
@@ -179,11 +324,13 @@ public class JobCompletionService
                 {
                     transcriptVtt = await StagedTranscripts.ReadCompletedAsync(_blobService, entity);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
                 {
+                    // An OperationCanceledException not from the caller's token is a storage timeout, a failure like any other
                     _logger.LogError(ex, "Failed to read the staged transcript of job {JobId}; creating its episode with a failed transcript", jobId);
                 }
             }
+
             var transcriptStatus = entity.TranscriptionStatus switch
             {
                 TranscriptionStatuses.Completed when transcriptVtt != null => (TranscriptStatus?)TranscriptStatus.Available,
@@ -193,68 +340,222 @@ public class JobCompletionService
 
             var episode = new Episode
             {
-                Id = entity.EpisodeId ?? Episode.GenerateId(entity.FeedId!, entity.FileName!, fileSize),
+                Id = entity.EpisodeId!,
                 FeedId = entity.FeedId!,
-                Title = latestTitle,
+                Title = entity.PublishedTitle!,
                 Description = entity.Description,
                 Summary = entity.Summary,
                 FileName = entity.FileName!,
-                FileSize = fileSize,
-                Duration = duration,
-                PublishedDate = publishedDate,
-                Source = source,
-                UploadedAt = DateTime.UtcNow,
+                FileSize = entity.NormalizedFileSize ?? entity.OriginalFileSize ?? 0,
+                Duration = entity.AudioDurationMs.HasValue ? TimeSpan.FromMilliseconds(entity.AudioDurationMs.Value) : TimeSpan.Zero,
+                PublishedDate = entity.PublishedDate?.UtcDateTime ?? DateTime.UtcNow,
+                Source = Enum.TryParse<UploadSource>(entity.Source, out var source) ? source : UploadSource.CLI,
+                UploadedAt = entity.EpisodeUploadedAt!.Value.UtcDateTime,
                 TranscriptStatus = transcriptStatus,
                 AudioETag = entity.AudioETag
             };
 
             episode = await _episodeService.AddEpisodeFromEntityAsync(episode, ct, transcriptVtt);
+            _feedEventChannel.Publish(entity.FeedId!, "episode-added");
+            _logger.LogInformation("Episode {EpisodeId} created for job {JobId}", episode.Id, jobId);
 
-            // Set EpisodeId on entity (ETag.All = unconditional, CAS already passed). A completed transcription the join could not
-            // publish (its staged transcript unreadable, or its write failed) is reported as failed with the episode, as the transcript
-            // retry join reports it, so every reader offers Retry transcript
-            var transcriptNotPublished = entity.TranscriptionStatus == TranscriptionStatuses.Completed && episode.TranscriptStatus == TranscriptStatus.Failed;
-            await _jobService.MergeWithETagAsync(jobId, e =>
+            return episode;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            _logger.LogError(ex, "Failed to create episode for job {JobId}", jobId);
+
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Write a claimed upload job's single terminal status from what its join published: Completed with its transcription Failed
+    /// (<see cref="TranscriptNotPublishedError"/>) when a completed transcription was not published to <paramref name="published"/>, or
+    /// Failed (<see cref="EpisodeNotPublishedError"/>) with the planned episode id removed (a conditional Replace, since a Merge skips
+    /// nulls) when nothing was published. Before the Completed write, a deferred title that reached the job while it was claimed (the
+    /// title endpoint renames only a completed job's episode) goes to the episode, but only while the episode is still the published
+    /// incarnation with <paramref name="expectedTitle"/>, the title this join last gave it, so a rename by the user is kept; the write is
+    /// conditional on the read the title came from, so a title arriving after it conflicts and is carried over on the retry. A rename
+    /// whose save fails keeps the job claimed (no terminal write), so the recurring recovery carries the title once storage recovers.
+    /// Conditional on a fresh read, so it never overwrites a job that is already terminal or on another attempt; returns null then,
+    /// when a rename failed, or when the write keeps failing. Each write carries a write token of its own, and any failure of the write
+    /// other than the caller's cancellation leaves its outcome unknown, so the job is read again: a terminal row carrying one of this
+    /// invocation's tokens means its own write committed although its outcome was lost (an SDK replay of a committed write answers 412,
+    /// and a transport failure can follow the commit) and returns that row, so the status is still reported. Otherwise returns the row
+    /// as written, which the caller reports from rather than from another read.
+    /// </summary>
+    private async Task<JobStatusEntity?> TryEndUploadJoinAsync(string jobId, int attemptJoined, Episode? published, string? expectedTitle, CancellationToken ct)
+    {
+        var issued = new List<string>();
+        const int maxRetries = 3;
+        for (var attempt = 1; attempt <= maxRetries + 1; attempt++)
+        {
+            var current = await _jobService.GetJobStatusAsync(jobId, ct);
+            if (current == null || current.GetAttempt() != attemptJoined)
             {
-                e.EpisodeId = episode.Id;
+                return null;
+            }
+
+            if (current.GetJobStatus().IsTerminal())
+            {
+                return current.JoinWriteToken is { } written && issued.Contains(written) ? current : null;
+            }
+
+            if (attempt > maxRetries)
+            {
+                return null;
+            }
+
+            var token = NewJoinWriteToken();
+            issued.Add(token);
+            var completedAt = DateTimeOffset.UtcNow;
+            if (published == null)
+            {
+                current.Status = nameof(JobStatus.Failed);
+                current.Error = EpisodeNotPublishedError;
+                current.CompletedAt = completedAt;
+                current.EpisodeId = null;
+                current.JoinWriteToken = token;
+                try
+                {
+                    if (await _jobService.TryReplaceAsync(current, ct))
+                    {
+                        return current;
+                    }
+
+                    _logger.LogDebug("Conflict ending upload join of job {JobId} as failed, attempt {Attempt}", jobId, attempt);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    _logger.LogWarning(ex, "Ending upload join of job {JobId} as failed did not answer, attempt {Attempt}; reading the job again", jobId, attempt);
+                }
+
+                continue;
+            }
+
+            if (expectedTitle != null && current.Title is { } jobTitle && !string.Equals(jobTitle, expectedTitle, StringComparison.Ordinal))
+            {
+                var renamed = await RenameEpisodeIfTitleIsAsync(published.FeedId, published.Id, expectedTitle, jobTitle, published.UploadedAt, jobId);
+                if (renamed == null)
+                {
+                    return null;
+                }
+
+                if (renamed == true)
+                {
+                    expectedTitle = jobTitle;
+                }
+            }
+
+            var transcriptNotPublished = current.TranscriptionStatus == TranscriptionStatuses.Completed && published.TranscriptStatus != TranscriptStatus.Available;
+            void EndCompleted(JobStatusEntity e)
+            {
+                e.Status = nameof(JobStatus.Completed);
+                e.CompletedAt = completedAt;
+                e.JoinWriteToken = token;
                 if (transcriptNotPublished)
                 {
                     e.TranscriptionStatus = TranscriptionStatuses.Failed;
                     e.TranscriptionError = TranscriptNotPublishedError;
                 }
-            }, Azure.ETag.All, ct);
+            }
 
-            _feedEventChannel.Publish(entity.FeedId!, "episode-added");
-            _logger.LogInformation("Episode {EpisodeId} created for job {JobId}", episode.Id, jobId);
-            published = episode;
+            try
+            {
+                await _jobService.MergeWithETagAsync(jobId, EndCompleted, current.ETag, ct);
+                EndCompleted(current);
+
+                return current;
+            }
+            catch (Azure.RequestFailedException ex) when (ex.Status == 412)
+            {
+                _logger.LogDebug("ETag conflict ending upload join of job {JobId}, attempt {Attempt}", jobId, attempt);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                _logger.LogWarning(ex, "Ending upload join of job {JobId} did not answer, attempt {Attempt}; reading the job again", jobId, attempt);
+            }
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to create episode for job {JobId}", jobId);
-        }
 
-        // A deferred title written after the terminal status above found no episode to rename yet, so carry it over now
-        var fresh = await _jobService.GetJobStatusAsync(jobId, ct);
-        if (published != null && fresh?.Title is { } currentTitle && !string.Equals(currentTitle, published.Title, StringComparison.Ordinal))
-        {
-            await RenameEpisodeIfTitleIsAsync(published.FeedId, published.Id, published.Title, currentTitle, jobId);
-        }
+        return null;
+    }
 
-        // Publish terminal progress and push notification
-        PublishTerminalProgress(jobId, fresh);
+    /// <summary>
+    /// After an upload join's terminal write: report the terminal status from the row that write committed (<paramref name="ended"/>),
+    /// so no further job read can lose the report, and delete the job's pending blobs. A stop before either leaves the terminal status
+    /// for the poll ingestion points and the pending blobs for the scheduled cleanup.
+    /// </summary>
+    private async Task FinishUploadJoinAsync(JobStatusEntity claimed, JobStatusEntity ended)
+    {
+        var jobId = claimed.RowKey;
+        PublishTerminalProgress(jobId, ended);
 
-        // Clean up pending blob
         try
         {
-            if (entity.FeedId != null)
+            if (claimed.FeedId != null)
             {
-                await _blobService.DeletePendingJobBlobsAsync(entity.FeedId, jobId);
+                await _blobService.DeletePendingJobBlobsAsync(claimed.FeedId, jobId);
                 _logger.LogDebug("Deleted pending blob for job {JobId}", jobId);
             }
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to delete pending blob for job {JobId}", jobId);
+        }
+    }
+
+    /// <summary>
+    /// End an upload job whose join claimed it and stopped before its terminal write (a server stop, or a join that kept losing that
+    /// write), for the recurring recovery, which calls it only for a claim older than its bound (<see cref="JobRetryService.IsClaimedUploadJoin"/>),
+    /// since a younger one may be held by a join in another process. A join still running in this process owns the job and is left
+    /// alone. The stopped join's publish landed when this process's episodes hold the incarnation its claim recorded (its
+    /// <see cref="JobStatusEntity.EpisodeUploadedAt"/>): the job then ends Completed, its transcription Failed when the episode's
+    /// transcript is not available. Not finding it proves nothing while a join in another process may still be publishing or this
+    /// process's episode cache may predate the publish, so the job ends Failed only when <paramref name="mayEndUnpublished"/> (the
+    /// claim is older than the recovery's long bound) and otherwise stays claimed for a later pass. The incarnation is looked up where
+    /// the claim put it and, failing that, in every feed, since a move of the published episode keeps its upload time and file name. A
+    /// deferred title is carried over from the title the claim recorded (<see cref="JobStatusEntity.PublishedTitle"/>), as the join
+    /// would, to the episode at the claim's own feed and id only, since an episode found elsewhere may be a copy; the terminal status
+    /// is then reported. Returns whether it ended the job.
+    /// </summary>
+    internal async Task<bool> EndStoppedUploadJoinAsync(JobStatusEntity job, bool mayEndUnpublished, CancellationToken ct)
+    {
+        if (job.JoinClaimedAt == null || job.EpisodeUploadedAt is not { } incarnation || !_liveJoins.TryAdd(job.RowKey, 0))
+        {
+            return false;
+        }
+
+        try
+        {
+            var episode = job.FeedId != null && job.EpisodeId != null ? await _episodeService.GetEpisodeByIdAsync(job.FeedId, job.EpisodeId) : null;
+            var atClaim = episode != null && episode.UploadedAt.ToUniversalTime() == incarnation.UtcDateTime;
+            var published = atClaim
+                ? episode
+                : job.FileName != null ? await _episodeService.FindIncarnationAsync(incarnation.UtcDateTime, job.FileName) : null;
+            if (published == null && !mayEndUnpublished)
+            {
+                _logger.LogInformation("Upload join of job {JobId} claimed it and its episode is not found yet; leaving it claimed for a later recovery pass", job.RowKey);
+
+                return false;
+            }
+
+            _logger.LogWarning("Upload join of job {JobId} stopped after claiming it; ending it as {Outcome}", job.RowKey, published != null ? "published" : "not published");
+
+            // An episode found elsewhere proves the publish landed, but may be a copy of it rather than the moved original, so the
+            // deferred title goes only to the episode at the claim's own feed and id, as the live join and the title endpoint do
+            if (await TryEndUploadJoinAsync(job.RowKey, job.GetAttempt(), published, atClaim ? job.PublishedTitle : null, ct) is not { } ended)
+            {
+                return false;
+            }
+
+            await FinishUploadJoinAsync(job, ended);
+
+            return true;
+        }
+        finally
+        {
+            _liveJoins.TryRemove(job.RowKey, out _);
         }
     }
 
@@ -315,6 +616,9 @@ public class JobCompletionService
     /// <summary>Transcription error of a job whose transcription completed but whose join could not publish the transcript.</summary>
     internal const string TranscriptNotPublishedError = "The transcript was not published to the episode";
 
+    /// <summary>Error of an upload job whose normalization succeeded but whose join could not publish the episode.</summary>
+    internal const string EpisodeNotPublishedError = "The episode could not be published";
+
     /// <summary>
     /// Join of a transcript retry job: it ends Completed whether its transcription succeeded or failed, its transcription status telling
     /// the two apart, and its terminal status is written once, after publishing, with the actual outcome, so no reader ever sees a
@@ -323,8 +627,9 @@ public class JobCompletionService
     /// leaves an active job that the recurring recovery ends (JobRetryService). A publish failure or refusal ends the job with a failed
     /// transcript (<see cref="TranscriptNotPublishedError"/>), so the episode stays retryable. Publishing goes through
     /// EpisodeService.PublishTranscriptIfAsync and is refused unless the episode is still the incarnation the retry was started on, with
-    /// a failed transcript, and no other job bound to it is active or completed after the retry was queued: a retry never removes or replaces
-    /// a transcript another job published, and never creates the episode. Staged blobs are deleted afterwards.
+    /// a failed transcript, and no other job bound to it is active or completed after the retry was queued, other than the upload that
+    /// published that incarnation: a retry never removes or replaces a transcript another job published, and never creates the episode.
+    /// Staged blobs are deleted afterwards.
     /// </summary>
     private async Task CompleteTranscriptRetryAsync(JobStatusEntity entity, CancellationToken ct)
     {
@@ -336,7 +641,7 @@ public class JobCompletionService
 
         // Registered before the claim write, so recovery never sees the claim without the live mark; removed once this join has ended.
         // A join already live for the job owns it.
-        if (!_liveTranscriptRetryJoins.TryAdd(jobId, 0))
+        if (!_liveJoins.TryAdd(jobId, 0))
         {
             return;
         }
@@ -347,16 +652,17 @@ public class JobCompletionService
         }
         finally
         {
-            _liveTranscriptRetryJoins.TryRemove(jobId, out _);
+            _liveJoins.TryRemove(jobId, out _);
         }
     }
 
     /// <summary>
-    /// Whether a transcript retry join for the job is running in this process. Recovery leaves such a job alone: the join owns it until
-    /// it writes the terminal status. After a restart nothing is live, so a claimed job is known to be a stopped join. Relies on the
-    /// single-instance App Service that EpisodeService's in-memory cache already assumes.
+    /// Whether a join for the job (an upload's or a transcript retry's) is running in this process, or the recovery is ending it. Recovery
+    /// leaves such a job alone: the join owns it until it writes the terminal status. The set sees only this process, so a claim it does
+    /// not hold is not proof of a stop (an overlapped restart's old process may still run the join); recovery adds claim-age bounds
+    /// before it ends a claimed upload join.
     /// </summary>
-    public bool IsTranscriptRetryJoinLive(string jobId) => _liveTranscriptRetryJoins.ContainsKey(jobId);
+    public bool IsJoinLive(string jobId) => _liveJoins.ContainsKey(jobId);
 
     private async Task RunClaimedTranscriptRetryJoinAsync(JobStatusEntity entity, CancellationToken ct)
     {
@@ -458,8 +764,8 @@ public class JobCompletionService
     /// <summary>
     /// Publish a transcript retry's staged transcript to its episode. Returns whether it published; false when nothing was staged, when
     /// another job bound to the episode is active or completed after this retry was queued (an upload of the same file re-creating the
-    /// episode id writes its location itself), or when EpisodeService refuses because the episode is gone, re-created or no longer has
-    /// a failed transcript.
+    /// episode id writes its location itself; the upload that published the retried incarnation does not count), or when EpisodeService
+    /// refuses because the episode is gone, re-created or no longer has a failed transcript.
     /// </summary>
     private async Task<bool> PublishRetriedTranscriptAsync(JobStatusEntity job, CancellationToken ct)
     {
@@ -476,10 +782,12 @@ public class JobCompletionService
 
         var queuedAt = job.QueuedAt ?? DateTimeOffset.MinValue;
         var feedJobs = await _jobService.GetRecentJobsByFeedAsync(feedId, ForeignJobLookback, ct);
-        // Only another job that can write the episode blocks it: one still active, or one that completed after this retry was queued
-        // (between an upload join's terminal claim and its re-creation of the episode). A failed or cancelled job writes nothing, even
-        // when a dismissal's cancel moved its CompletedAt; a completed re-creation is also refused by the incarnation check below.
-        if (feedJobs.Any(j => j.RowKey != jobId && j.EpisodeId == episodeId &&
+        // Only another job that can write the episode blocks it: one still active (an upload join stays active while it re-creates the
+        // episode), or one that completed after this retry was queued. A failed or cancelled job writes nothing, even when a dismissal's
+        // cancel moved its CompletedAt; a completed re-creation is also refused by the incarnation check below. The upload that published
+        // this very incarnation (its claim recorded the same upload time) is not one: after publishing it never writes the transcript
+        // location again, though it stays active, or completes, after its episode became retryable.
+        if (feedJobs.Any(j => j.RowKey != jobId && j.EpisodeId == episodeId && !PublishedIncarnation(j, job.EpisodeUploadedAt) &&
             (!j.GetJobStatus().IsTerminal() || (j.GetJobStatus() == JobStatus.Completed && j.CompletedAt > queuedAt))))
         {
             _logger.LogInformation("Not publishing the transcript of retry job {JobId}: another job for episode {EpisodeId} is active or completed after it", jobId, episodeId);
@@ -501,6 +809,10 @@ public class JobCompletionService
         return true;
     }
 
+    /// <summary>Whether <paramref name="job"/> is the upload whose join published the episode incarnation uploaded at <paramref name="incarnation"/>.</summary>
+    private static bool PublishedIncarnation(JobStatusEntity job, DateTimeOffset? incarnation) =>
+        !JobKinds.IsTranscriptRetry(job.Kind) && job.JoinClaimedAt != null && incarnation is { } uploadedAt && job.EpisodeUploadedAt == uploadedAt;
+
     /// <summary>
     /// Replaces an untitled job's placeholder title with its deferred (AI or heuristic) title. When the join has already
     /// completed the job, the title also goes to the episode the job published, as long as that episode still carries the
@@ -517,7 +829,7 @@ public class JobCompletionService
 
         if (updated.GetJobStatus() == JobStatus.Completed && updated.FeedId != null && updated.EpisodeId != null)
         {
-            await RenameEpisodeIfTitleIsAsync(updated.FeedId, updated.EpisodeId, placeholderTitle, title, jobId);
+            await RenameEpisodeIfTitleIsAsync(updated.FeedId, updated.EpisodeId, placeholderTitle, title, updated.EpisodeUploadedAt?.UtcDateTime, jobId);
         }
 
         return true;
@@ -525,26 +837,34 @@ public class JobCompletionService
 
     /// <summary>
     /// Renames a job's episode from the title it was published under to a deferred title that arrived later, unless the
-    /// episode is gone or has been renamed since. A failure is logged, not thrown, so the caller's remaining steps run.
+    /// episode is gone, is another incarnation than the one uploaded at <paramref name="expectedUploadedAt"/> (when given) or has been
+    /// renamed since. Returns true when it renamed, false when the episode was left alone, and null when the rename failed (the episode
+    /// keeps its title); a failure is logged, not thrown, so the caller's remaining steps run.
     /// </summary>
-    private async Task RenameEpisodeIfTitleIsAsync(string feedId, string episodeId, string expectedTitle, string newTitle, string jobId)
+    private async Task<bool?> RenameEpisodeIfTitleIsAsync(string feedId, string episodeId, string expectedTitle, string newTitle, DateTime? expectedUploadedAt, string jobId)
     {
         if (string.Equals(expectedTitle, newTitle, StringComparison.Ordinal))
         {
-            return;
+            return false;
         }
 
         try
         {
-            if (await _episodeService.RenameEpisodeIfTitleIsAsync(feedId, episodeId, expectedTitle, newTitle) != null)
+            if (await _episodeService.RenameEpisodeIfTitleIsAsync(feedId, episodeId, expectedTitle, newTitle, expectedUploadedAt) == null)
             {
-                _feedEventChannel.Publish(feedId, "episode-updated");
-                _logger.LogInformation("Episode {EpisodeId} of job {JobId} took its deferred title", episodeId, jobId);
+                return false;
             }
+
+            _feedEventChannel.Publish(feedId, "episode-updated");
+            _logger.LogInformation("Episode {EpisodeId} of job {JobId} took its deferred title", episodeId, jobId);
+
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to give episode {EpisodeId} of job {JobId} its deferred title", episodeId, jobId);
+
+            return null;
         }
     }
 

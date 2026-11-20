@@ -6,7 +6,9 @@ namespace FeatherPod.Tests.Helpers;
 /// <summary>
 /// Thread-safe in-memory <see cref="IJobService"/> for unit tests. Mutations from
 /// background services are safe; tests can also seed entities directly via
-/// <see cref="SetEntity"/> and observe state via <see cref="GetEntity"/>.
+/// <see cref="SetEntity"/> and observe state via <see cref="GetEntity"/> (the stored rows themselves). Like Table Storage, the
+/// <see cref="IJobService"/> reads and write results return detached copies, so a caller's change to one reaches the store only
+/// through a write.
 ///
 /// <para>
 /// <see cref="WaitForProcessingCompleteAsync"/> exposes a <see cref="TaskCompletionSource"/>
@@ -96,7 +98,8 @@ public sealed class InMemoryJobService : IJobService
         JobStatusEntity? entity;
         lock (_lock)
         {
-            entity = _entities.GetValueOrDefault(jobId);
+            // Copied under the lock the in-place writers hold, so a read never sees half of a write
+            entity = Detach(_entities.GetValueOrDefault(jobId));
             _processingCompleteSignals.Remove(jobId, out signal);
         }
 
@@ -104,6 +107,16 @@ public sealed class InMemoryJobService : IJobService
 
         return Task.FromResult(entity);
     }
+
+    private static readonly System.Reflection.MethodInfo MemberwiseCloneMethod =
+        typeof(object).GetMethod("MemberwiseClone", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+
+    /// <summary>
+    /// A copy of a stored row, as a Table Storage read returns a detached entity: a caller's changes to it reach the store only through a
+    /// write. <see cref="JobStatusEntity"/> holds only scalar and string properties, so a member-wise copy is enough.
+    /// </summary>
+    [return: System.Diagnostics.CodeAnalysis.NotNullIfNotNull(nameof(entity))]
+    private static JobStatusEntity? Detach(JobStatusEntity? entity) => entity == null ? null : (JobStatusEntity)MemberwiseCloneMethod.Invoke(entity, null)!;
 
     /// <summary>
     /// Stores the queued entity <see cref="JobStatusEntity.CreateQueued"/> builds, keeping an existing one as JobService does.
@@ -122,7 +135,7 @@ public sealed class InMemoryJobService : IJobService
     {
         lock (_lock)
         {
-            List<JobStatusEntity> matches = [.. _entities.Values.Where(e => e.FeedId == feedId && !e.GetJobStatus().IsTerminal())];
+            List<JobStatusEntity> matches = [.. _entities.Values.Where(e => e.FeedId == feedId && !e.GetJobStatus().IsTerminal()).Select(e => Detach(e))];
 
             return Task.FromResult(matches);
         }
@@ -132,7 +145,7 @@ public sealed class InMemoryJobService : IJobService
     {
         lock (_lock)
         {
-            List<JobStatusEntity> matches = [.. _entities.Values.Where(e => !e.GetJobStatus().IsTerminal())];
+            List<JobStatusEntity> matches = [.. _entities.Values.Where(e => !e.GetJobStatus().IsTerminal()).Select(e => Detach(e))];
 
             return Task.FromResult(matches);
         }
@@ -154,7 +167,7 @@ public sealed class InMemoryJobService : IJobService
                 return Task.FromResult(false);
             }
 
-            _entities[entity.RowKey] = entity;
+            _entities[entity.RowKey] = Detach(entity);
 
             return Task.FromResult(true);
         }
@@ -174,7 +187,7 @@ public sealed class InMemoryJobService : IJobService
 
         lock (_lock)
         {
-            List<JobStatusEntity> matches = [.. _entities.Values.Where(e => e.TranscriptionStatus is not null && transcriptionStatuses.Contains(e.TranscriptionStatus) && !e.GetJobStatus().IsTerminal())];
+            List<JobStatusEntity> matches = [.. _entities.Values.Where(e => e.TranscriptionStatus is not null && transcriptionStatuses.Contains(e.TranscriptionStatus) && !e.GetJobStatus().IsTerminal()).Select(e => Detach(e))];
 
             return Task.FromResult(matches);
         }
@@ -185,7 +198,7 @@ public sealed class InMemoryJobService : IJobService
         var cutoff = DateTimeOffset.UtcNow - since;
         lock (_lock)
         {
-            List<JobStatusEntity> matches = [.. _entities.Values.Where(e => e.FeedId == feedId && e.QueuedAt >= cutoff)];
+            List<JobStatusEntity> matches = [.. _entities.Values.Where(e => e.FeedId == feedId && e.QueuedAt >= cutoff).Select(e => Detach(e))];
 
             return Task.FromResult(matches);
         }
@@ -204,7 +217,7 @@ public sealed class InMemoryJobService : IJobService
 
             mutate(entity);
 
-            return Task.FromResult<JobStatusEntity?>(entity);
+            return Task.FromResult<JobStatusEntity?>(Detach(entity));
         }
     }
 
@@ -225,7 +238,7 @@ public sealed class InMemoryJobService : IJobService
 
             configure(entity);
 
-            return Task.FromResult<JobStatusEntity?>(entity);
+            return Task.FromResult<JobStatusEntity?>(Detach(entity));
         }
     }
 

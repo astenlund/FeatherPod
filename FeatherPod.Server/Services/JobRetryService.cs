@@ -77,6 +77,8 @@ public sealed class JobRetryService
     private readonly ILogger<JobRetryService> _logger;
     private readonly TimeSpan _unpickedRetryBound;
     private readonly TimeSpan _stalledTranscriptRetryBound;
+    private readonly TimeSpan _stoppedUploadJoinBound;
+    private readonly TimeSpan _unlandedUploadJoinBound;
 
     /// <summary>
     /// Episodes whose transcript retry job is being created. The server keeps its episodes in one process (EpisodeService), so claiming
@@ -111,6 +113,16 @@ public sealed class JobRetryService
 
         // Longer than any legitimate transcription, matching CleanupFunction's stale-transcription rule
         _stalledTranscriptRetryBound = TimeSpan.FromHours(configuration.GetValue("JobRecovery:StalledTranscriptRetryHours", 24));
+
+        // Measured from the claim. Longer than a live upload join normally needs after its claim (transcript read and upload, metadata
+        // save, job writes) plus a restarting process's shutdown grace, so a claim an overlapping old process holds is normally not taken
+        // for a stopped join; it is a time bound, not a deadline the join enforces
+        _stoppedUploadJoinBound = TimeSpan.FromMinutes(configuration.GetValue("JobRecovery:StoppedUploadJoinMinutes", 10));
+
+        // Measured from the claim. Not finding a stopped join's episode proves little until a join stalled in storage retries has
+        // long finished and this process's episode cache has had several hourly blob syncs to pick up a publish another process saved;
+        // like the bound above, a time bound rather than an enforced deadline
+        _unlandedUploadJoinBound = TimeSpan.FromHours(configuration.GetValue("JobRecovery:UnlandedUploadJoinHours", 6));
     }
 
     /// <summary>
@@ -290,9 +302,10 @@ public sealed class JobRetryService
     /// <summary>
     /// The recurring recovery: returns a normalization retry that no run picked up within its bound to its failed state (a send that
     /// failed and whose compensating write also failed, or a server stop between the reset and the send), and ends a transcript retry
-    /// job that stopped making progress, so its episode's one-in-flight limit cannot outlive it, and runs the join of a job whose join
-    /// inputs are all recorded but which was never joined (<see cref="IsUnjoinedRecordedJob"/> holds the exact condition). A failed scan
-    /// is logged.
+    /// job that stopped making progress, so its episode's one-in-flight limit cannot outlive it, ends an upload job whose join claimed it
+    /// longer ago than its bound and is not running in this process (<see cref="IsClaimedUploadJoin"/>), and runs the join of a job whose
+    /// join inputs are all recorded but which was never joined (<see cref="IsUnjoinedRecordedJob"/> holds the exact condition). A failed
+    /// scan is logged.
     /// </summary>
     public async Task RecoverStalledRetriesAsync(DateTimeOffset now, CancellationToken ct)
     {
@@ -326,9 +339,15 @@ public sealed class JobRetryService
                     _logger.LogWarning("Transcript retry job {JobId} stalled; ending it", job.RowKey);
                     await EndStalledTranscriptRetryAsync(job, ct);
                 }
+                else if (IsClaimedUploadJoin(job, now, _stoppedUploadJoinBound))
+                {
+                    // Ends it only when its join is not running in this process either, and as not published only past the long bound
+                    await _completionService.EndStoppedUploadJoinAsync(job, mayEndUnpublished: now - job.JoinClaimedAt!.Value > _unlandedUploadJoinBound, ct);
+                }
                 else if (IsUnjoinedRecordedJob(job))
                 {
-                    // Its join is idempotent and claims the terminal status conditionally, so a join running now is unaffected
+                    // Its join claims the job conditionally (non-terminally when it publishes) and returns for a job a live join holds, so a
+                    // join running now is unaffected
                     _logger.LogWarning("Job {JobId} has both tracks recorded but was never joined; running its join", job.RowKey);
                     await _completionService.TryCompleteJobAsync(job.RowKey, ct);
                 }
@@ -346,16 +365,29 @@ public sealed class JobRetryService
 
     /// <summary>
     /// Whether a job is still active although everything its join waits on is recorded, so its join never ran. For an upload job:
-    /// its normalization result is merged and its transcription track is ended or absent (the App Service stopped between merging
-    /// the result and the join's terminal write; the Function no longer redelivers such a message, since its fallback leaves a
-    /// recorded result alone). For a transcript retry: its run recorded its track but no join claimed the job (a stop, or a transient
-    /// table error in the join). The recurring recovery runs the join for it; a join running at the same time wins or loses the
-    /// same conditional claim, so only one publishes.
+    /// its normalization result is merged and its transcription track is ended or absent, but no join claimed it (the App Service
+    /// stopped between merging the result and the join's claim; the Function no longer redelivers such a message, since its fallback
+    /// leaves a recorded result alone). For a transcript retry: its run recorded its track but no join claimed the job (a stop, or a
+    /// transient table error in the join). The recurring recovery runs the join for it; a join running at the same time wins or loses
+    /// the same conditional claim, so only one publishes.
     /// </summary>
     internal static bool IsUnjoinedRecordedJob(JobStatusEntity job) =>
-        JobKinds.IsTranscriptRetry(job.Kind)
-            ? job.JoinClaimedAt == null && job.TranscriptionStatus is TranscriptionStatuses.Completed or TranscriptionStatuses.Failed
-            : job.NormalizationComplete == true && job.TranscriptionStatus is null or TranscriptionStatuses.Completed or TranscriptionStatuses.Failed;
+        job.JoinClaimedAt == null &&
+        (JobKinds.IsTranscriptRetry(job.Kind)
+            ? job.TranscriptionStatus is TranscriptionStatuses.Completed or TranscriptionStatuses.Failed
+            : job.NormalizationComplete == true && job.TranscriptionStatus is null or TranscriptionStatuses.Completed or TranscriptionStatuses.Failed);
+
+    /// <summary>
+    /// Whether an active upload job was claimed by its join longer than <paramref name="bound"/> ago; a join normally publishes and
+    /// writes the terminal status well within the bound, so the recovery treats such a job as one whose join stopped
+    /// (<see cref="JobCompletionService.EndStoppedUploadJoinAsync"/>, which still leaves a job claimed while its episode is not found
+    /// and the claim is younger than the long bound). A younger claim may belong to a join still running in another process, such as
+    /// the old one of an overlapped restart, which this process's live-join set cannot see.
+    /// </summary>
+    internal static bool IsClaimedUploadJoin(JobStatusEntity job, DateTimeOffset now, TimeSpan bound) =>
+        !JobKinds.IsTranscriptRetry(job.Kind) &&
+        job.JoinClaimedAt is { } claimedAt && now - claimedAt > bound &&
+        !job.GetJobStatus().IsTerminal();
 
     /// <summary>
     /// Whether a job is a normalization retry that no run picked up within <paramref name="bound"/>: a reset attempt (attempt 2 or
@@ -493,7 +525,7 @@ public sealed class JobRetryService
         // is left to the next pass.
         if (job.JoinClaimedAt != null)
         {
-            if (_completionService.IsTranscriptRetryJoinLive(job.RowKey))
+            if (_completionService.IsJoinLive(job.RowKey))
             {
                 return;
             }

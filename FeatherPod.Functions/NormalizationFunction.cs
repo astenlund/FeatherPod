@@ -660,9 +660,10 @@ public class NormalizationFunction
     };
 
     /// <summary>
-    /// Why a queue delivery must do nothing, or null when it may run: its job is gone or terminal (cancelled, or its result already
-    /// recorded), or the message belongs to an earlier attempt than the job's current one. A delivery that does nothing neither moves
-    /// the job to Processing nor signals completion.
+    /// Why a queue delivery must do nothing, or null when it may run: its job is gone or terminal (cancelled or completed), the message
+    /// belongs to an earlier attempt than the job's current one, or the current attempt already has its normalization result recorded
+    /// (a repeat delivery; the job stays active while its join publishes, so terminal status alone does not show it). A delivery that
+    /// does nothing neither moves the job to Processing nor signals completion.
     /// </summary>
     internal static string? SkipDeliveryReason(JobStatusEntity? entity, NormalizationJob job)
     {
@@ -679,6 +680,11 @@ public class NormalizationFunction
         if (!entity.IsCurrentAttempt(job.Attempt))
         {
             return $"job is on attempt {entity.GetAttempt()}";
+        }
+
+        if (entity.NormalizationComplete == true)
+        {
+            return "its normalization result is already recorded";
         }
 
         return null;

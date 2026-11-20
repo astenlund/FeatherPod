@@ -706,10 +706,18 @@ internal static class EpisodeHelpers
         $"  Job ID: [grey]{Markup.Escape(jobId)}[/] [grey](retry without re-uploading: POST /api/jobs/{Markup.Escape(jobId)}/retry)[/]";
 
     /// <summary>
-    /// Whether a streamed job's outcome gets <see cref="NormalizationFailureJobHint"/>: only a job that ended Failed, the one outcome the
-    /// retry endpoint accepts (the rule the polling fallback applies too); a cancelled job or a stream that closed early gets none.
+    /// Whether a streamed job's outcome gets <see cref="NormalizationFailureJobHint"/>: only a job that failed in its normalization, the
+    /// one outcome the retry endpoint accepts (the rule the polling fallback applies too); a failed publication, a cancelled job or a
+    /// stream that closed early gets none.
     /// </summary>
-    internal static bool ShowsNormalizationRetryHint(NormalizationProgressRenderer.NormalizationResult result) => result.JobFailed;
+    internal static bool ShowsNormalizationRetryHint(NormalizationProgressRenderer.NormalizationResult result) => result.NormalizationFailed;
+
+    /// <summary>
+    /// Whether a job status is a normalization failure the retry endpoint accepts: Failed with a recorded normalization error. A job whose
+    /// normalization succeeded but whose episode could not be published is Failed without one, and only a re-upload retries it.
+    /// </summary>
+    internal static bool IsRetryableNormalizationFailure(JobStatusResponse status) =>
+        status.Status == nameof(JobStatus.Failed) && !string.IsNullOrEmpty(status.NormalizationError);
 
     private static async Task<bool> PollJobCompletionAsync(HttpClient httpClient, string jobId, string fileName)
     {
@@ -846,7 +854,7 @@ internal static class EpisodeHelpers
 
         if (finalStatus?.Status == nameof(JobStatus.Failed))
         {
-            return new(false, Error: finalStatus.Error ?? "Unknown error", JobFailed: true);
+            return new(false, Error: finalStatus.Error ?? "Unknown error", NormalizationFailed: IsRetryableNormalizationFailure(finalStatus));
         }
 
         if (finalStatus?.Status == nameof(JobStatus.Cancelled))
@@ -903,8 +911,15 @@ internal static class EpisodeHelpers
                         if (status.Status == nameof(JobStatus.Failed))
                         {
                             Out.BlankLine();
-                            Out.Error($"Normalization failed: {Markup.Escape(status.Error ?? "Unknown error")}");
-                            Out.MarkupLine(NormalizationFailureJobHint(jobId));
+                            if (IsRetryableNormalizationFailure(status))
+                            {
+                                Out.Error($"Normalization failed: {Markup.Escape(status.Error ?? "Unknown error")}");
+                                Out.MarkupLine(NormalizationFailureJobHint(jobId));
+                            }
+                            else
+                            {
+                                Out.Error($"Upload failed: {Markup.Escape(status.Error ?? "Unknown error")}");
+                            }
 
                             return false;
                         }

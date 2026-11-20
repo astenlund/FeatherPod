@@ -181,8 +181,10 @@ public class JobStatusEntity : ITableEntity
     public string? Kind { get; set; }
 
     /// <summary>
-    /// For a transcript retry, the upload time of the episode incarnation it was started on; its join publishes only to that
-    /// incarnation, never to an episode deleted and re-created under the same id meanwhile.
+    /// The upload time of the episode incarnation the job is bound to. For a transcript retry, the incarnation it was started on; its
+    /// join publishes only to that incarnation, never to an episode deleted and re-created under the same id meanwhile. For an upload
+    /// job, written with its join's claim: the upload time the join publishes the episode with, so the recovery can tell whether a
+    /// stopped join's publish landed.
     /// </summary>
     public DateTimeOffset? EpisodeUploadedAt { get; set; }
 
@@ -193,10 +195,24 @@ public class JobStatusEntity : ITableEntity
     public DateTimeOffset? SourceSweptAt { get; set; }
 
     /// <summary>
-    /// When a transcript retry's join claimed the job (a conditional write that leaves the job non-terminal while the join publishes).
-    /// A join that finds the claim returns; the job's terminal status is written once, after publishing, with the actual outcome.
+    /// When the job's join (an upload's or a transcript retry's) claimed it, a conditional write that leaves the job non-terminal while
+    /// the join publishes. A join that finds the claim returns; the job's terminal status is written once, after publishing, with the
+    /// actual outcome.
     /// </summary>
     public DateTimeOffset? JoinClaimedAt { get; set; }
+
+    /// <summary>
+    /// For an upload job, written with its join's claim: the title the join publishes the episode with. A deferred title that reaches
+    /// the job later replaces the episode's title only while the episode still has this one, so a title the user set is kept.
+    /// </summary>
+    public string? PublishedTitle { get; set; }
+
+    /// <summary>
+    /// For an upload job, a random token each of its join's claim and terminal writes carries, unique to that write. A join that rereads
+    /// the job after a write failed counts the row as its own write only when it carries a token this join issued, so another
+    /// process's join (an overlapped restart, or recovery) is never mistaken for it, whatever the clocks say.
+    /// </summary>
+    public string? JoinWriteToken { get; set; }
 
     /// <summary>
     /// Azure Table Storage timestamp (managed by the service).

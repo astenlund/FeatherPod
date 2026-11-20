@@ -208,7 +208,7 @@ async function installRetryApi(context, { jobs = [], episodes = [] } = {}) {
                 return json(route, 404, { error: 'Job not found' });
             }
             if (attempt !== null && Number(attempt) !== job.attempt) {
-                return json(route, 409, { error: 'Job is already in a terminal state or on a later attempt' });
+                return json(route, 409, { error: 'Job cannot be cancelled in its current state' });
             }
             server.update(cancel[1], { status: 'Cancelled' });
 

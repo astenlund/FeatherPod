@@ -2,8 +2,8 @@ namespace FeatherPod.Server.Services;
 
 /// <summary>
 /// Runs <see cref="JobRetryService.RecoverStalledRetriesAsync"/> while the server is up, not only at startup: once at start and then
-/// every <c>JobRecovery:IntervalMinutes</c> (default 15). Each pass's bounds are measured from the jobs' queue times, so a job left
-/// behind before a restart is recovered once its bound passes, whenever that is.
+/// every <c>JobRecovery:IntervalMinutes</c> (default 15). Each pass's bounds are measured from the jobs' recorded times (queue times,
+/// and for a claimed upload join its claim time), so a job left behind before a restart is recovered once its bound passes, whenever that is.
 /// </summary>
 public sealed class JobRecoveryService : BackgroundService
 {

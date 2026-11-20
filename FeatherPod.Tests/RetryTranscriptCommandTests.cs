@@ -80,7 +80,7 @@ public class RetryTranscriptCommandTests
     public void NormalizationRetryHint_ShownOnlyForAJobThatFailed()
     {
         // Arrange: the outcomes the CLI's progress stream reports
-        var failed = new NormalizationProgressRenderer.NormalizationResult(false, Error: "ffmpeg exited with code 1", JobFailed: true);
+        var failed = new NormalizationProgressRenderer.NormalizationResult(false, Error: "ffmpeg exited with code 1", NormalizationFailed: true);
         var cancelled = new NormalizationProgressRenderer.NormalizationResult(false, Error: "Job was cancelled");
         var dropped = new NormalizationProgressRenderer.NormalizationResult(false, Error: "Connection closed unexpectedly");
         var completed = new NormalizationProgressRenderer.NormalizationResult(true, EpisodeId: "ep1");
@@ -90,6 +90,22 @@ public class RetryTranscriptCommandTests
         Assert.False(EpisodeHelpers.ShowsNormalizationRetryHint(cancelled));
         Assert.False(EpisodeHelpers.ShowsNormalizationRetryHint(dropped));
         Assert.False(EpisodeHelpers.ShowsNormalizationRetryHint(completed));
+    }
+
+    [Theory]
+    [InlineData(nameof(JobStatus.Failed), "ffmpeg exited with code 1", true)]
+    [InlineData(nameof(JobStatus.Failed), null, false)]
+    [InlineData(nameof(JobStatus.Cancelled), null, false)]
+    public void RetryableNormalizationFailure_OnlyAFailedJobWithANormalizationError(string status, string? normalizationError, bool expected)
+    {
+        // Arrange: a failed publication (EpisodeNotPublishedError) is Failed with only Error set
+        var response = new JobStatusResponse { JobId = "j", Status = status, Error = normalizationError ?? "The episode could not be published", NormalizationError = normalizationError };
+
+        // Act
+        var retryable = EpisodeHelpers.IsRetryableNormalizationFailure(response);
+
+        // Assert
+        Assert.Equal(expected, retryable);
     }
 
     [Fact]

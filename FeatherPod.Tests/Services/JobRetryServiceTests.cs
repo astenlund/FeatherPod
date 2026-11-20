@@ -523,6 +523,19 @@ public sealed class JobRetryServiceTests : IDisposable
         Assert.Equal(reason, skip);
     }
 
+    [Fact]
+    public void FunctionDelivery_CurrentAttemptWithItsNormalizationResultRecorded_Skipped()
+    {
+        // Arrange: a repeat delivery after the result was signalled, while the job's join runs (claimed, still Processing)
+        var entity = new JobStatusEntity { RowKey = "job-d", Status = nameof(JobStatus.Processing), Attempt = 1, NormalizationComplete = true, JoinClaimedAt = DateTimeOffset.UtcNow };
+
+        // Act
+        var skip = NormalizationFunction.SkipDeliveryReason(entity, NewMessage(1));
+
+        // Assert
+        Assert.Equal("its normalization result is already recorded", skip);
+    }
+
     [Theory]
     [InlineData(null, null)]
     [InlineData(1, null)]

@@ -18,7 +18,8 @@ public record JobStatusResponse
     required public string Status { get; init; }
 
     /// <summary>
-    /// The Episode ID (only present when Completed).
+    /// The Episode ID the job is bound to: the planned id while the job runs (and on a failed normalization, which a retry reuses), the
+    /// published episode when Completed, and absent when the episode could not be published.
     /// </summary>
     public string? EpisodeId { get; init; }
 
