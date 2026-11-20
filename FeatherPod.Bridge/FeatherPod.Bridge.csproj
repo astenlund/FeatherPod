@@ -13,4 +13,11 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Pins the NativeAOT compiler and its runtime pack above the version the installed SDK bundles (GHSA-p3jp-9v83-76w9), leaving the other packs at the SDK's versions -->
+    <KnownILCompilerPack Update="Microsoft.DotNet.ILCompiler">
+      <ILCompilerPackVersion Condition="'%(TargetFramework)' == 'net10.0'">10.0.15</ILCompilerPackVersion>
+    </KnownILCompilerPack>
+  </ItemGroup>
+
 </Project>
